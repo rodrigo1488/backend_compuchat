@@ -1,0 +1,168 @@
+import { subHours } from "date-fns";
+import { Op } from "sequelize";
+import Contact from "../../models/Contact";
+import Ticket from "../../models/Ticket";
+import ShowTicketService from "./ShowTicketService";
+import FindOrCreateATicketTrakingService from "./FindOrCreateATicketTrakingService";
+import Setting from "../../models/Setting";
+import Whatsapp from "../../models/Whatsapp";
+import { logger } from "../../utils/logger";
+
+interface TicketData {
+  status?: string;
+  companyId?: number;
+  unreadMessages?: number;
+}
+
+const FindOrCreateTicketService = async (
+  contact: Contact,
+  whatsappId: number,
+  unreadMessages: number,
+  companyId: number,
+  groupContact?: Contact
+): Promise<Ticket> => {
+  let ticket = await Ticket.findOne({
+    where: {
+      status: {
+        [Op.or]: ["open", "pending", "closed"]
+      },
+      contactId: groupContact ? groupContact.id : contact.id,
+      companyId,
+      whatsappId
+    },
+    order: [["id", "DESC"]]
+  });
+
+  const whatsapp = await Whatsapp.findOne({
+    where: { id: whatsappId }
+  });
+
+  if (ticket) {
+    // Atualizar ticket existente com configurações atualizadas do WhatsApp
+    // IMPORTANTE: NÃO atualizar useIntegration aqui para permitir que execute novamente
+    await ticket.update({ 
+      unreadMessages, 
+      whatsappId,
+      // Atualizar integração se mudou no WhatsApp
+      integrationId: whatsapp?.integrationId || ticket.integrationId,
+      promptId: whatsapp?.promptId || ticket.promptId
+      // useIntegration mantém o valor atual do ticket (não forçar true)
+    });
+
+    logger.debug('🔄 Ticket existente atualizado com config do WhatsApp', {
+      ticketId: ticket.id,
+      integrationId: ticket.integrationId,
+      promptId: ticket.promptId,
+      useIntegration: ticket.useIntegration,
+      atualizouIntegracao: whatsapp?.integrationId !== ticket.integrationId
+    });
+  }
+
+  if (ticket?.status === "closed") {
+    await ticket.update({ queueId: null, userId: null });
+  }
+
+  if (!ticket && groupContact) {
+    ticket = await Ticket.findOne({
+      where: {
+        contactId: groupContact.id
+      },
+      order: [["updatedAt", "DESC"]]
+    });
+
+    if (ticket) {
+      await ticket.update({
+        status: "open", // Grupos vão direto para "open"
+        userId: null,
+        unreadMessages,
+        queueId: null,
+        companyId
+      });
+      await FindOrCreateATicketTrakingService({
+        ticketId: ticket.id,
+        companyId,
+        whatsappId: ticket.whatsappId,
+        userId: ticket.userId
+      });
+    }
+    const msgIsGroupBlock = await Setting.findOne({
+      where: { key: "timeCreateNewTicket" }
+    });
+
+    const value = msgIsGroupBlock ? parseInt(msgIsGroupBlock.value, 10) : 7200;
+  }
+
+  if (!ticket && !groupContact) {
+    ticket = await Ticket.findOne({
+      where: {
+        updatedAt: {
+          [Op.between]: [+subHours(new Date(), 2), +new Date()]
+        },
+        contactId: contact.id,
+        companyId,
+        whatsappId
+      },
+      order: [["updatedAt", "DESC"]]
+    });
+
+    if (ticket) {
+      await ticket.update({
+        status: "pending",
+        userId: null,
+        unreadMessages,
+        queueId: null,
+        companyId
+      });
+      await FindOrCreateATicketTrakingService({
+        ticketId: ticket.id,
+        companyId,
+        whatsappId: ticket.whatsappId,
+        userId: ticket.userId
+      });
+    }
+  }
+
+  if (!ticket) {
+    // Criar ticket herdando configurações do WhatsApp
+    // useIntegration inicia como FALSE para permitir que o FlowBuilder execute
+    // Grupos vão direto para "open", conversas individuais para "pending"
+    ticket = await Ticket.create({
+      contactId: groupContact ? groupContact.id : contact.id,
+      status: groupContact ? "open" : "pending",
+      isGroup: !!groupContact,
+      unreadMessages,
+      whatsappId,
+      whatsapp,
+      companyId,
+      // ✅ Herdar integração e prompt do WhatsApp
+      integrationId: whatsapp?.integrationId || null,
+      promptId: whatsapp?.promptId || null,
+      useIntegration: false  // Sempre FALSE para permitir primeira execução
+    });
+
+    logger.info('🎫 === TICKET CRIADO ===', {
+      ticketId: ticket.id,
+      contactId: ticket.contactId,
+      whatsappId: ticket.whatsappId,
+      status: ticket.status,
+      isGroup: ticket.isGroup,
+      integrationId: ticket.integrationId,
+      promptId: ticket.promptId,
+      useIntegration: ticket.useIntegration,
+      herdouIntegração: !!whatsapp?.integrationId
+    });
+
+    await FindOrCreateATicketTrakingService({
+      ticketId: ticket.id,
+      companyId,
+      whatsappId,
+      userId: ticket.userId
+    });
+  }
+
+  ticket = await ShowTicketService(ticket.id, companyId);
+
+  return ticket;
+};
+
+export default FindOrCreateTicketService;
