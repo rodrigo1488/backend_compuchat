@@ -7,6 +7,7 @@ import FindOrCreateATicketTrakingService from "./FindOrCreateATicketTrakingServi
 import Setting from "../../models/Setting";
 import Whatsapp from "../../models/Whatsapp";
 import { logger } from "../../utils/logger";
+import AppError from "../../errors/AppError";
 
 interface TicketData {
   status?: string;
