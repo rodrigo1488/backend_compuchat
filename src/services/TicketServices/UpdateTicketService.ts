@@ -151,7 +151,11 @@ const UpdateTicketService = async ({
             let bodyRatingMessage = `\u200e${ratingTxt}\n\n`;
             bodyRatingMessage +=
               "Digite de 1 à 3 para qualificar nosso atendimento:\n*1* - _Insatisfeito_\n*2* - _Satisfeito_\n*3* - _Muito Satisfeito_\n\n";
-            await SendWhatsAppMessage({ body: bodyRatingMessage, ticket });
+            try {
+              await SendWhatsAppMessage({ body: bodyRatingMessage, ticket });
+            } catch (msgErr) {
+              logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de avaliação para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+            }
 
             await ticketTraking.update({
               ratingAt: moment().toDate(),
@@ -175,7 +179,11 @@ const UpdateTicketService = async ({
 
       if (!isNil(complationMessage) && complationMessage !== "") {
         const body = `\u200e${complationMessage}`;
-        await SendWhatsAppMessage({ body, ticket });
+        try {
+          await SendWhatsAppMessage({ body, ticket });
+        } catch (msgErr) {
+          logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de conclusão para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+        }
       }
       await ticket.update({
         promptId: null,
@@ -218,13 +226,17 @@ const UpdateTicketService = async ({
             'es': "*Mensaje automático*:\nHas sido transferido al departamento *" + queue?.name + "*\npor favor espera, ¡te atenderemos pronto!"
           }
 
-          const queueChangedMessage = await wbot.sendMessage(
-            getChatJid(ticket),
-            {
-              text: translatedMessage[language]
-            }
-          );
-          await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+          try {
+            const queueChangedMessage = await wbot.sendMessage(
+              getChatJid(ticket),
+              {
+                text: translatedMessage[language]
+              }
+            );
+            await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+          } catch (msgErr) {
+            logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de transferência de fila para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+          }
         }
       }
       else
@@ -245,13 +257,17 @@ const UpdateTicketService = async ({
                 'es': "*Mensaje automático*:\nHas sido transferido al agente *" + nome.name + "*\npor favor espera, ¡te atenderemos pronto!"
             }
 
-            const queueChangedMessage = await wbot.sendMessage(
-              getChatJid(ticket),
-              {
-                text: translatedMessage[language]
-              }
-            );
-            await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+            try {
+              const queueChangedMessage = await wbot.sendMessage(
+                getChatJid(ticket),
+                {
+                  text: translatedMessage[language]
+                }
+              );
+              await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+            } catch (msgErr) {
+              logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de transferência de atendente para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+            }
           }
         }
         else
@@ -273,13 +289,17 @@ const UpdateTicketService = async ({
                 'es': "*Mensaje automático*:\nHas sido transferido al departamento *" + queue?.name + "* y serás atendido por *" + nome.name + "*\npor favor espera, ¡te atenderemos pronto!"
               }
 
-              const queueChangedMessage = await wbot.sendMessage(
-                getChatJid(ticket),
-                {
-                  text: translatedMessage[language]
-                }
-              );
-              await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+              try {
+                const queueChangedMessage = await wbot.sendMessage(
+                  getChatJid(ticket),
+                  {
+                    text: translatedMessage[language]
+                  }
+                );
+                await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+              } catch (msgErr) {
+                logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de transferência (atendente+fila) para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+              }
             }
           } else
             if (oldUserId !== undefined && isNil(userId) && oldQueueId !== queueId && !isNil(queueId)) {
@@ -298,13 +318,17 @@ const UpdateTicketService = async ({
                   'es': "*Mensaje automático*:\nHas sido transferido al departamento *" + queue?.name + "*\npor favor espera, ¡te atenderemos pronto!"
                 }
 
-                const queueChangedMessage = await wbot.sendMessage(
-                  getChatJid(ticket),
-                  {
-                    text: translatedMessage[language]
-                  }
-                );
-                await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+                try {
+                  const queueChangedMessage = await wbot.sendMessage(
+                    getChatJid(ticket),
+                    {
+                      text: translatedMessage[language]
+                    }
+                  );
+                  await verifyMessage(queueChangedMessage, ticket, ticket.contact);
+                } catch (msgErr) {
+                  logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de transferência de fila para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+                }
               }
             }
     }

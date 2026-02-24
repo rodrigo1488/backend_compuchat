@@ -64,6 +64,7 @@ const CreateOrUpdateContactService = async ({
 
   // Usar findOrCreate para evitar race conditions
   // Esta operação é atômica e garante que apenas um registro seja criado
+  // NOTA: extraInfo é uma associação (hasMany → ContactCustomFields), não pode estar em defaults
   const [contact, created] = await Contact.findOrCreate({
     where: {
       number,
@@ -75,7 +76,6 @@ const CreateOrUpdateContactService = async ({
       profilePicUrl,
       email,
       isGroup,
-      extraInfo,
       companyId,
       whatsappId,
       userId: userId || null

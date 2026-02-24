@@ -132,7 +132,8 @@ const FindOrCreateTicketService = async (
       isGroup: !!groupContact,
       unreadMessages,
       whatsappId,
-      whatsapp,
+      // CORREÇÃO: não passar o objeto whatsapp inteiro (causava NaN/conflito de associação)
+      // apenas whatsappId (inteiro) é a coluna real da tabela
       companyId,
       // ✅ Herdar integração e prompt do WhatsApp
       integrationId: whatsapp?.integrationId || null,
@@ -158,6 +159,17 @@ const FindOrCreateTicketService = async (
       whatsappId,
       userId: ticket.userId
     });
+  }
+
+  // Guard: garantir que ticket e ticket.id são válidos antes de consultar o banco
+  if (!ticket || !ticket.id) {
+    logger.error("FindOrCreateTicketService: ticket.id está indefinido após todas as tentativas de criação/busca", {
+      contactId: contact.id,
+      companyId,
+      whatsappId,
+      groupContactId: groupContact?.id
+    });
+    throw new AppError("ERR_NO_TICKET_FOUND", 404);
   }
 
   ticket = await ShowTicketService(ticket.id, companyId);
