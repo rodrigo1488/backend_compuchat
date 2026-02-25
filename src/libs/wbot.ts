@@ -43,6 +43,9 @@ const retriesQrCodeMap = new Map<number, number>();
 // Mapa para rastrear sessões em processo de inicialização
 const initializingSessions = new Map<number, boolean>();
 
+// Mapa para contagem de reconexões por sessão (backoff exponencial)
+const reconnectAttemptsMap = new Map<number, number>();
+
 export const getWbot = (whatsappId: number): Session => {
   const sessionIndex = sessions.findIndex(s => s.id === whatsappId);
 
@@ -141,7 +144,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           version,
           // defaultQueryTimeoutMs: 60000,
           // retryRequestDelayMs: 250,
-          // keepAliveIntervalMs: 1000 * 60 * 10 * 3,
+          keepAliveIntervalMs: 1000 * 60, // 60s — evita conexão "zumbi"
           msgRetryCounterCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
         });
@@ -192,9 +195,19 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
 
               const disconnectStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
 
+              // Incrementar contador de reconexões para backoff exponencial
+              const currentAttempts = reconnectAttemptsMap.get(id) ?? 0;
+
               if (disconnectStatusCode === 403) {
                 // Conta banida/proibida — limpar sessão, NÃO reconectar (evita loop)
-                logger.warn(`Whatsapp ${name} desconectado com 403 (proibido/banido). Limpando sessão sem reconectar.`);
+                reconnectAttemptsMap.delete(id);
+                logger.warn({
+                  msg: `Whatsapp desconectado com 403 (proibido/banido). Limpando sessão sem reconectar.`,
+                  whatsappId: id,
+                  whatsappName: name,
+                  companyId: whatsapp.companyId,
+                  disconnectCode: 403
+                });
                 await whatsapp.update({ status: "PENDING", session: "" });
                 await DeleteBaileysService(whatsapp.id);
                 io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
@@ -203,22 +216,40 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                 });
                 removeWbot(id, false);
               } else if (disconnectStatusCode !== DisconnectReason.loggedOut) {
-                // Desconexão por rede/timeout/erro transitório — reconectar automaticamente
+                // Desconexão por rede/timeout/erro transitório — reconectar com backoff exponencial
+                const nextAttempt = currentAttempts + 1;
+                reconnectAttemptsMap.set(id, nextAttempt);
+                // Backoff: min(2^n * 1000, 60000) ms → 2s, 4s, 8s, 16s, 32s, 60s (máx)
+                const delay = Math.min(Math.pow(2, nextAttempt) * 1000, 60000);
+                logger.warn({
+                  msg: `Whatsapp desconectado. Reconectando com backoff.`,
+                  whatsappId: id,
+                  whatsappName: name,
+                  companyId: whatsapp.companyId,
+                  disconnectCode: disconnectStatusCode ?? "unknown",
+                  reconnectAttempt: nextAttempt,
+                  delayMs: delay
+                });
                 removeWbot(id, false);
-                // Aguardar um pouco antes de reconectar para evitar múltiplas inicializações
                 // Não reconectar se for Instagram ou Gupshup (não usam Baileys)
                 setTimeout(
                   () => {
-                    // Verificar se não está já inicializando e se não é Instagram/Gupshup antes de reconectar
                     if (!initializingSessions.get(id) && whatsapp.type !== "instagram" && whatsapp.provider !== "gupshup") {
                       StartWhatsAppSession(whatsapp, whatsapp.companyId);
                     }
                   },
-                  2000
+                  delay
                 );
               } else {
                 // loggedOut (401) — deslogado pelo WhatsApp, limpar sessão e aguardar novo QR
-                logger.warn(`Whatsapp ${name} desconectado por logout (401). Limpando sessão e aguardando novo QR.`);
+                reconnectAttemptsMap.delete(id);
+                logger.warn({
+                  msg: `Whatsapp desconectado por logout (401). Limpando sessão e aguardando novo QR.`,
+                  whatsappId: id,
+                  whatsappName: name,
+                  companyId: whatsapp.companyId,
+                  disconnectCode: DisconnectReason.loggedOut
+                });
                 await whatsapp.update({ status: "PENDING", session: "" });
                 await DeleteBaileysService(whatsapp.id);
                 io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
@@ -226,11 +257,10 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   session: whatsapp
                 });
                 removeWbot(id, false);
-                // Aguardar um pouco antes de reconectar para exibir QR de nova autenticação
+                // Aguardar antes de reconectar para exibir QR de nova autenticação
                 // Não reconectar se for Instagram ou Gupshup (não usam Baileys)
                 setTimeout(
                   () => {
-                    // Verificar se não está já inicializando e se não é Instagram/Gupshup antes de reconectar
                     if (!initializingSessions.get(id) && whatsapp.type !== "instagram" && whatsapp.provider !== "gupshup") {
                       StartWhatsAppSession(whatsapp, whatsapp.companyId);
                     }
@@ -241,6 +271,8 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
             }
 
             if (connection === "open") {
+              // Reconectou com sucesso — zerar contador de tentativas
+              reconnectAttemptsMap.delete(id);
               await whatsapp.update({
                 status: "CONNECTED",
                 qrcode: "",

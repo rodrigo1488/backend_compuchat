@@ -5,6 +5,7 @@ import type {
 } from "baileys";
 import { BufferJSON, initAuthCreds, proto } from "baileys";
 import Whatsapp from "../models/Whatsapp";
+import { logger } from "../utils/logger";
 
 const KEY_MAP: { [T in keyof SignalDataTypeMap]: string } = {
   "pre-key": "preKeys",
@@ -26,20 +27,57 @@ const authState = async (
 
   const saveState = async () => {
     try {
+      // Validação de integridade antes de persistir:
+      // Garante que as credenciais essenciais do protocolo Noise/Signal estão presentes.
+      // Salvar creds corrompidas/nulas causaria loop de auth inválido na próxima inicialização.
+      if (!creds?.noiseKey || !creds?.signedIdentityKey) {
+        logger.warn({
+          msg: "authState: saveState abortado — creds sem campos obrigatórios (noiseKey/signedIdentityKey). Sessão não será sobrescrita.",
+          whatsappId: whatsapp.id,
+          hasNoiseKey: !!creds?.noiseKey,
+          hasSignedIdentityKey: !!creds?.signedIdentityKey
+        });
+        return;
+      }
       await whatsapp.update({
         session: JSON.stringify({ creds, keys }, BufferJSON.replacer, 0)
       });
     } catch (error) {
-      console.log(error);
+      logger.error({
+        msg: "authState: erro ao salvar sessão no banco.",
+        whatsappId: whatsapp.id,
+        error
+      });
     }
   };
 
   // const getSessionDatabase = await whatsappById(whatsapp.id);
 
   if (whatsapp.session && whatsapp.session !== null) {
-    const result = JSON.parse(whatsapp.session, BufferJSON.reviver);
-    creds = result.creds;
-    keys = result.keys;
+    try {
+      const result = JSON.parse(whatsapp.session, BufferJSON.reviver);
+      // Verificar se o JSON parseado contém dados mínimos válidos
+      if (result?.creds?.noiseKey && result?.creds?.signedIdentityKey) {
+        creds = result.creds;
+        keys = result.keys ?? {};
+      } else {
+        logger.warn({
+          msg: "authState: sessão no banco está corrompida ou incompleta. Iniciando nova sessão (novo QR necessário).",
+          whatsappId: whatsapp.id,
+          hasCredsObject: !!result?.creds
+        });
+        creds = initAuthCreds();
+        keys = {};
+      }
+    } catch (parseError) {
+      logger.error({
+        msg: "authState: falha ao fazer parse da sessão salva. Iniciando nova sessão (novo QR necessário).",
+        whatsappId: whatsapp.id,
+        error: parseError
+      });
+      creds = initAuthCreds();
+      keys = {};
+    }
   } else {
     creds = initAuthCreds();
     keys = {};
