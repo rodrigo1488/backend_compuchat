@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/node";
 import makeWASocket, {
   WASocket,
+  WAVersion,
   Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
@@ -45,6 +46,16 @@ const initializingSessions = new Map<number, boolean>();
 
 // Mapa para contagem de reconexões por sessão (backoff exponencial)
 const reconnectAttemptsMap = new Map<number, number>();
+
+// Cache da versão do Baileys — buscada apenas uma vez por processo,
+// evitando uma requisição HTTP externa a cada reconexão de sessão.
+let baileysVersionCache: { version: WAVersion; isLatest: boolean } | null = null;
+
+const getBaileysVersion = async () => {
+  if (baileysVersionCache) return baileysVersionCache;
+  baileysVersionCache = await fetchLatestBaileysVersion();
+  return baileysVersionCache;
+};
 
 export const getWbot = (whatsappId: number): Session => {
   const sessionIndex = sessions.findIndex(s => s.id === whatsappId);
@@ -116,7 +127,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         // Marcar como em inicialização
         initializingSessions.set(id, true);
 
-        const { version, isLatest } = await fetchLatestBaileysVersion();
+        const { version, isLatest } = await getBaileysVersion();
         const isLegacy = provider === "stable" ? true : false;
 
         logger.info(`using WA v${version.join(".")}, isLatest: ${isLatest}`);
@@ -143,7 +154,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           },
           version,
           // defaultQueryTimeoutMs: 60000,
-          // retryRequestDelayMs: 250,
+          retryRequestDelayMs: 250, // espera entre tentativas de reenvio de mensagens falhas
           keepAliveIntervalMs: 1000 * 60, // 60s — evita conexão "zumbi"
           msgRetryCounterCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
