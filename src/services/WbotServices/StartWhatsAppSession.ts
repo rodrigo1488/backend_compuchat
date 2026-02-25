@@ -23,14 +23,33 @@ export const StartWhatsAppSession = async (
   }
 
   // Verificar se já existe uma sessão ativa antes de iniciar nova
+  // IMPORTANTE: Mesmo se a sessão existir, precisamos garantir que os listeners estão registrados
+  // pois durante reconexão, a sessão pode ter sido recriada sem listeners
   try {
     const { getWbot } = await import("../../libs/wbot");
-    getWbot(whatsapp.id);
-    // Se chegou aqui, a sessão já existe
-    logger.info(`Sessão ${whatsapp.name} já está ativa. Não iniciando nova sessão.`);
-    return;
+    const existingWbot = getWbot(whatsapp.id);
+    
+    // Verificar se os listeners já estão registrados verificando se há listeners no evento
+    const hasListeners = existingWbot.ev.listenerCount("messages.upsert") > 0;
+    
+    if (hasListeners) {
+      // Sessão existe E tem listeners - tudo OK
+      logger.info(`Sessão ${whatsapp.name} já está ativa com listeners. Não reiniciando.`);
+      return;
+    } else {
+      // Sessão existe mas SEM listeners - re-registrar (pode ter acontecido durante reconexão)
+      logger.warn({
+        msg: `Sessão ${whatsapp.name} existe mas sem listeners. Re-registrando listeners.`,
+        whatsappId: whatsapp.id,
+        companyId
+      });
+      wbotMessageListener(existingWbot, companyId);
+      wbotMonitor(existingWbot, whatsapp, companyId);
+      return;
+    }
   } catch (err) {
     // Se não existe sessão (erro ERR_WAPP_NOT_INITIALIZED), continuar com a inicialização
+    logger.debug(`Sessão ${whatsapp.name} não existe. Iniciando nova sessão.`);
   }
 
   await whatsapp.update({ status: "OPENING" });

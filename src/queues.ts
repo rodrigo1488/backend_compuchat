@@ -74,22 +74,82 @@ export const sendScheduledMessages = new BullQueue(
 export const campaignQueue = new BullQueue("CampaignQueue", connection);
 
 async function handleSendMessage(job) {
+  const jobId = job.id;
+  let retries = job.attemptsMade || 0;
+  const maxRetries = 3;
+  const { data } = job; // Mover para fora do try para estar disponível no catch
+
   try {
-    const { data } = job;
 
     const whatsapp = await Whatsapp.findByPk(data.whatsappId);
 
     if (whatsapp == null) {
-      throw Error("Whatsapp não identificado");
+      logger.error({
+        msg: "handleSendMessage: WhatsApp não identificado",
+        jobId,
+        whatsappId: data.whatsappId
+      });
+      throw new Error("Whatsapp não identificado");
     }
 
     const messageData: MessageData = data.data;
 
+    logger.debug({
+      msg: "handleSendMessage: Processando mensagem da fila",
+      jobId,
+      whatsappId: whatsapp.id,
+      companyId: whatsapp.companyId,
+      number: messageData.number,
+      retry: retries
+    });
+
     await SendMessage(whatsapp, messageData);
+
+    logger.debug({
+      msg: "handleSendMessage: Mensagem processada com sucesso",
+      jobId,
+      whatsappId: whatsapp.id
+    });
   } catch (e: any) {
-    Sentry.captureException(e);
-    logger.error("MessageQueue -> SendMessage: error", e.message);
-    throw e;
+    retries++;
+    const isLastAttempt = retries >= maxRetries;
+
+    logger.error({
+      msg: `handleSendMessage: Erro ao processar mensagem (tentativa ${retries}/${maxRetries})`,
+      jobId,
+      whatsappId: data?.whatsappId,
+      error: e?.message || e,
+      stack: e?.stack,
+      willRetry: !isLastAttempt
+    });
+
+    Sentry.captureException(e, {
+      tags: {
+        service: "handleSendMessage",
+        jobId,
+        whatsappId: data?.whatsappId,
+        retry: retries
+      },
+      extra: {
+        messageData: data?.data
+      }
+    });
+
+    // Se não for a última tentativa, re-lançar para que o Bull faça retry
+    if (!isLastAttempt) {
+      throw e;
+    }
+
+    // Na última tentativa, logar como falha definitiva mas não re-lançar
+    // para evitar que o job fique em loop infinito
+    logger.error({
+      msg: "handleSendMessage: Mensagem falhou após todas as tentativas. Job será marcado como falho.",
+      jobId,
+      whatsappId: data?.whatsappId
+    });
+    
+    // Não re-lançar na última tentativa - deixar o Bull marcar como falho
+    // Isso evita loop infinito mas permite que o job seja inspecionado manualmente
   }
 }
 

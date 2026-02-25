@@ -5,6 +5,7 @@ import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
 import WhatsAppService from "../WhatsAppService";
 import Whatsapp from "../../models/Whatsapp";
+import { logger } from "../../utils/logger";
 
 import formatBody from "../../helpers/Mustache";
 
@@ -82,11 +83,42 @@ const SendWhatsAppMessage = async ({
       options
     );
 
+    // Validar que a mensagem foi retornada com dados completos
+    if (!sentMessage || !sentMessage.key || !sentMessage.key.id) {
+      logger.error({
+        msg: "SendWhatsAppMessage: Mensagem enviada mas sem key.id retornado",
+        ticketId: ticket.id,
+        whatsappId: whatsapp.id,
+        hasSentMessage: !!sentMessage,
+        hasKey: !!sentMessage?.key
+      });
+      throw new AppError("ERR_SENDING_WAPP_MSG_INCOMPLETE");
+    }
+
     await ticket.update({ lastMessage: formattedBody });
+    
+    logger.debug({
+      msg: "SendWhatsAppMessage: Mensagem enviada com sucesso",
+      messageId: sentMessage.key.id,
+      ticketId: ticket.id,
+      remoteJid: sentMessage.key.remoteJid
+    });
+
     return sentMessage;
   } catch (err) {
-    Sentry.captureException(err);
-    console.log(err);
+    logger.error({
+      msg: "SendWhatsAppMessage: Erro ao enviar mensagem",
+      ticketId: ticket.id,
+      whatsappId: whatsapp.id,
+      error: err?.message || err
+    });
+    Sentry.captureException(err, {
+      tags: {
+        service: "SendWhatsAppMessage",
+        ticketId: ticket.id,
+        whatsappId: whatsapp.id
+      }
+    });
     throw new AppError("ERR_SENDING_WAPP_MSG");
   }
 };

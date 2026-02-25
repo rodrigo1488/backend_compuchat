@@ -155,7 +155,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
           version,
           // defaultQueryTimeoutMs: 60000,
           retryRequestDelayMs: 250, // espera entre tentativas de reenvio de mensagens falhas
-          keepAliveIntervalMs: 1000 * 60, // 60s — evita conexão "zumbi"
+          keepAliveIntervalMs: 1000 * 30, // 30s — heartbeat mais frequente para evitar desconexões
           msgRetryCounterCache,
           shouldIgnoreJid: jid => isJidBroadcast(jid),
         });
@@ -192,6 +192,10 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
         //   },
         // })
 
+        // Rastrear tempo de conexão para detectar travamentos em "connecting"
+        let connectionStartTime: number | null = null;
+        const CONNECTION_TIMEOUT_MS = 1000 * 60 * 5; // 5 minutos máximo para conectar
+
         wsocket.ev.on(
           "connection.update",
           async ({ connection, lastDisconnect, qr }) => {
@@ -200,7 +204,37 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
               }`
             );
 
+            // Detectar conexões travadas em "connecting"
+            if (connection === "connecting") {
+              if (connectionStartTime === null) {
+                connectionStartTime = Date.now();
+              } else {
+                const timeConnecting = Date.now() - connectionStartTime;
+                if (timeConnecting > CONNECTION_TIMEOUT_MS) {
+                  logger.warn({
+                    msg: "wbot: Conexão travada em 'connecting' por muito tempo. Forçando reconexão.",
+                    whatsappId: id,
+                    whatsappName: name,
+                    companyId: whatsapp.companyId,
+                    timeConnectingMs: timeConnecting
+                  });
+                  connectionStartTime = null;
+                  removeWbot(id, false);
+                  // Aguardar antes de reconectar
+                  setTimeout(() => {
+                    if (!initializingSessions.get(id) && whatsapp.type !== "instagram" && whatsapp.provider !== "gupshup") {
+                      StartWhatsAppSession(whatsapp, whatsapp.companyId);
+                    }
+                  }, 5000);
+                  return;
+                }
+              }
+            } else if (connection === "open") {
+              connectionStartTime = null; // Reset ao conectar com sucesso
+            }
+
             if (connection === "close") {
+              connectionStartTime = null; // Reset ao fechar
               // Limpar flag de inicialização
               initializingSessions.delete(id);
 

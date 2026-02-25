@@ -4893,15 +4893,42 @@ const wbotMessageListener = async (
 
       for (const message of messages) {
         try {
-          const messageExists = await Message.count({
-            where: { id: message.key.id!, companyId }
+          const messageId = message.key.id;
+          
+          if (!messageId) {
+            logger.warn({
+              msg: "wbotMessageListener: Mensagem sem ID ignorada",
+              remoteJid: message.key.remoteJid,
+              fromMe: message.key.fromMe,
+              companyId
+            });
+            continue;
+          }
+
+          // Verificação de duplicatas melhorada: usar findOne ao invés de count
+          // para evitar race conditions e ter mais informações
+          const existingMessage = await Message.findOne({
+            where: { id: messageId, companyId },
+            attributes: ["id", "createdAt"]
           });
 
-          if (!messageExists) {
+          if (!existingMessage) {
+            logger.debug({
+              msg: "wbotMessageListener: Processando nova mensagem",
+              messageId,
+              companyId,
+              remoteJid: message.key.remoteJid
+            });
+            
             await handleMessage(message, wbot, companyId);
             await verifyCampaignMessageAndCloseTicket(message, companyId);
           } else {
-            logger.debug(`Mensagem duplicada ignorada: ${message.key.id} (empresa: ${companyId})`);
+            logger.debug({
+              msg: "wbotMessageListener: Mensagem duplicada ignorada",
+              messageId,
+              companyId,
+              existingCreatedAt: existingMessage.createdAt
+            });
           }
         } catch (error) {
           logger.error({

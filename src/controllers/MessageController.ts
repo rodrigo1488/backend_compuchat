@@ -22,10 +22,12 @@ import SendWhatsAppMessage from "../services/WbotServices/SendWhatsAppMessage";
 import SendWhatsAppReaction from "../services/WbotServices/SendWhatsAppReaction";
 import ForwardWhatsAppMessage from "../services/WbotServices/ForwardWhatsAppMessage";
 import CreateMessageService from "../services/MessageServices/CreateMessageService";
+import { verifyMessage } from "../services/WbotServices/wbotMessageListener";
 import CheckContactNumber from "../services/WbotServices/CheckNumber";
 import CheckIsValidContact from "../services/WbotServices/CheckIsValidContact";
 import GetProfilePicUrl from "../services/WbotServices/GetProfilePicUrl";
 import CreateOrUpdateContactService from "../services/ContactServices/CreateOrUpdateContactService";
+import { logger } from "../utils/logger";
 type IndexQuery = {
   pageNumber: string;
 };
@@ -129,7 +131,50 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
       })
     );
   } else {
-    const send = await SendWhatsAppMessage({ body, ticket, quotedMsg, mentions });
+    try {
+      const sentMessage = await SendWhatsAppMessage({ body, ticket, quotedMsg, mentions });
+      
+      // CRÍTICO: Salvar mensagem no banco após envio bem-sucedido
+      // Isso garante que mensagens enviadas apareçam na listagem do frontend
+      if (sentMessage && sentMessage.key) {
+        await verifyMessage(sentMessage, ticket, ticket.contact);
+      }
+    } catch (error: any) {
+      // Se o envio falhar, ainda tentar salvar a mensagem com status de erro para rastreabilidade
+      logger.error({
+        msg: "MessageController.store: Erro ao enviar mensagem via WhatsApp",
+        ticketId: ticket.id,
+        companyId,
+        error: error?.message || error
+      });
+      
+      // Salvar mensagem com status de erro (ACK = -1 indica erro)
+      const errorMessageData = {
+        id: `${ticket.id}-${Date.now()}-error`,
+        ticketId: ticket.id,
+        contactId: ticket.contactId,
+        body: body || "",
+        fromMe: true,
+        read: true,
+        mediaType: "conversation",
+        ack: -1, // Status de erro
+        companyId,
+        dataJson: JSON.stringify({ error: error?.message || "Erro desconhecido", originalBody: body })
+      };
+      
+      try {
+        await CreateMessageService({ messageData: errorMessageData, companyId });
+      } catch (saveError) {
+        logger.error({
+          msg: "MessageController.store: Erro ao salvar mensagem de erro no banco",
+          ticketId: ticket.id,
+          error: saveError
+        });
+      }
+      
+      // Re-lançar o erro original para que o frontend saiba que falhou
+      throw error;
+    }
   }
 
   return res.send();

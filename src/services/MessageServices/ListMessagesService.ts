@@ -6,6 +6,7 @@ import Ticket from "../../models/Ticket";
 import ShowTicketService from "../TicketServices/ShowTicketService";
 import Queue from "../../models/Queue";
 import Contact from "../../models/Contact";
+import { logger } from "../../utils/logger";
 
 interface Request {
   ticketId: string;
@@ -107,6 +108,25 @@ const ListMessagesService = async ({
   });
 
   const hasMore = count > offset + messages.length;
+
+  // Logging de debug para diagnóstico de mensagens faltantes
+  logger.debug({
+    msg: "ListMessagesService: Resultado da query",
+    ticketId,
+    companyId,
+    pageNumber,
+    totalCount: count,
+    returnedCount: messages.length,
+    offset,
+    limit,
+    hasMore,
+    isFirstPage,
+    filters: {
+      queues: queues.length > 0 ? queues : "nenhum",
+      includeQuoted
+    },
+    messageIds: messages.map(m => m.id).slice(0, 5) // Primeiros 5 IDs para debug
+  });
 
   // Se é a primeira página, reverter a ordem para mostrar mais antigas primeiro, mais recentes por último
   // Se não, já está na ordem correta (mais antigas primeiro)

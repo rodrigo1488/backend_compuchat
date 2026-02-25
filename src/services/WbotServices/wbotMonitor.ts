@@ -32,6 +32,73 @@ const wbotMonitor = async (
   companyId: number
 ): Promise<void> => {
   try {
+    // Health check proativo: verifica periodicamente se a conexão está viva
+    // Isso ajuda a detectar conexões "zumbis" antes que o WhatsApp as feche com 428
+    let lastHealthCheck = Date.now();
+    let consecutiveHealthCheckFailures = 0;
+    const HEALTH_CHECK_INTERVAL_MS = 1000 * 60 * 2; // A cada 2 minutos
+    const MAX_CONSECUTIVE_FAILURES = 2; // Se falhar 2x consecutivas, considerar conexão morta
+
+    const healthCheckInterval = setInterval(async () => {
+      try {
+        // Verificar se o WebSocket está realmente aberto
+        // wbot.ws é um WebSocketClient do Baileys, verificar através do socket interno
+        // Usar type assertion para acessar propriedades internas de forma segura
+        const wsSocket = (wbot.ws as any)?.socket;
+        const readyState = wsSocket?.readyState;
+        // readyState pode ser número (1 = OPEN) ou string ("OPEN")
+        const isWebSocketOpen = readyState === 1 || readyState === "OPEN";
+        
+        if (!isWebSocketOpen && wbot.ws) {
+          consecutiveHealthCheckFailures++;
+          logger.warn({
+            msg: "wbotMonitor: Health check falhou - WebSocket não está aberto",
+            whatsappId: whatsapp.id,
+            whatsappName: whatsapp.name,
+            companyId,
+            consecutiveFailures: consecutiveHealthCheckFailures,
+            readyState: readyState ?? "unknown"
+          });
+
+          if (consecutiveHealthCheckFailures >= MAX_CONSECUTIVE_FAILURES) {
+            logger.error({
+              msg: "wbotMonitor: Conexão considerada morta após múltiplas falhas de health check. Limpando monitor.",
+              whatsappId: whatsapp.id,
+              whatsappName: whatsapp.name,
+              companyId
+            });
+            clearInterval(healthCheckInterval);
+            return;
+          }
+        } else {
+          // WebSocket está aberto - resetar contador de falhas
+          if (consecutiveHealthCheckFailures > 0) {
+            logger.info({
+              msg: "wbotMonitor: Health check recuperado - conexão está viva novamente",
+              whatsappId: whatsapp.id,
+              whatsappName: whatsapp.name,
+              companyId
+            });
+            consecutiveHealthCheckFailures = 0;
+          }
+          lastHealthCheck = Date.now();
+        }
+      } catch (healthCheckError) {
+        logger.error({
+          msg: "wbotMonitor: Erro ao executar health check",
+          whatsappId: whatsapp.id,
+          error: healthCheckError
+        });
+      }
+    }, HEALTH_CHECK_INTERVAL_MS);
+
+    // Limpar interval quando a conexão fechar
+    wbot.ev.on("connection.update", ({ connection }) => {
+      if (connection === "close") {
+        clearInterval(healthCheckInterval);
+      }
+    });
+
     // Armazenar timestamps das chamadas oferecidas para detectar rejeições rápidas
     const callOffers = new Map<string, number>();
 
