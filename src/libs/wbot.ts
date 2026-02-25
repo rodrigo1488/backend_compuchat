@@ -189,8 +189,12 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
             if (connection === "close") {
               // Limpar flag de inicialização
               initializingSessions.delete(id);
-              
-              if ((lastDisconnect?.error as Boom)?.output?.statusCode === 403) {
+
+              const disconnectStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+
+              if (disconnectStatusCode === 403) {
+                // Conta banida/proibida — limpar sessão, NÃO reconectar (evita loop)
+                logger.warn(`Whatsapp ${name} desconectado com 403 (proibido/banido). Limpando sessão sem reconectar.`);
                 await whatsapp.update({ status: "PENDING", session: "" });
                 await DeleteBaileysService(whatsapp.id);
                 io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
@@ -198,11 +202,8 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   session: whatsapp
                 });
                 removeWbot(id, false);
-              }
-              if (
-                (lastDisconnect?.error as Boom)?.output?.statusCode !==
-                DisconnectReason.loggedOut
-              ) {
+              } else if (disconnectStatusCode !== DisconnectReason.loggedOut) {
+                // Desconexão por rede/timeout/erro transitório — reconectar automaticamente
                 removeWbot(id, false);
                 // Aguardar um pouco antes de reconectar para evitar múltiplas inicializações
                 // Não reconectar se for Instagram ou Gupshup (não usam Baileys)
@@ -216,6 +217,8 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   2000
                 );
               } else {
+                // loggedOut (401) — deslogado pelo WhatsApp, limpar sessão e aguardar novo QR
+                logger.warn(`Whatsapp ${name} desconectado por logout (401). Limpando sessão e aguardando novo QR.`);
                 await whatsapp.update({ status: "PENDING", session: "" });
                 await DeleteBaileysService(whatsapp.id);
                 io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
@@ -223,7 +226,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   session: whatsapp
                 });
                 removeWbot(id, false);
-                // Aguardar um pouco antes de reconectar para evitar múltiplas inicializações
+                // Aguardar um pouco antes de reconectar para exibir QR de nova autenticação
                 // Não reconectar se for Instagram ou Gupshup (não usam Baileys)
                 setTimeout(
                   () => {
