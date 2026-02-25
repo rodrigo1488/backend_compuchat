@@ -2883,6 +2883,20 @@ export const handleRating = async (
   ticket: Ticket,
   ticketTraking: TicketTraking
 ) => {
+  // Validação defensiva: abortar se rate não for um número inteiro válido.
+  // NaN, undefined, Infinity e floats sem parte inteira chegam aqui quando
+  // o usuário manda texto livre (ex: "ok", "⭐", string vazia).
+  const rateInt = Math.round(rate);
+  if (!Number.isFinite(rate) || isNaN(rateInt)) {
+    logger.warn({
+      msg: "handleRating: valor de avaliação inválido recebido. Abortando sem salvar.",
+      rawRate: rate,
+      ticketId: ticket.id,
+      companyId: ticket.companyId
+    });
+    return;
+  }
+
   const io = getIO();
 
   const { complationMessage } = await ShowWhatsAppService(
@@ -2890,14 +2904,8 @@ export const handleRating = async (
     ticket.companyId
   );
 
-  let finalRate = rate;
-
-  if (rate < 1) {
-    finalRate = 1;
-  }
-  if (rate > 5) {
-    finalRate = 5;
-  }
+  // Clamp entre 1 e 5
+  const finalRate = Math.min(5, Math.max(1, rateInt));
 
   await UserRating.create({
     ticketId: ticketTraking.ticketId,
@@ -2907,7 +2915,7 @@ export const handleRating = async (
   });
 
   if (complationMessage) {
-    const body = formatBody(`\u200e${complationMessage}`, ticket.contact);
+    const body = formatBody(`‎${complationMessage}`, ticket.contact);
     await SendWhatsAppMessage({ body, ticket });
   }
 
@@ -3982,7 +3990,11 @@ const handleMessage = async (
     try {
       if (!isFromMe) {
         if (ticketTraking !== null && verifyRating(ticketTraking)) {
-          handleRating(parseFloat(bodyMessage), ticket, ticketTraking);
+          // Validar que a mensagem é um número inteiro antes de processar avaliação
+          const ratingMatch = bodyMessage?.trim().match(/^[1-5]$/);
+          if (ratingMatch) {
+            handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
+          }
           return;
         }
       }

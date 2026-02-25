@@ -7,7 +7,8 @@ import {
     PrimaryKey,
     ForeignKey,
     BelongsTo,
-    AutoIncrement
+    AutoIncrement,
+    DataType
   } from "sequelize-typescript";
 
   import Company from "./Company";
@@ -44,7 +45,15 @@ import {
     @BelongsTo(() => User)
     user: User;
   
-    @Column
+    @Column({
+      type: DataType.INTEGER,
+      allowNull: false,
+      validate: {
+        isInt: true,
+        min: 1,
+        max: 5
+      }
+    })
     rate: number;
   
     @CreatedAt
