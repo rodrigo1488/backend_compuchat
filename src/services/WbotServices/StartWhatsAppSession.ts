@@ -29,10 +29,11 @@ export const StartWhatsAppSession = async (
     const { getWbot } = await import("../../libs/wbot");
     const existingWbot = getWbot(whatsapp.id);
     
-    // Verificar se os listeners já estão registrados verificando se há listeners no evento
-    const hasListeners = existingWbot.ev.listenerCount("messages.upsert") > 0;
+    // Verificar se a sessão tem a propriedade customizada que indica listeners registrados
+    // Usamos uma propriedade customizada no wbot para rastrear isso
+    const hasListenersFlag = (existingWbot as any).__listenersRegistered === true;
     
-    if (hasListeners) {
+    if (hasListenersFlag) {
       // Sessão existe E tem listeners - tudo OK
       logger.info(`Sessão ${whatsapp.name} já está ativa com listeners. Não reiniciando.`);
       return;
@@ -45,6 +46,8 @@ export const StartWhatsAppSession = async (
       });
       wbotMessageListener(existingWbot, companyId);
       wbotMonitor(existingWbot, whatsapp, companyId);
+      // Marcar que listeners foram registrados
+      (existingWbot as any).__listenersRegistered = true;
       return;
     }
   } catch (err) {
@@ -64,6 +67,8 @@ export const StartWhatsAppSession = async (
     const wbot = await initWASocket(whatsapp);
     wbotMessageListener(wbot, companyId);
     wbotMonitor(wbot, whatsapp, companyId);
+    // Marcar que listeners foram registrados
+    (wbot as any).__listenersRegistered = true;
   } catch (err) {
     Sentry.captureException(err);
     logger.error(err);

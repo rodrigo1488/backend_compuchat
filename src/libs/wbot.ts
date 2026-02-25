@@ -73,6 +73,11 @@ export const removeWbot = async (
   try {
     const sessionIndex = sessions.findIndex(s => s.id === whatsappId);
     if (sessionIndex !== -1) {
+      // Limpar flag de listeners registrados
+      if (sessions[sessionIndex]) {
+        (sessions[sessionIndex] as any).__listenersRegistered = false;
+      }
+      
       if (isLogout) {
         sessions[sessionIndex].logout();
         sessions[sessionIndex].ws.close();

@@ -385,7 +385,7 @@ async function handleVerifyCampaigns(job) {
    * Implementar filtro de campanhas
    */
 
-  logger.info("[🏁] - Verificando campanhas...");
+  // Log removido para reduzir ruído - usar logger.debug se necessário
 
   const campaigns: { id: number; scheduledAt: string }[] =
     await sequelize.query(
@@ -420,7 +420,7 @@ async function handleVerifyCampaigns(job) {
     }
   }
 
-  logger.info("[🏁] - Finalizando verificação de campanhas programadas...");
+  // Log removido para reduzir ruído - usar logger.debug se necessário
 }
 
 async function getCampaign(id) {
@@ -1241,7 +1241,7 @@ export async function startQueueProcess() {
   }, 5 * 60 * 1000);
 
   campaignQueue.on('completed', (job) => {
-    logger.info(`[📌] -   Campanha ${job.id} completada em ${Date.now() - job.timestamp}ms`);
+    // Log removido para reduzir ruído - usar logger.debug se necessário
   });
 
   scheduleMonitor.add(

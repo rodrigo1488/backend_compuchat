@@ -6,7 +6,7 @@ import TestGeminiApiKeyService from "./TestGeminiApiKeyService";
 
 const TestAllGeminiApiKeysService = async (): Promise<void> => {
   try {
-    logger.info("Iniciando teste automático das chaves da API do Gemini...");
+    // Log removido para reduzir ruído - usar logger.debug se necessário
 
     // Buscar todas as empresas que têm API key configurada
     const geminiSettings = await Setting.findAll({
@@ -16,11 +16,11 @@ const TestAllGeminiApiKeysService = async (): Promise<void> => {
     });
 
     if (geminiSettings.length === 0) {
-      logger.info("Nenhuma chave da API do Gemini configurada no sistema.");
+      // Log removido para reduzir ruído
       return;
     }
 
-    logger.info(`Encontradas ${geminiSettings.length} chave(s) da API do Gemini para testar.`);
+    // Log removido para reduzir ruído
 
     // Buscar nomes das empresas
     const companyIds = geminiSettings.map(s => s.companyId);
@@ -54,7 +54,7 @@ const TestAllGeminiApiKeysService = async (): Promise<void> => {
     const validCount = results.filter(r => r.status === "fulfilled" && r.value.valid).length;
     const invalidCount = results.length - validCount;
 
-    logger.info(`Teste automático concluído: ${validCount} válida(s), ${invalidCount} inválida(s).`);
+    // Log removido para reduzir ruído - usar logger.debug se necessário
   } catch (err: any) {
     logger.error(`Erro ao executar teste automático das chaves do Gemini: ${err.message}`);
   }

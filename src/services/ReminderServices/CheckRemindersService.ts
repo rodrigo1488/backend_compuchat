@@ -75,9 +75,7 @@ const CheckRemindersService = async (): Promise<void> => {
       ]
     });
 
-    logger.info(
-      `CheckReminders: ${appointments.length} agendamento(s) e ${tasks.length} tarefa(s) para notificar`
-    );
+    // Log removido para reduzir ruído - usar logger.debug se necessário
 
     // 3. Processar lembretes de agendamentos
     for (const appointment of appointments) {

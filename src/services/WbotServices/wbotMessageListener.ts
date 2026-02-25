@@ -153,23 +153,7 @@ export const extractChatId = (msg: proto.IWebMessageInfo): string => {
 export const extractSenderId = (msg: proto.IWebMessageInfo): string => {
   const key = msg.key as any;
 
-  // LOG DETALHADO - CAPTURA TODOS OS CAMPOS PARA DIAGNÓSTICO
-  logger.info('🔍 === EXTRAÇÃO DE SENDER ID ===', {
-    messageId: msg.key.id,
-    fromMe: msg.key.fromMe,
-    remoteJid: msg.key.remoteJid,
-    participant: msg.key.participant,
-    participantAlt: key.participantAlt,
-    remoteJidAlt: key.remoteJidAlt,
-    msgParticipant: msg.participant,
-    pushName: msg.pushName,
-    verifiedBizName: (msg as any).verifiedBizName,
-    // Extrair números limpos de cada campo para comparação
-    remoteJidNumber: msg.key.remoteJid?.replace(/@.*$/, "").replace(/\D/g, ""),
-    participantNumber: msg.key.participant?.replace(/@.*$/, "").replace(/\D/g, ""),
-    participantAltNumber: key.participantAlt?.replace(/@.*$/, "").replace(/\D/g, ""),
-    remoteJidAltNumber: key.remoteJidAlt?.replace(/@.*$/, "").replace(/\D/g, "")
-  });
+  // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
 
   // NOVA LÓGICA: Priorizar campos que NÃO sejam LIDs
   // LIDs têm formato: numero@lid (ex: 52171554951275@lid)
@@ -200,7 +184,7 @@ export const extractSenderId = (msg: proto.IWebMessageInfo): string => {
       if (!isLid && isValidNumber) {
         selectedField = candidate.field;
         selectedValue = normalized;
-        logger.info(`✅ Campo válido encontrado: ${selectedField} = ${selectedValue}`);
+        // Log removido - usar logger.debug se necessário
         break;
       }
     }
@@ -219,10 +203,7 @@ export const extractSenderId = (msg: proto.IWebMessageInfo): string => {
     }
   }
 
-  const extractedNumber = selectedValue.replace(/@.*$/, "").replace(/\D/g, "");
-
-  logger.info(`✅ Sender ID FINAL selecionado de: ${selectedField} = ${selectedValue} (número: ${extractedNumber})`);
-
+  // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
   return selectedValue;
 };
 
@@ -299,7 +280,7 @@ export const isValidPhoneNumber = (number: string): boolean => {
 
   // Telefone válido tem entre 10-15 dígitos
   if (cleanNumber.length < 10 || cleanNumber.length > 15) {
-    logger.warn(`❌ Número inválido (comprimento: ${cleanNumber.length}): ${cleanNumber}`);
+    // Log removido - usar logger.debug se necessário para diagnóstico
     return false;
   }
 
@@ -775,11 +756,11 @@ const getContactMessage = async (msg: proto.IWebMessageInfo, wbot: Session) => {
     // Em privado, quando EU envio, o contato do ticket é o destinatário
     const key = msg.key as any;
     contactJid = key.remoteJidAlt || chatId;
-    logger.info(`📤 Mensagem ENVIADA por mim (privado): usando chatId como contato`);
+    // Log removido para reduzir ruído
   } else {
     // Em grupos ou mensagens recebidas, o contato é quem enviou
     contactJid = senderId;
-    logger.info(`📥 Mensagem RECEBIDA ou GRUPO: usando senderId como contato`);
+    // Log removido para reduzir ruído
   }
 
   // Extrair número limpo do JID
@@ -790,13 +771,7 @@ const getContactMessage = async (msg: proto.IWebMessageInfo, wbot: Session) => {
     name: isFromMe ? rawNumber : msg.pushName
   };
 
-  logger.info('✅ === CONTATO EXTRAÍDO ===', {
-    resultId: result.id,
-    resultName: result.name,
-    rawNumber: rawNumber,
-    rawNumberLength: rawNumber.length,
-    isValidNumber: isValidPhoneNumber(rawNumber)
-  });
+  // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
 
   return result;
 };
@@ -866,12 +841,7 @@ const verifyContact = async (
     ? msgContact.id
     : jidNormalizedUser(msgContact.id);
 
-  logger.info('🔄 JID Normalizado:', {
-    original: msgContact.id,
-    normalized: normalizedContactId,
-    isGroup: normalizedContactId.includes("g.us"),
-    isLid: normalizedContactId.includes("@lid")
-  });
+  // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
 
   try {
     profilePicUrl = await wbot.profilePictureUrl(normalizedContactId);
@@ -886,16 +856,11 @@ const verifyContact = async (
     ? normalizedContactId
     : normalizedContactId.replace(/@.*$/, "").replace(/\D/g, "");
 
-  logger.info('📱 Número extraído inicialmente:', {
-    contactNumber,
-    contactNumberLength: contactNumber.length,
-    isGroup,
-    isLid: normalizedContactId.includes("@lid")
-  });
+  // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
 
   // Tentar resolver LID para PN (Phone Number)
   if (!isGroup && normalizedContactId.includes("@lid")) {
-    logger.info('🔄 Tentando resolver LID para PN...');
+    // Log removido para reduzir ruído
 
     // ESTRATÉGIA 1: Usar lidMapping.getPNForLID
     const lidMappingStore = (wbot as any)?.signalRepository?.lidMapping;
@@ -905,11 +870,7 @@ const verifyContact = async (
         const pn = await Promise.resolve(getPNForLID(normalizedContactId));
         if (pn) {
           const resolvedNumber = pn.replace(/@.*$/, "").replace(/\D/g, "");
-          logger.info('✅ LID resolvido com sucesso (lidMapping):', {
-            lid: normalizedContactId,
-            pn: pn,
-            resolvedNumber: resolvedNumber
-          });
+          // Log removido para reduzir ruído
           contactNumber = resolvedNumber;
         } else {
           logger.warn('⚠️ LID não pôde ser resolvido via lidMapping - retornou null');
@@ -924,17 +885,13 @@ const verifyContact = async (
 
     // ESTRATÉGIA 2: Se ainda inválido, tentar onWhatsApp
     if (!isValidPhoneNumber(contactNumber)) {
-      logger.info('🔄 Estratégia 2: Tentando wbot.onWhatsApp...');
+      // Log removido para reduzir ruído
       try {
         const onWhatsAppResult = await wbot.onWhatsApp(normalizedContactId);
         if (onWhatsAppResult && onWhatsAppResult.length > 0) {
           const jid = onWhatsAppResult[0].jid;
           const phoneNumber = jid.replace(/@.*$/, "").replace(/\D/g, "");
-          logger.info('✅ Número obtido via onWhatsApp:', {
-            lid: normalizedContactId,
-            jid: jid,
-            phoneNumber: phoneNumber
-          });
+          // Log removido para reduzir ruído
           contactNumber = phoneNumber;
         } else {
           logger.warn('⚠️ onWhatsApp não retornou resultados');
@@ -947,13 +904,10 @@ const verifyContact = async (
 
     // ESTRATÉGIA 3: Se o JID original for diferente, tentar usar ele
     if (!isValidPhoneNumber(contactNumber) && msgContact.id !== normalizedContactId) {
-      logger.info('🔄 Estratégia 3: Tentando JID original...');
+      // Log removido para reduzir ruído
       const originalNumber = msgContact.id.replace(/@.*$/, "").replace(/\D/g, "");
       if (isValidPhoneNumber(originalNumber)) {
-        logger.info('✅ Número válido encontrado no JID original:', {
-          original: msgContact.id,
-          number: originalNumber
-        });
+        // Log removido para reduzir ruído
         contactNumber = originalNumber;
       }
     }
@@ -963,12 +917,7 @@ const verifyContact = async (
   if (!isGroup) {
     const isValid = isValidPhoneNumber(contactNumber);
 
-    logger.info('🔍 Validação do número:', {
-      contactNumber,
-      isValid,
-      length: contactNumber.length,
-      normalizedContactId
-    });
+    // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
 
     if (!isValid) {
       logger.error('❌ NÚMERO INVÁLIDO DETECTADO!', {

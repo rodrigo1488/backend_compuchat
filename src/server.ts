@@ -55,9 +55,7 @@ const server = app.listen(process.env.PORT, async () => {
 cron.schedule("* * * * *", async () => {
 
   try {
-    // console.log("Running a job at 01:00 at America/Sao_Paulo timezone")
-    logger.info(`Serviço de transferencia de tickets iniciado`);
-
+    // Log removido para reduzir ruído - usar logger.debug se necessário
     await TransferTicketQueue();
   }
   catch (error) {
