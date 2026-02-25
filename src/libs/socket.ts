@@ -11,6 +11,30 @@ import { CounterManager } from "./counter";
 
 let io: SocketIO;
 
+// Rate limiting para logs de token expirado — evita spam quando frontend fica em loop de reconexão
+const expiredTokenLogThrottle = new Map<string, number>();
+const EXPIRED_TOKEN_LOG_INTERVAL_MS = 30000; // Log apenas 1x a cada 30s por token
+
+const shouldLogExpiredToken = (token: string): boolean => {
+  if (!token) return true;
+  const now = Date.now();
+  const lastLog = expiredTokenLogThrottle.get(token);
+  if (!lastLog || (now - lastLog) >= EXPIRED_TOKEN_LOG_INTERVAL_MS) {
+    expiredTokenLogThrottle.set(token, now);
+    // Limpar entradas antigas (> 5 minutos) para não vazar memória
+    if (expiredTokenLogThrottle.size > 1000) {
+      const fiveMinutesAgo = now - 300000;
+      for (const [key, timestamp] of expiredTokenLogThrottle.entries()) {
+        if (timestamp < fiveMinutesAgo) {
+          expiredTokenLogThrottle.delete(key);
+        }
+      }
+    }
+    return true;
+  }
+  return false;
+};
+
 export const initIO = (httpServer: Server): SocketIO => {
   // Configurar CORS para permitir o frontend
   // Quando credentials: true, não podemos usar origin: "*"
@@ -59,16 +83,18 @@ export const initIO = (httpServer: Server): SocketIO => {
   });
 
   io.on("connection", async socket => {
-    logger.info("Client Connected");
     const { token } = socket.handshake.query;
+    const tokenStr = token as string;
     
     let tokenData = null;
     try {
-      tokenData = verify(token as string, authConfig.secret);
+      tokenData = verify(tokenStr, authConfig.secret);
       logger.debug(tokenData, "io-onConnection: tokenData");
     } catch (error) {
-      console.error(`❌ Erro ao decodificar token:`, error.message);
-      logger.warn(`[libs/socket.ts] Error decoding token: ${error?.message}`);
+      // Rate limit: log apenas 1x a cada 30s por token para evitar spam em loops de reconexão
+      if (shouldLogExpiredToken(tokenStr)) {
+        logger.debug(`[libs/socket.ts] Token expirado/inválido (throttled): ${error?.message}`);
+      }
       socket.disconnect();
       return io;
     }
@@ -96,7 +122,7 @@ export const initIO = (httpServer: Server): SocketIO => {
     socket.join(`company-${user.companyId}-mainchannel`);
     socket.join(`user-${user.id}`);
 
-    logger.info(`✅ Cliente autenticado - Socket ID: ${socket.id}, User ID: ${user.id}, Company ID: ${user.companyId}`);
+    logger.info(`✅ Cliente conectado e autenticado - Socket ID: ${socket.id}, User ID: ${user.id}, Company ID: ${user.companyId}`);
 
     socket.on("disconnect", (reason) => {
       logger.info(`🔌 Cliente desconectado - Socket ID: ${socket.id}, User ID: ${user.id}, Reason: ${reason}`);

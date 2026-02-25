@@ -39,9 +39,7 @@ const TestAllGeminiApiKeysService = async (): Promise<void> => {
         try {
           const result = await TestGeminiApiKeyService({ companyId });
           
-          if (result.valid) {
-            logger.info(`✅ Chave da API do Gemini válida para empresa: ${companyName} (ID: ${companyId})`);
-          } else {
+          if (!result.valid) {
             logger.error(`❌ Chave da API do Gemini inválida para empresa: ${companyName} (ID: ${companyId}) - ${result.message}`);
           }
           

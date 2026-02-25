@@ -34,8 +34,6 @@ const TestGeminiApiKeyService = async ({
   try {
     const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent`;
 
-    console.log(`🧪 Testando chave Gemini (${GEMINI_MODEL})...`);
-
     const { data } = await axios.post(
       `${url}?key=${apiKey}`,
       {
@@ -65,8 +63,6 @@ const TestGeminiApiKeyService = async ({
         message: "Resposta vazia do Gemini. Verifique a configuração da API."
       };
     }
-
-    console.log(`✅ Chave Gemini válida e funcionando`);
 
     return {
       valid: true,

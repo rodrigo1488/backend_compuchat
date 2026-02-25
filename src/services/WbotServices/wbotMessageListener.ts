@@ -2276,10 +2276,30 @@ export const verifyMediaMessage = async (
     lastMessage: body || "Arquivo de mídia"
   });
 
-  const newMessage = await CreateMessageService({
-    messageData,
-    companyId: ticket.companyId
-  });
+  let newMessage: Message;
+  try {
+    newMessage = await CreateMessageService({
+      messageData,
+      companyId: ticket.companyId
+    });
+  } catch (error) {
+    logger.error({
+      msg: "verifyMediaMessage: Falha crítica ao salvar mensagem de mídia no banco",
+      messageId: messageData.id,
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      error: error?.message || error
+    });
+    Sentry.captureException(error, {
+      tags: {
+        service: "verifyMediaMessage",
+        messageId: messageData.id,
+        ticketId: ticket.id
+      }
+    });
+    // Re-lançar o erro para que o chamador saiba que a mensagem não foi salva
+    throw error;
+  }
 
   // Verificar se é uma resposta de avaliação ANTES de reabrir o ticket
   if (!msg.key.fromMe && ticket.status === "closed") {
@@ -2397,7 +2417,26 @@ export const verifyMessage = async (
     lastMessage: body
   });
 
-  await CreateMessageService({ messageData, companyId: ticket.companyId });
+  try {
+    await CreateMessageService({ messageData, companyId: ticket.companyId });
+  } catch (error) {
+    logger.error({
+      msg: "verifyMessage: Falha crítica ao salvar mensagem no banco",
+      messageId: messageData.id,
+      ticketId: ticket.id,
+      companyId: ticket.companyId,
+      error: error?.message || error
+    });
+    Sentry.captureException(error, {
+      tags: {
+        service: "verifyMessage",
+        messageId: messageData.id,
+        ticketId: ticket.id
+      }
+    });
+    // Re-lançar o erro para que o chamador saiba que a mensagem não foi salva
+    throw error;
+  }
 
   // Verificar se é uma resposta de avaliação ANTES de reabrir o ticket
   if (!msg.key.fromMe && ticket.status === "closed") {
@@ -4865,8 +4904,28 @@ const wbotMessageListener = async (
             logger.debug(`Mensagem duplicada ignorada: ${message.key.id} (empresa: ${companyId})`);
           }
         } catch (error) {
-          logger.error(`Erro ao processar mensagem ${message.key.id}: ${error}`);
-          Sentry.captureException(error);
+          logger.error({
+            msg: "wbotMessageListener: Erro crítico ao processar mensagem",
+            messageId: message.key.id,
+            remoteJid: message.key.remoteJid,
+            fromMe: message.key.fromMe,
+            companyId,
+            error: error?.message || error,
+            stack: error?.stack
+          });
+          Sentry.captureException(error, {
+            tags: {
+              service: "wbotMessageListener",
+              messageId: message.key.id,
+              companyId
+            },
+            extra: {
+              remoteJid: message.key.remoteJid,
+              fromMe: message.key.fromMe
+            }
+          });
+          // NÃO re-lançar o erro aqui — continuar processando outras mensagens do batch
+          // O erro já foi logado e enviado ao Sentry para investigação
         }
       }
     });

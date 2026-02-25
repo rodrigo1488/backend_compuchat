@@ -219,12 +219,20 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   companyId: whatsapp.companyId,
                   disconnectCode: 403
                 });
-                await whatsapp.update({ status: "PENDING", session: "" });
-                await DeleteBaileysService(whatsapp.id);
-                io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
-                  action: "update",
-                  session: whatsapp
-                });
+                try {
+                  await whatsapp.update({ status: "PENDING", session: "" });
+                  await DeleteBaileysService(whatsapp.id);
+                  io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
+                    action: "update",
+                    session: whatsapp
+                  });
+                } catch (cleanupError) {
+                  logger.error({
+                    msg: "Erro ao limpar sessão após 403",
+                    whatsappId: id,
+                    error: cleanupError
+                  });
+                }
                 removeWbot(id, false);
               } else if (disconnectStatusCode !== DisconnectReason.loggedOut) {
                 // Desconexão por rede/timeout/erro transitório — reconectar com backoff exponencial
@@ -261,12 +269,20 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   companyId: whatsapp.companyId,
                   disconnectCode: DisconnectReason.loggedOut
                 });
-                await whatsapp.update({ status: "PENDING", session: "" });
-                await DeleteBaileysService(whatsapp.id);
-                io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
-                  action: "update",
-                  session: whatsapp
-                });
+                try {
+                  await whatsapp.update({ status: "PENDING", session: "" });
+                  await DeleteBaileysService(whatsapp.id);
+                  io.to(`company-${whatsapp.companyId}-mainchannel`).emit(`company-${whatsapp.companyId}-whatsappSession`, {
+                    action: "update",
+                    session: whatsapp
+                  });
+                } catch (cleanupError) {
+                  logger.error({
+                    msg: "Erro ao limpar sessão após 401",
+                    whatsappId: id,
+                    error: cleanupError
+                  });
+                }
                 removeWbot(id, false);
                 // Aguardar antes de reconectar para exibir QR de nova autenticação
                 // Não reconectar se for Instagram ou Gupshup (não usam Baileys)
