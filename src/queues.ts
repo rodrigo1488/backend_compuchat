@@ -26,6 +26,7 @@ import ShowFileService from "./services/FileServices/ShowService";
 import { differenceInSeconds } from "date-fns";
 import formatBody from "./helpers/Mustache";
 import { ClosedAllOpenTickets } from "./services/WbotServices/wbotClosedTickets";
+import CloseInactiveTicketsService from "./services/TicketServices/CloseInactiveTicketsService";
 
 
 const nodemailer = require('nodemailer');
@@ -1104,6 +1105,24 @@ async function handleInvoiceCreate() {
 }
 
 handleCloseTicketsAutomatic()
+
+async function handleCloseInactiveTickets48h() {
+  const job = new CronJob('0 */6 * * *', async () => {
+    // Executa a cada 6 horas (4x por dia) para verificar tickets inativos há 48h
+    try {
+      logger.info("Iniciando verificação de tickets inativos há 48h...");
+      const closedCount = await CloseInactiveTicketsService();
+      logger.info(`Verificação concluída: ${closedCount} ticket(s) fechado(s) por inatividade (48h)`);
+    } catch (e: any) {
+      Sentry.captureException(e);
+      logger.error("CloseInactiveTicketsService -> Verify: error", e.message);
+      throw e;
+    }
+  });
+  job.start();
+}
+
+handleCloseInactiveTickets48h()
 
 handleInvoiceCreate()
 
