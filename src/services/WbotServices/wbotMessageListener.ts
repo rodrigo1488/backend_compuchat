@@ -3746,7 +3746,7 @@ export const handleMessageIntegration = async (
           isFirstMsg
         );
       } else {
-        logger.warn('❌ FlowBuilderQueue não chamado - condições não atendidas');
+        logger.debug('FlowBuilderQueue não chamado - condições não atendidas');
       }
     }
   } else {
@@ -4510,7 +4510,7 @@ const handleMessage = async (
       useIntegration: ticket.useIntegration
     };
 
-    logger.info('🔍 === VERIFICAÇÃO FLOWBUILDER ===', checkFlowBuilder);
+    logger.debug('VERIFICACAO FLOWBUILDER', checkFlowBuilder);
 
     if (
       !isFromMe &&
@@ -4559,7 +4559,7 @@ const handleMessage = async (
         integrationId: integrations.id
       });
     } else {
-      logger.warn('❌ FlowBuilder NÃO foi acionado. Motivos:', {
+      logger.debug('FlowBuilder NAO foi acionado. Motivos:', {
         bloqueadoPor: {
           isFromMe: isFromMe ? '❌ Mensagem enviada por mim' : '✅',
           isGroup: ticket.isGroup ? '❌ É grupo' : '✅',

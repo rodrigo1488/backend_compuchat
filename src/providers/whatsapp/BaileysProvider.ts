@@ -12,6 +12,27 @@ import fs from "fs";
 import { getMessageOptions } from "../../services/WbotServices/SendWhatsAppMedia";
 
 class BaileysProvider implements IWhatsAppProvider {
+  // Serializa envios por sessão para evitar concorrência no estado Signal
+  private readonly sendLocks = new Map<number, Promise<unknown>>();
+
+  private enqueueSend<T>(whatsappId: number, task: () => Promise<T>): Promise<T> {
+    const previous = this.sendLocks.get(whatsappId) ?? Promise.resolve();
+
+    const current = previous
+      .catch(() => undefined)
+      .then(task);
+
+    this.sendLocks.set(whatsappId, current);
+
+    current.finally(() => {
+      if (this.sendLocks.get(whatsappId) === current) {
+        this.sendLocks.delete(whatsappId);
+      }
+    });
+
+    return current;
+  }
+
   /**
    * Constrói o JID correto para envio de mensagens.
    * CORREÇÃO: Detecta se é grupo baseado no formato do número
@@ -46,28 +67,30 @@ class BaileysProvider implements IWhatsAppProvider {
     options?: SendMessageOptions
   ): Promise<WAMessage> {
     try {
-      const wbot = await GetWhatsappWbot(whatsapp);
-      // CORREÇÃO: Usar buildChatJid para suportar grupos corretamente
-      const chatId = this.buildChatJid(number);
-      const formattedBody = `\u200e${body}`;
+      return this.enqueueSend(whatsapp.id, async () => {
+        const wbot = await GetWhatsappWbot(whatsapp);
+        // CORREÇÃO: Usar buildChatJid para suportar grupos corretamente
+        const chatId = this.buildChatJid(number);
+        const formattedBody = `\u200e${body}`;
 
-      // Converter opções para o formato esperado pelo Baileys
-      const baileysOptions = options as MiscMessageGenerationOptions & { contextInfo?: { mentionedJid?: string[] } };
+        // Converter opções para o formato esperado pelo Baileys
+        const baileysOptions = options as MiscMessageGenerationOptions & { contextInfo?: { mentionedJid?: string[] } };
 
-      // Baileys espera "mentions" no nível raiz do conteúdo (não contextInfo) - processa e injeta em contextInfo
-      const messageContent: any = { text: formattedBody };
-      const mentionedJid = baileysOptions?.contextInfo?.mentionedJid;
-      if (mentionedJid?.length) {
-        messageContent.mentions = mentionedJid;
-      }
+        // Baileys espera "mentions" no nível raiz do conteúdo (não contextInfo) - processa e injeta em contextInfo
+        const messageContent: any = { text: formattedBody };
+        const mentionedJid = baileysOptions?.contextInfo?.mentionedJid;
+        if (mentionedJid?.length) {
+          messageContent.mentions = mentionedJid;
+        }
 
-      const sentMessage = await wbot.sendMessage(
-        chatId,
-        messageContent,
-        baileysOptions
-      );
+        const sentMessage = await wbot.sendMessage(
+          chatId,
+          messageContent,
+          baileysOptions
+        );
 
-      return sentMessage;
+        return sentMessage;
+      });
     } catch (err) {
       Sentry.captureException(err);
       console.log(err);
@@ -82,23 +105,25 @@ class BaileysProvider implements IWhatsAppProvider {
     options?: SendMediaOptions
   ): Promise<WAMessage> {
     try {
-      const wbot = await GetWhatsappWbot(whatsapp);
-      // CORREÇÃO: Usar buildChatJid para suportar grupos corretamente
-      const chatId = this.buildChatJid(number);
+      return this.enqueueSend(whatsapp.id, async () => {
+        const wbot = await GetWhatsappWbot(whatsapp);
+        // CORREÇÃO: Usar buildChatJid para suportar grupos corretamente
+        const chatId = this.buildChatJid(number);
 
-      const messageOptions = await getMessageOptions(
-        options?.fileName || "",
-        mediaPath,
-        options?.caption
-      );
+        const messageOptions = await getMessageOptions(
+          options?.fileName || "",
+          mediaPath,
+          options?.caption
+        );
 
-      if (!messageOptions) {
-        throw new AppError("ERR_INVALID_MEDIA");
-      }
+        if (!messageOptions) {
+          throw new AppError("ERR_INVALID_MEDIA");
+        }
 
-      const sentMessage = await wbot.sendMessage(chatId, messageOptions);
+        const sentMessage = await wbot.sendMessage(chatId, messageOptions);
 
-      return sentMessage;
+        return sentMessage;
+      });
     } catch (err) {
       Sentry.captureException(err);
       console.log(err);

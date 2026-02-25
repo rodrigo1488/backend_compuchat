@@ -19,6 +19,9 @@ const KEY_MAP: { [T in keyof SignalDataTypeMap]: string } = {
   tctoken: "tctoken"
 };
 
+// Serializa gravações de estado por sessão para evitar sobrescrita concorrente
+const authSaveLocks = new Map<number, Promise<void>>();
+
 const authState = async (
   whatsapp: Whatsapp
 ): Promise<{ state: AuthenticationState; saveState: () => void }> => {
@@ -39,9 +42,22 @@ const authState = async (
         });
         return;
       }
-      await whatsapp.update({
-        session: JSON.stringify({ creds, keys }, BufferJSON.replacer, 0)
-      });
+      const previous = authSaveLocks.get(whatsapp.id) ?? Promise.resolve();
+
+      const current = previous
+        .catch(() => undefined)
+        .then(async () => {
+          await whatsapp.update({
+            session: JSON.stringify({ creds, keys }, BufferJSON.replacer, 0)
+          });
+        });
+
+      authSaveLocks.set(whatsapp.id, current);
+      await current;
+
+      if (authSaveLocks.get(whatsapp.id) === current) {
+        authSaveLocks.delete(whatsapp.id);
+      }
     } catch (error) {
       logger.error({
         msg: "authState: erro ao salvar sessão no banco.",
