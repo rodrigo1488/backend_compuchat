@@ -34,16 +34,7 @@ const CreateOrUpdateContactService = async ({
 }: Request): Promise<Contact> => {
   const number = isGroup ? rawNumber : rawNumber.replace(/[^0-9]/g, "");
 
-  // LOG CRÍTICO - Rastrear o que está sendo salvo
-  logger.info('💾 === CREATE OR UPDATE CONTACT SERVICE ===', {
-    rawNumber,
-    processedNumber: number,
-    numberLength: number.length,
-    isGroup,
-    companyId,
-    name,
-    whatsappId
-  });
+  // Log removido para reduzir ruído
 
   const io = getIO();
   let finalName = name;
@@ -82,14 +73,7 @@ const CreateOrUpdateContactService = async ({
     }
   });
 
-  // LOG DO RESULTADO
-  logger.info(`${created ? '✅ CONTATO CRIADO' : '🔄 CONTATO EXISTENTE'}`, {
-    contactId: contact.id,
-    contactNumber: contact.number,
-    contactName: contact.name,
-    created,
-    companyId
-  });
+  // Log removido para reduzir ruído
 
   // Se o contato já existia, atualizar os dados
   if (!created) {

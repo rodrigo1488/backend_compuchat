@@ -333,7 +333,6 @@ export const isValidPhoneNumber = (number: string): boolean => {
   );
 
   if (!hasValidCountryCode) {
-    logger.warn(`❌ Número com código de país não reconhecido: ${cleanNumber}`);
     return false;
   }
 
@@ -740,14 +739,7 @@ const getContactMessage = async (msg: proto.IWebMessageInfo, wbot: Session) => {
   const { chatId, senderId, isGroup, isFromMe } = extractMessageContext(msg);
   let contactJid: string;
 
-  logger.info('📞 === GET CONTACT MESSAGE ===', {
-    messageId: msg.key.id,
-    chatId,
-    senderId,
-    isGroup,
-    isFromMe,
-    pushName: msg.pushName
-  });
+  // Log removido para reduzir ruído
 
   // Lógica de identificação do contato:
   // 1. Mensagem enviada por mim em chat privado → contato é o DESTINATÁRIO (chatId)
@@ -826,13 +818,7 @@ const verifyContact = async (
   wbot: Session,
   companyId: number
 ): Promise<Contact> => {
-  // LOG INICIAL - Captura o que está entrando na função
-  logger.info('🔎 === VERIFY CONTACT (INÍCIO) ===', {
-    msgContactId: msgContact.id,
-    msgContactName: msgContact.name,
-    companyId: companyId,
-    msgContactIdLength: msgContact.id.length
-  });
+  // Log removido para reduzir ruído
 
   let profilePicUrl: string;
 
