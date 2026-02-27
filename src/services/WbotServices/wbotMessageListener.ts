@@ -73,6 +73,7 @@ import Tag from "../../models/Tag";
 import SyncTags from "../TagServices/SyncTagsService";
 import ExecuteAppointmentFunction from "../AppointmentAIService/ExecuteAppointmentFunction";
 import ParseAppointmentCommand from "../AppointmentAIService/ParseAppointmentCommand";
+import DashboardCommandService from "../AiServices/DashboardCommandService";
 
 import { IConnections, INodes } from "../WebhookService/DispatchWebHookService";
 import { ActionsWebhookService } from "../WebhookService/ActionsWebhookService";
@@ -1244,6 +1245,50 @@ const sendTransferMessage = async (
   }
 };
 
+// Função para detectar se a mensagem é um comando de agendamento ou tarefa
+const detectCommandType = (message: string): "appointment" | "task" | "none" => {
+  const lower = message.toLowerCase().trim();
+  
+  const appointmentKeywords = [
+    "agende", "agendar", "agendamento", "agendamentos",
+    "marcar reunião", "marcar encontro", "marcar consulta", "marcar compromisso", "marcar",
+    "criar agendamento", "criar reunião", "criar encontro", "criar compromisso",
+    "reunião", "reuniões", "encontro", "encontros",
+    "compromisso", "compromissos",
+    "horário", "horario", "horários", "horarios",
+    "agenda", "agendar para", "marcar para",
+    "quero agendar", "preciso agendar", "vou agendar",
+    "marcar uma", "agendar uma", "fazer um agendamento",
+    "agende uma reunião", "agendar uma reunião", "marcar uma reunião",
+    "agende uma", "agendar uma", "agende para", "agendar para"
+  ];
+  
+  const taskKeywords = [
+    "criar tarefa", "criar uma tarefa", "nova tarefa",
+    "tarefa", "tarefas",
+    "lembre-me", "lembrar", "lembre", "me lembre",
+    "lembrar de", "não esquecer", "nao esquecer",
+    "criar lembrete", "lembrete"
+  ];
+  
+  // "agende" e "agendar" sempre indicam agendamento
+  const alwaysAppointment = ["agende", "agendar", "agendamento", "agendamentos", "agenda"];
+  if (alwaysAppointment.some(keyword => lower.includes(keyword))) {
+    return "appointment";
+  }
+  
+  // Verificar outras palavras-chave
+  if (appointmentKeywords.some(keyword => lower.includes(keyword))) {
+    return "appointment";
+  }
+  
+  if (taskKeywords.some(keyword => lower.includes(keyword))) {
+    return "task";
+  }
+  
+  return "none";
+};
+
 const handleOpenAi = async (
   msg: proto.IWebMessageInfo,
   wbot: Session,
@@ -1371,6 +1416,116 @@ const handleOpenAi = async (
   logger.info(`✅ handleOpenAi: Iniciando bot - Ticket: ${ticket.id}, Prompt: ${prompt.name || 'N/A'}, Provider: ${prompt.provider || 'openai'}`);
 
   if (msg.messageStubType) return;
+
+  // PRIORIDADE: Verificar se a mensagem é um comando de agendamento/tarefa ANTES de processar com IA
+  const commandType = detectCommandType(bodyMessage);
+  
+  if (commandType !== "none" && prompt.permitirCriarAgendamentos) {
+    try {
+      logger.info(`🔍 [OpenAI] Comando detectado: ${commandType} - Processando...`);
+      
+      // Buscar userId: usar do ticket se disponível, senão buscar primeiro usuário da empresa
+      let userId = ticket.userId;
+      if (!userId) {
+        const ticketUser = await User.findOne({
+          where: { companyId: ticket.companyId },
+          order: [["id", "ASC"]],
+          limit: 1
+        });
+        userId = ticketUser?.id || 1; // Fallback para userId padrão
+      }
+      
+      const commandResult = await DashboardCommandService({
+        companyId: ticket.companyId,
+        userId,
+        command: bodyMessage
+      });
+
+      logger.info(`📋 [OpenAI] Resultado do comando:`, {
+        success: commandResult.success,
+        action: commandResult.action,
+        hasTask: !!commandResult.task,
+        hasAppointment: !!commandResult.appointment
+      });
+
+      // Se o comando foi executado com sucesso, enviar mensagem automática SEM chamar IA
+      if (commandResult.success) {
+        let responseText = "";
+        
+        if (commandResult.action === "create_task" && commandResult.task) {
+          responseText = `✅ Tarefa criada com sucesso!\n\n📋 ${commandResult.task.title}`;
+          if (commandResult.task.description) {
+            responseText += `\n\n${commandResult.task.description}`;
+          }
+          if (commandResult.task.dueDate) {
+            const dueDate = new Date(commandResult.task.dueDate);
+            responseText += `\n\n📅 Prazo: ${dueDate.toLocaleString("pt-BR", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit"
+            })}`;
+          }
+        } else if (commandResult.action === "create_appointment" && commandResult.appointment) {
+          responseText = `✅ Agendamento concluído!\n\n📅 ${commandResult.appointment.title}`;
+          if (commandResult.appointment.description) {
+            responseText += `\n\n${commandResult.appointment.description}`;
+          }
+          if (commandResult.appointment.startTime) {
+            const startTime = new Date(commandResult.appointment.startTime);
+            const endTime = commandResult.appointment.endTime 
+              ? new Date(commandResult.appointment.endTime)
+              : new Date(startTime.getTime() + 60 * 60 * 1000);
+            
+            const startDateStr = startTime.toLocaleDateString("pt-BR", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric"
+            });
+            const startTimeStr = startTime.toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            const endTimeStr = endTime.toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            
+            responseText += `\n\n🕐 Horário: ${startDateStr} das ${startTimeStr} às ${endTimeStr}`;
+          }
+        } else {
+          responseText = commandResult.message || "✅ Comando executado com sucesso!";
+        }
+
+        logger.info(`✅ [OpenAI] ${commandResult.action === "create_appointment" ? "Agendamento" : "Tarefa"} criado com sucesso - Enviando mensagem automática`);
+        
+        // Enviar mensagem automática e retornar SEM chamar IA
+        const chatJid = getChatJid(ticket);
+        const sentMessage = await wbot.sendMessage(chatJid, {
+          text: responseText
+        });
+        await verifyMessage(sentMessage!, ticket, contact);
+        openAiProcessingLocks.delete(lockKey); // Remover lock antes de retornar
+        return;
+      } else {
+        // Comando não foi executado - continuar com IA para explicar o problema
+        logger.warn(`⚠️ [OpenAI] Comando não executado: ${commandResult.message}`);
+        // Continuar com o fluxo normal da IA para que ela possa explicar o problema
+      }
+    } catch (err: any) {
+      logger.error(`❌ [OpenAI] Erro ao processar comando no chat:`, err);
+      // Em caso de erro, enviar mensagem de erro e retornar SEM chamar IA
+      const chatJid = getChatJid(ticket);
+      const errorResponseText = `❌ Não foi possível processar o comando: ${err.message || "Erro desconhecido"}. Por favor, tente novamente.`;
+      const sentErrorMessage = await wbot.sendMessage(chatJid, {
+        text: errorResponseText
+      });
+      await verifyMessage(sentErrorMessage!, ticket, contact);
+      openAiProcessingLocks.delete(lockKey); // Remover lock antes de retornar
+      return;
+    }
+  }
 
   const publicFolder: string = path.resolve(
     __dirname,
