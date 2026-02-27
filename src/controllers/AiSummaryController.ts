@@ -4,6 +4,7 @@ import ChatGeminiService from "../services/AiServices/ChatGeminiService";
 import TestGeminiApiKeyService from "../services/AiServices/TestGeminiApiKeyService";
 import TestOpenAIApiKeyService from "../services/AiServices/TestOpenAIApiKeyService";
 import { AIProviderSelector } from "../services/AiServices/AIProviderSelector";
+import DashboardCommandService from "../services/AiServices/DashboardCommandService";
 
 export const agentSummary = async (
   req: Request,
@@ -51,7 +52,7 @@ export const chat = async (
   res: Response
 ): Promise<Response> => {
   try {
-    const { companyId } = req.user;
+    const { companyId, id } = req.user;
     const { message, conversationHistory, articles } = req.body;
 
     if (!message || !message.trim()) {
@@ -60,6 +61,7 @@ export const chat = async (
 
     const response = await ChatGeminiService({
       companyId,
+      userId: Number(id),
       message: message.trim(),
       conversationHistory: conversationHistory || [],
       articles: articles || []
@@ -76,6 +78,101 @@ export const chat = async (
     return res.status(500).json({ 
       error: "ERR_GEMINI_CHAT",
       message: err.message || "Erro ao processar mensagem com IA"
+    });
+  }
+};
+
+
+export const dashboardCommand = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { companyId, id } = req.user;
+    const { command } = req.body;
+
+    if (!command || !String(command).trim()) {
+      return res.status(400).json({ error: "Comando e obrigatorio" });
+    }
+
+    const result = await DashboardCommandService({
+      companyId,
+      userId: Number(id),
+      command: String(command).trim()
+    });
+
+    return res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Erro ao executar comando IA do dashboard:", err);
+
+    if (err.message === "GEMINI_KEY_MISSING") {
+      return res.status(400).json({ error: "GEMINI_KEY_MISSING" });
+    }
+
+    return res.status(500).json({
+      error: "ERR_AI_DASHBOARD_COMMAND",
+      message: err.message || "Erro ao executar comando do dashboard"
+    });
+  }
+};
+
+export const chatWithAudio = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { companyId, id } = req.user;
+    const { conversationHistory } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({ error: "Arquivo de áudio é obrigatório" });
+    }
+
+    // Transcrever áudio
+    const provider = await AIProviderSelector.getProvider(companyId, "transcription");
+    const audioBuffer = req.file.buffer;
+    const mimeType = req.file.mimetype || "audio/webm";
+
+    console.log(`🎤 Transcrevendo áudio do chat interno (${(audioBuffer.length / 1024).toFixed(2)}KB)...`);
+    
+    const transcription = await provider.transcribeAudio(
+      audioBuffer,
+      mimeType,
+      { prompt: undefined }
+    );
+
+    if (!transcription || transcription.trim() === "") {
+      return res.status(400).json({ 
+        error: "ERR_AI_TRANSCRIPTION_EMPTY",
+        message: "Não foi possível transcrever o áudio. Tente novamente."
+      });
+    }
+
+    console.log(`✅ Transcrição: "${transcription}"`);
+
+    // Processar a transcrição como uma mensagem normal do chat
+    const response = await ChatGeminiService({
+      companyId,
+      userId: Number(id),
+      message: transcription.trim(),
+      conversationHistory: conversationHistory || [],
+      articles: []
+    });
+
+    return res.status(200).json({
+      ...response,
+      transcription: transcription.trim()
+    });
+  } catch (err: any) {
+    console.error("Erro no chat com áudio:", err);
+    
+    if (err.message === "GEMINI_KEY_MISSING" || err.message?.includes("API Key")) {
+      return res.status(400).json({ error: "GEMINI_KEY_MISSING" });
+    }
+    
+    return res.status(500).json({ 
+      error: "ERR_AI_CHAT_AUDIO",
+      message: err.message || "Erro ao processar áudio com IA"
     });
   }
 };

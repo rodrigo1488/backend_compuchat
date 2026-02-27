@@ -13,9 +13,11 @@ import Whatsapp from "../../models/Whatsapp";
 import HelpArticle from "../../models/HelpArticle";
 import { AIProviderSelector } from "./AIProviderSelector";
 import { ChatMessage } from "./AIProviderInterface";
+import DashboardCommandService from "./DashboardCommandService";
 
 interface ChatGeminiParams {
   companyId: number;
+  userId: number;
   message: string;
   conversationHistory?: Array<{ role: string; content: string }>;
   articles?: Array<{ id: number; title: string; content: string; summary?: string; keywords?: string; category?: string }>;
@@ -487,12 +489,212 @@ const fetchCompanyData = async (companyId: number, period: DetectedEntities["per
   };
 };
 
+// Função para detectar se a mensagem é um comando de agendamento/tarefa
+// Prioridade: agendamento > tarefa > outros
+// Detecção mais abrangente para pegar todas as variações
+const detectCommandType = (message: string): "appointment" | "task" | "none" => {
+  const lower = message.toLowerCase().trim();
+  
+  // Palavras-chave para agendamento (prioridade alta) - expandido
+  const appointmentKeywords = [
+    "agende", "agendar", "agendamento", "agendamentos",
+    "marcar reunião", "marcar encontro", "marcar consulta", "marcar compromisso", "marcar",
+    "criar agendamento", "criar reunião", "criar encontro", "criar compromisso",
+    "reunião", "reuniões", "encontro", "encontros",
+    "compromisso", "compromissos",
+    "horário", "horario", "horários", "horarios",
+    "agenda", "agendar para", "marcar para",
+    "quero agendar", "preciso agendar", "vou agendar",
+    "marcar uma", "agendar uma", "fazer um agendamento",
+    "agende uma reunião", "agendar uma reunião", "marcar uma reunião"
+  ];
+  
+  // Palavras-chave para tarefa
+  const taskKeywords = [
+    "criar tarefa", "criar uma tarefa", "nova tarefa",
+    "tarefa", "tarefas",
+    "lembre-me", "lembrar", "lembre", "me lembre",
+    "lembrar de", "não esquecer", "nao esquecer",
+    "criar lembrete", "lembrete"
+  ];
+  
+  // Verificar agendamento primeiro (prioridade) - verificação mais robusta
+  const hasAppointmentKeyword = appointmentKeywords.some(keyword => {
+    // Verificar se a palavra-chave está na mensagem
+    if (lower.includes(keyword)) {
+      // Se for uma palavra-chave genérica como "marcar" ou "agendar", verificar contexto
+      if (keyword === "marcar" || keyword === "agendar") {
+        // Verificar se há contexto de tempo/data após a palavra
+        const keywordIndex = lower.indexOf(keyword);
+        const afterKeyword = lower.substring(keywordIndex + keyword.length, keywordIndex + keyword.length + 30);
+        // Se houver palavras relacionadas a tempo/data, é agendamento
+        return afterKeyword.includes("reunião") || 
+               afterKeyword.includes("encontro") || 
+               afterKeyword.includes("consulta") ||
+               afterKeyword.includes("compromisso") ||
+               afterKeyword.includes("para") ||
+               afterKeyword.includes("às") ||
+               afterKeyword.includes("as") ||
+               afterKeyword.includes("hoje") ||
+               afterKeyword.includes("amanhã") ||
+               afterKeyword.includes("amanha") ||
+               /\d{1,2}[h:]/.test(afterKeyword) ||
+               /\d{1,2}\/\d{1,2}/.test(afterKeyword);
+      }
+      return true;
+    }
+    return false;
+  });
+  
+  if (hasAppointmentKeyword) {
+    return "appointment";
+  }
+  
+  // Verificar tarefa
+  if (taskKeywords.some(keyword => lower.includes(keyword))) {
+    return "task";
+  }
+  
+  return "none";
+};
+
+// Função para detectar confirmações e buscar comando original no histórico
+const detectConfirmationAndGetOriginalCommand = (
+  message: string,
+  conversationHistory: Array<{ role: string; content: string }>
+): string | null => {
+  const lower = message.toLowerCase().trim();
+  const confirmations = ["sim", "confirmo", "confirmar", "ok", "okay", "pode", "pode ser", "tudo bem", "perfeito", "correto", "está certo", "esta certo"];
+  
+  if (confirmations.some(conf => lower === conf || lower.startsWith(conf + " "))) {
+    // Buscar no histórico a última mensagem do usuário que contém comando de agendamento
+    for (let i = conversationHistory.length - 1; i >= 0; i--) {
+      const histMsg = conversationHistory[i];
+      if (histMsg.role === "user") {
+        const commandType = detectCommandType(histMsg.content);
+        if (commandType !== "none") {
+          console.log(`✅ Confirmação detectada - Processando comando original: "${histMsg.content}"`);
+          return histMsg.content;
+        }
+      }
+    }
+  }
+  
+  return null;
+};
+
 const ChatGeminiService = async ({
   companyId,
+  userId,
   message,
   conversationHistory = [],
   articles
 }: ChatGeminiParams): Promise<ChatGeminiResponse> => {
+  console.log(`📨 Mensagem recebida: "${message}"`);
+  console.log(`📚 Histórico: ${conversationHistory.length} mensagens`);
+  
+  // PRIORIDADE 1: Verificar se é uma confirmação e buscar comando original
+  const originalCommand = detectConfirmationAndGetOriginalCommand(message, conversationHistory);
+  const commandToProcess = originalCommand || message;
+  
+  console.log(`🔍 Comando a processar: "${commandToProcess}"`);
+  
+  // PRIORIDADE 2: Verificar se a mensagem (ou comando original) é um comando de agendamento/tarefa ANTES de processar com IA
+  const commandType = detectCommandType(commandToProcess);
+  
+  console.log(`🎯 Tipo de comando detectado: ${commandType}`);
+  
+  if (commandType !== "none") {
+    try {
+      console.log(`🔍 Comando detectado: ${commandType} - Processando...`);
+      if (originalCommand) {
+        console.log(`📝 Usando comando original do histórico: "${originalCommand}"`);
+      } else {
+        console.log(`📝 Processando comando da mensagem atual: "${message}"`);
+      }
+      
+      const commandResult = await DashboardCommandService({
+        companyId,
+        userId,
+        command: commandToProcess
+      });
+
+      console.log(`📋 Resultado do comando:`, {
+        success: commandResult.success,
+        action: commandResult.action,
+        hasTask: !!commandResult.task,
+        hasAppointment: !!commandResult.appointment
+      });
+
+      // Se o comando foi executado com sucesso, retornar mensagem automática SEM chamar IA
+      if (commandResult.success) {
+        let responseText = "";
+        
+        if (commandResult.action === "create_task" && commandResult.task) {
+          responseText = `✅ **Tarefa criada com sucesso!**\n\n📋 ${commandResult.task.title}`;
+          if (commandResult.task.description) {
+            responseText += `\n\n${commandResult.task.description}`;
+          }
+          if (commandResult.task.dueDate) {
+            const dueDate = new Date(commandResult.task.dueDate);
+            responseText += `\n\n📅 **Prazo:** ${dueDate.toLocaleString("pt-BR", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit"
+            })}`;
+          }
+        } else if (commandResult.action === "create_appointment" && commandResult.appointment) {
+          responseText = `✅ **Agendamento concluído!**\n\n📅 ${commandResult.appointment.title}`;
+          if (commandResult.appointment.description) {
+            responseText += `\n\n${commandResult.appointment.description}`;
+          }
+          if (commandResult.appointment.startTime) {
+            const startTime = new Date(commandResult.appointment.startTime);
+            const endTime = commandResult.appointment.endTime 
+              ? new Date(commandResult.appointment.endTime)
+              : new Date(startTime.getTime() + 60 * 60 * 1000);
+            
+            // Formatar data e hora de forma mais clara
+            const startDateStr = startTime.toLocaleDateString("pt-BR", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric"
+            });
+            const startTimeStr = startTime.toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            const endTimeStr = endTime.toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            
+            responseText += `\n\n🕐 **Horário:** ${startDateStr} das ${startTimeStr} às ${endTimeStr}`;
+          }
+        } else {
+          // Fallback para mensagem genérica de sucesso
+          responseText = commandResult.message || "✅ Comando executado com sucesso!";
+        }
+
+        console.log(`✅ ${commandResult.action === "create_appointment" ? "Agendamento" : "Tarefa"} criado com sucesso - Retornando mensagem automática`);
+        
+        // Retornar imediatamente SEM processar com IA
+        return {
+          response: responseText
+        };
+      } else {
+        // Comando não foi executado - continuar com IA para explicar o problema
+        console.log(`⚠️ Comando não executado: ${commandResult.message}`);
+        // Continuar com o fluxo normal da IA para que ela possa explicar o problema
+      }
+    } catch (err: any) {
+      console.error("❌ Erro ao processar comando no chat:", err);
+      // Em caso de erro, continuar com o fluxo normal da IA para que ela possa informar o erro
+    }
+  }
+
   // Selecionar provider usando configuração automática
   const provider = await AIProviderSelector.getProvider(companyId, "chat");
 
@@ -643,7 +845,7 @@ ${systemManual}
 
 ${specificData}${articlesContext}
 
-INSTRUÇÕES: 
+INSTRUÇÕES IMPORTANTES: 
 - Use os dados acima para responder.
 - PRIORIZE usar informações dos ARTIGOS DE AJUDA quando a pergunta do usuário estiver relacionada a eles.
 - Quando responder com base em um artigo, mencione o título do artigo e cite o conteúdo relevante.
@@ -651,6 +853,8 @@ INSTRUÇÕES:
 - Evite linguagem robótica ou excessivamente formal.
 - Cite dados concretos quando disponíveis.
 - Responda em português brasileiro.
+- ⚠️ ATENÇÃO: Quando o usuário pedir para AGENDAR, MARCAR REUNIÃO, CRIAR COMPROMISSO ou qualquer tipo de agendamento, você NÃO deve tentar criar manualmente. O sistema processará automaticamente ANTES de você responder. Apenas responda normalmente após o processamento.
+- ⚠️ ATENÇÃO: Quando o usuário pedir para CRIAR TAREFA ou LEMBRAR DE ALGO, você NÃO deve tentar criar manualmente. O sistema processará automaticamente ANTES de você responder. Apenas responda normalmente após o processamento.
 - Se o usuário perguntar algo que não está nos dados ou artigos, informe educadamente que não encontrou a informação.`;
 
   try {

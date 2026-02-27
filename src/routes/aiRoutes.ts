@@ -4,6 +4,7 @@ import validateAIApiKey from "../middleware/validateAIApiKey";
 import * as AiSummaryController from "../controllers/AiSummaryController";
 import * as ChatAIController from "../controllers/ChatAIController";
 import * as CampaignAIController from "../controllers/CampaignAIController";
+import uploadAudioMemory from "../config/uploadAudioMemory";
 
 const routes = express.Router();
 
@@ -21,6 +22,8 @@ routes.post("/ai/chat/config", isAuth, AiSummaryController.setChatConfig);
 // Todas as outras rotas de IA precisam validar a API key antes de acessar (agora genérico - Gemini ou OpenAI)
 routes.post("/ai/summary/agent", isAuth, validateAIApiKey, AiSummaryController.agentSummary);
 routes.post("/ai/chat", isAuth, validateAIApiKey, AiSummaryController.chat);
+routes.post("/ai/chat/audio", isAuth, validateAIApiKey, uploadAudioMemory.single("audio"), AiSummaryController.chatWithAudio);
+routes.post("/ai/dashboard/command", isAuth, validateAIApiKey, AiSummaryController.dashboardCommand);
 
 // Rotas para IA no chat
 routes.post("/chat-ai/analyze", isAuth, validateAIApiKey, ChatAIController.analyze);

@@ -259,19 +259,21 @@ async function handleSendMessage(job) {
 
 async function handleCloseTicketsAutomatic() {
   const job = new CronJob('*/1 * * * *', async () => {
-    const companies = await Company.findAll();
-    companies.map(async c => {
+    try {
+      const companies = await Company.findAll();
 
-      try {
-        const companyId = c.id;
-        await ClosedAllOpenTickets(companyId);
-      } catch (e: any) {
-        Sentry.captureException(e);
-        logger.error("ClosedAllOpenTickets -> Verify: error", e.message);
-        throw e;
-      }
-
-    });
+      await Promise.allSettled(companies.map(async c => {
+        try {
+          await ClosedAllOpenTickets(c.id);
+        } catch (e: any) {
+          Sentry.captureException(e);
+          logger.error(`ClosedAllOpenTickets -> Verify: error (companyId=${c.id})`, e.message);
+        }
+      }));
+    } catch (e: any) {
+      Sentry.captureException(e);
+      logger.error("handleCloseTicketsAutomatic -> cron error", e.message);
+    }
   });
   job.start()
 }
@@ -1090,76 +1092,49 @@ async function handleLoginStatus(job) {
 
 
 async function handleInvoiceCreate() {
-  logger.info("Iniciando geração de boletos");
-  const job = new CronJob('*/5 * * * * *', async () => {
+  logger.info("Iniciando geraÃ§Ã£o de boletos");
+  const job = new CronJob('*/5 * * * *', async () => {
+    try {
+      const companies = await Company.findAll();
 
+      await Promise.allSettled(companies.map(async c => {
+        try {
+          const dueDate = c.dueDate;
+          const date = moment(dueDate).format();
+          const timestamp = moment().format();
+          const hoje = moment(moment()).format("DD/MM/yyyy");
+          const vencimento = moment(dueDate).format("DD/MM/yyyy");
 
-    const companies = await Company.findAll();
-    companies.map(async c => {
-      var dueDate = c.dueDate;
-      const date = moment(dueDate).format();
-      const timestamp = moment().format();
-      const hoje = moment(moment()).format("DD/MM/yyyy");
-      var vencimento = moment(dueDate).format("DD/MM/yyyy");
+          const diff = moment(vencimento, "DD/MM/yyyy").diff(moment(hoje, "DD/MM/yyyy"));
+          const dias = moment.duration(diff).asDays();
 
-      var diff = moment(vencimento, "DD/MM/yyyy").diff(moment(hoje, "DD/MM/yyyy"));
-      var dias = moment.duration(diff).asDays();
+          if (dias < 20) {
+            const plan = await Plan.findByPk(c.planId);
+            if (!plan) {
+              logger.warn(`handleInvoiceCreate: plano nÃ£o encontrado para companyId=${c.id}`);
+              return;
+            }
 
-      if (dias < 20) {
-        const plan = await Plan.findByPk(c.planId);
+            const sql = `SELECT COUNT(*) mycount FROM "Invoices" WHERE "companyId" = ${c.id} AND "dueDate"::text LIKE '${moment(dueDate).format("yyyy-MM-DD")}%';`;
+            const invoice = await sequelize.query(sql, { type: QueryTypes.SELECT });
+            const invoiceCount = Number(invoice?.[0]?.['mycount'] || 0);
 
-        const sql = `SELECT COUNT(*) mycount FROM "Invoices" WHERE "companyId" = ${c.id} AND "dueDate"::text LIKE '${moment(dueDate).format("yyyy-MM-DD")}%';`
-        const invoice = await sequelize.query(sql,
-          { type: QueryTypes.SELECT }
-        );
-        if (invoice[0]['mycount'] > 0) {
+            if (invoiceCount === 0) {
+              const insertSql = `INSERT INTO "Invoices" (detail, status, value, "updatedAt", "createdAt", "dueDate", "companyId")
+              VALUES ('${plan.name}', 'open', '${plan.value}', '${timestamp}', '${timestamp}', '${date}', ${c.id});`;
 
-        } else {
-          const sql = `INSERT INTO "Invoices" (detail, status, value, "updatedAt", "createdAt", "dueDate", "companyId")
-          VALUES ('${plan.name}', 'open', '${plan.value}', '${timestamp}', '${timestamp}', '${date}', ${c.id});`
-
-          const invoiceInsert = await sequelize.query(sql,
-            { type: QueryTypes.INSERT }
-          );
-
-          /*           let transporter = nodemailer.createTransport({
-                      service: 'gmail',
-                      auth: {
-                        user: 'email@gmail.com',
-                        pass: 'senha'
-                      }
-                    });
-
-                    const mailOptions = {
-                      from: 'heenriquega@gmail.com', // sender address
-                      to: `${c.email}`, // receiver (use array of string for a list)
-                      subject: 'Fatura gerada - Sistema', // Subject line
-                      html: `Olá ${c.name} esté é um email sobre sua fatura!<br>
-          <br>
-          Vencimento: ${vencimento}<br>
-          Valor: ${plan.value}<br>
-          Link: ${process.env.FRONTEND_URL}/financeiro<br>
-          <br>
-          Qualquer duvida estamos a disposição!
-                      `// plain text body
-                    };
-
-                    transporter.sendMail(mailOptions, (err, info) => {
-                      if (err)
-                        console.log(err)
-                      else
-                        console.log(info);
-                    }); */
-
+              await sequelize.query(insertSql, { type: QueryTypes.INSERT });
+            }
+          }
+        } catch (e: any) {
+          Sentry.captureException(e);
+          logger.error(`handleInvoiceCreate -> company error (companyId=${c.id})`, e.message);
         }
-
-
-
-
-
-      }
-
-    });
+      }));
+    } catch (e: any) {
+      Sentry.captureException(e);
+      logger.error("handleInvoiceCreate -> cron error", e.message);
+    }
   });
   job.start()
 }
@@ -1168,15 +1143,14 @@ handleCloseTicketsAutomatic()
 
 async function handleCloseInactiveTickets48h() {
   const job = new CronJob('0 */6 * * *', async () => {
-    // Executa a cada 6 horas (4x por dia) para verificar tickets inativos há 48h
+    // Executa a cada 6 horas (4x por dia) para verificar tickets inativos hÃ¡ 48h
     try {
-      logger.info("Iniciando verificação de tickets inativos há 48h...");
+      logger.info("Iniciando verificaÃ§Ã£o de tickets inativos hÃ¡ 48h...");
       const closedCount = await CloseInactiveTicketsService();
-      logger.info(`Verificação concluída: ${closedCount} ticket(s) fechado(s) por inatividade (48h)`);
+      logger.info(`VerificaÃ§Ã£o concluÃ­da: ${closedCount} ticket(s) fechado(s) por inatividade (48h)`);
     } catch (e: any) {
       Sentry.captureException(e);
       logger.error("CloseInactiveTicketsService -> Verify: error", e.message);
-      throw e;
     }
   });
   job.start();
