@@ -113,6 +113,17 @@ const DashboardCommandService = async ({
   const nowIsoLocal = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
     .toISOString()
     .slice(0, 16);
+  
+  // Calcular datas de referência para facilitar interpretação
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  
+  const todayStr = today.toISOString().slice(0, 10);
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+  const nowHour = now.getHours();
+  const nowMinute = now.getMinutes();
 
   const systemPrompt = [
     "Voce e um parser de comandos do dashboard.",
@@ -129,13 +140,23 @@ const DashboardCommandService = async ({
     "Formato de saida (JSON):",
     '{"action":"create_task|create_appointment|none","title":"titulo do agendamento/tarefa","description":"descricao opcional","priority":"low|medium|high|urgent","dueDate":"YYYY-MM-DDTHH:mm","startTime":"YYYY-MM-DDTHH:mm","endTime":"YYYY-MM-DDTHH:mm","assignedTo":"nome opcional","response":"mensagem curta"}',
     "",
-    "IMPORTANTE:",
-    "- Para create_appointment: SEMPRE preencha startTime (obrigatorio). Se nao tiver endTime, calcule 1h depois do startTime.",
-    "- Para create_task: use dueDate se tiver prazo especifico.",
-    "- Se o usuario disser 'hoje', 'amanha', 'sexta', etc., converta para data real.",
-    "- Se o usuario disser '10h', '14:30', etc., converta para formato completo YYYY-MM-DDTHH:mm.",
+    "DATAS E HORARIOS - CONVERSAO OBRIGATORIA:",
+    `- Data/hora atual de referencia: ${nowIsoLocal}`,
+    `- HOJE = ${todayStr}`,
+    `- AMANHA = ${tomorrowStr}`,
+    "- Se o usuario disser 'hoje', use a data de HOJE acima.",
+    "- Se o usuario disser 'amanha' ou 'amanha', use a data de AMANHA acima.",
+    "- Se o usuario disser 'depois de amanha', some 2 dias a data de hoje.",
+    "- Se o usuario disser dia da semana (segunda, terca, quarta, etc.), calcule a proxima ocorrencia dessa semana.",
+    "- Se o usuario disser apenas hora (ex: '12:30', '10h', '14h30'), combine com a data mencionada (hoje/amanha) ou use hoje se nao mencionar.",
+    "- SEMPRE use o formato YYYY-MM-DDTHH:mm (ex: 2026-02-28T12:30).",
+    "- NUNCA use datas antigas ou do passado. Se nao tiver certeza, use a data de hoje ou amanha.",
     "",
-    `Data/hora atual de referencia: ${nowIsoLocal}`,
+    "IMPORTANTE:",
+    "- Para create_appointment: SEMPRE preencha startTime (obrigatorio) no formato YYYY-MM-DDTHH:mm. Se nao tiver endTime, calcule 1h depois do startTime.",
+    "- Para create_task: use dueDate se tiver prazo especifico.",
+    "- Se o usuario mencionar um nome (ex: 'com chesterfield', 'com joao'), coloque no campo assignedTo.",
+    "",
     "Idioma: portugues do Brasil."
   ].join("\n");
 
@@ -232,6 +253,20 @@ const DashboardCommandService = async ({
         success: false,
         action: "none",
         message: parsed.response || "Informe data e hora do agendamento (ex: amanha as 14h)."
+      };
+    }
+    
+    // Validar se a data não está no passado
+    const now = new Date();
+    if (startTime < now) {
+      console.log("❌ DashboardCommandService: Data no passado detectada", {
+        startTime: startTime.toISOString(),
+        now: now.toISOString()
+      });
+      return {
+        success: false,
+        action: "none",
+        message: "A data/hora do agendamento não pode ser no passado. Por favor, informe uma data futura."
       };
     }
 

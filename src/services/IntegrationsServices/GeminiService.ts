@@ -33,6 +33,7 @@ import ListQueuesService from "../QueueService/ListQueuesService";
 import Tag from "../../models/Tag";
 import SyncTags from "../TagServices/SyncTagsService";
 import ParseAppointmentCommand from "../AppointmentAIService/ParseAppointmentCommand";
+import DashboardCommandService from "../AiServices/DashboardCommandService";
 
 type Session = WASocket & {
   id?: number;
@@ -144,6 +145,50 @@ const sendTransferMessage = async (
   }
 };
 
+// Função para detectar se a mensagem é um comando de agendamento/tarefa
+const detectCommandType = (message: string): "appointment" | "task" | "none" => {
+  const lower = message.toLowerCase().trim();
+  
+  const appointmentKeywords = [
+    "agende", "agendar", "agendamento", "agendamentos",
+    "marcar reunião", "marcar encontro", "marcar consulta", "marcar compromisso", "marcar",
+    "criar agendamento", "criar reunião", "criar encontro", "criar compromisso",
+    "reunião", "reuniões", "encontro", "encontros",
+    "compromisso", "compromissos",
+    "horário", "horario", "horários", "horarios",
+    "agenda", "agendar para", "marcar para",
+    "quero agendar", "preciso agendar", "vou agendar",
+    "marcar uma", "agendar uma", "fazer um agendamento",
+    "agende uma reunião", "agendar uma reunião", "marcar uma reunião",
+    "agende uma", "agendar uma", "agende para", "agendar para"
+  ];
+  
+  const taskKeywords = [
+    "criar tarefa", "criar uma tarefa", "nova tarefa",
+    "tarefa", "tarefas",
+    "lembre-me", "lembrar", "lembre", "me lembre",
+    "lembrar de", "não esquecer", "nao esquecer",
+    "criar lembrete", "lembrete"
+  ];
+  
+  // "agende" e "agendar" sempre indicam agendamento
+  const alwaysAppointment = ["agende", "agendar", "agendamento", "agendamentos", "agenda"];
+  if (alwaysAppointment.some(keyword => lower.includes(keyword))) {
+    return "appointment";
+  }
+  
+  // Verificar outras palavras-chave
+  if (appointmentKeywords.some(keyword => lower.includes(keyword))) {
+    return "appointment";
+  }
+  
+  if (taskKeywords.some(keyword => lower.includes(keyword))) {
+    return "task";
+  }
+  
+  return "none";
+};
+
 export const handleGemini = async (
   geminiSettings: IGemini,
   msg: proto.IWebMessageInfo,
@@ -164,6 +209,139 @@ export const handleGemini = async (
   if (!geminiSettings) return;
 
   if (msg.messageStubType) return;
+
+  // PRIORIDADE: Verificar se a mensagem é um comando de agendamento/tarefa ANTES de processar com IA
+  const commandType = detectCommandType(bodyMessage);
+  
+  if (commandType !== "none" && geminiSettings.permitirCriarAgendamentos) {
+    try {
+      console.log(`🔍 [WhatsApp] Comando detectado: ${commandType} - Processando...`);
+      
+      // Buscar userId: usar do ticket se disponível, senão buscar primeiro usuário da empresa
+      let userId = ticket.userId;
+      if (!userId) {
+        const ticketUser = await User.findOne({
+          where: { companyId: ticket.companyId },
+          order: [["id", "ASC"]],
+          limit: 1
+        });
+        userId = ticketUser?.id || 1; // Fallback para userId padrão
+      }
+      
+      const commandResult = await DashboardCommandService({
+        companyId: ticket.companyId,
+        userId,
+        command: bodyMessage
+      });
+
+      console.log(`📋 [WhatsApp] Resultado do comando:`, {
+        success: commandResult.success,
+        action: commandResult.action,
+        hasTask: !!commandResult.task,
+        hasAppointment: !!commandResult.appointment
+      });
+
+      // Se o comando foi executado com sucesso, enviar mensagem automática SEM chamar IA
+      if (commandResult.success) {
+        let responseText = "";
+        
+        if (commandResult.action === "create_task" && commandResult.task) {
+          responseText = `✅ Tarefa criada com sucesso!\n\n📋 ${commandResult.task.title}`;
+          if (commandResult.task.description) {
+            responseText += `\n\n${commandResult.task.description}`;
+          }
+          if (commandResult.task.dueDate) {
+            const dueDate = new Date(commandResult.task.dueDate);
+            responseText += `\n\n📅 Prazo: ${dueDate.toLocaleString("pt-BR", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit"
+            })}`;
+          }
+        } else if (commandResult.action === "create_appointment" && commandResult.appointment) {
+          responseText = `✅ Agendamento concluído!\n\n📅 ${commandResult.appointment.title}`;
+          if (commandResult.appointment.description) {
+            responseText += `\n\n${commandResult.appointment.description}`;
+          }
+          if (commandResult.appointment.startTime) {
+            const startTime = new Date(commandResult.appointment.startTime);
+            const endTime = commandResult.appointment.endTime 
+              ? new Date(commandResult.appointment.endTime)
+              : new Date(startTime.getTime() + 60 * 60 * 1000);
+            
+            const startDateStr = startTime.toLocaleDateString("pt-BR", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric"
+            });
+            const startTimeStr = startTime.toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            const endTimeStr = endTime.toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            
+            responseText += `\n\n🕐 Horário: ${startDateStr} das ${startTimeStr} às ${endTimeStr}`;
+          }
+        } else {
+          responseText = commandResult.message || "✅ Comando executado com sucesso!";
+        }
+
+        console.log(`✅ [WhatsApp] ${commandResult.action === "create_appointment" ? "Agendamento" : "Tarefa"} criado com sucesso - Enviando mensagem automática`);
+        
+        // Enviar mensagem automática e retornar SEM chamar IA
+        const chatJid = getChatJid(ticket);
+        const sentMessage = await wbot.sendMessage(chatJid, {
+          text: responseText
+        });
+        await verifyMessage(sentMessage!, ticket, contact);
+        
+        // Salvar mensagem no banco
+        const messageData: MessageData = {
+          id: `${ticket.id}-${Date.now()}-${Math.random()}`,
+          body: responseText,
+          ticketId: ticket.id,
+          contactId: ticket.contactId,
+          fromMe: true,
+          read: true,
+          mediaType: "conversation"
+        };
+        await CreateMessageService({ messageData, companyId: ticket.companyId });
+        
+        return; // Retornar sem chamar IA
+      } else {
+        // Comando não foi executado - retornar erro direto
+        console.log(`⚠️ [WhatsApp] Comando não executado: ${commandResult.message}`);
+        const errorText = `❌ Não foi possível processar o comando.\n\n${commandResult.message}\n\nPor favor, tente novamente com informações mais completas.`;
+        
+        const chatJid = getChatJid(ticket);
+        const sentMessage = await wbot.sendMessage(chatJid, {
+          text: errorText
+        });
+        await verifyMessage(sentMessage!, ticket, contact);
+        
+        const messageData: MessageData = {
+          id: `${ticket.id}-${Date.now()}-${Math.random()}`,
+          body: errorText,
+          ticketId: ticket.id,
+          contactId: ticket.contactId,
+          fromMe: true,
+          read: true,
+          mediaType: "conversation"
+        };
+        await CreateMessageService({ messageData, companyId: ticket.companyId });
+        
+        return; // Retornar sem chamar IA
+      }
+    } catch (err: any) {
+      console.error("❌ [WhatsApp] Erro ao processar comando:", err);
+      // Em caso de erro, continuar com o fluxo normal da IA
+    }
+  }
 
   // Lock para evitar processamento duplicado da mesma mensagem
   const messageId = msg.key.id || `${ticket.id}-${Date.now()}`;

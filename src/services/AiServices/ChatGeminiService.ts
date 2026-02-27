@@ -496,6 +496,7 @@ const detectCommandType = (message: string): "appointment" | "task" | "none" => 
   const lower = message.toLowerCase().trim();
   
   // Palavras-chave para agendamento (prioridade alta) - expandido
+  // IMPORTANTE: "agende" e "agendar" devem ser detectados mesmo sem contexto adicional
   const appointmentKeywords = [
     "agende", "agendar", "agendamento", "agendamentos",
     "marcar reunião", "marcar encontro", "marcar consulta", "marcar compromisso", "marcar",
@@ -506,7 +507,8 @@ const detectCommandType = (message: string): "appointment" | "task" | "none" => 
     "agenda", "agendar para", "marcar para",
     "quero agendar", "preciso agendar", "vou agendar",
     "marcar uma", "agendar uma", "fazer um agendamento",
-    "agende uma reunião", "agendar uma reunião", "marcar uma reunião"
+    "agende uma reunião", "agendar uma reunião", "marcar uma reunião",
+    "agende uma", "agendar uma", "agende para", "agendar para"
   ];
   
   // Palavras-chave para tarefa
@@ -522,8 +524,14 @@ const detectCommandType = (message: string): "appointment" | "task" | "none" => 
   const hasAppointmentKeyword = appointmentKeywords.some(keyword => {
     // Verificar se a palavra-chave está na mensagem
     if (lower.includes(keyword)) {
-      // Se for uma palavra-chave genérica como "marcar" ou "agendar", verificar contexto
-      if (keyword === "marcar" || keyword === "agendar") {
+      // Palavras-chave específicas que sempre indicam agendamento (não precisam de contexto)
+      const alwaysAppointment = ["agende", "agendar", "agendamento", "agendamentos", "agenda"];
+      if (alwaysAppointment.includes(keyword)) {
+        return true; // "agende" e "agendar" sempre indicam agendamento
+      }
+      
+      // Se for uma palavra-chave genérica como "marcar", verificar contexto
+      if (keyword === "marcar") {
         // Verificar se há contexto de tempo/data após a palavra
         const keywordIndex = lower.indexOf(keyword);
         const afterKeyword = lower.substring(keywordIndex + keyword.length, keywordIndex + keyword.length + 30);
@@ -685,13 +693,18 @@ const ChatGeminiService = async ({
           response: responseText
         };
       } else {
-        // Comando não foi executado - continuar com IA para explicar o problema
+        // Comando não foi executado - NÃO continuar com IA, retornar erro direto
         console.log(`⚠️ Comando não executado: ${commandResult.message}`);
-        // Continuar com o fluxo normal da IA para que ela possa explicar o problema
+        return {
+          response: `❌ Não foi possível processar o comando.\n\n${commandResult.message}\n\nPor favor, tente novamente com informações mais completas.`
+        };
       }
     } catch (err: any) {
       console.error("❌ Erro ao processar comando no chat:", err);
-      // Em caso de erro, continuar com o fluxo normal da IA para que ela possa informar o erro
+      // Em caso de erro, retornar mensagem de erro direta ao invés de chamar IA
+      return {
+        response: `❌ Erro ao processar comando: ${err.message || "Erro desconhecido"}\n\nPor favor, tente novamente.`
+      };
     }
   }
 
