@@ -1,4 +1,6 @@
 import * as Yup from "yup";
+import fs from "fs";
+import path from "path";
 import { Request, Response } from "express";
 import { getIO } from "../libs/socket";
 import CreateProductService from "../services/ProductServices/CreateProductService";
@@ -7,6 +9,8 @@ import DeleteProductService from "../services/ProductServices/DeleteProductServi
 import DuplicateProductService from "../services/ProductServices/DuplicateProductService";
 import ListProductsService from "../services/ProductServices/ListProductsService";
 import ShowProductService from "../services/ProductServices/ShowProductService";
+import ImportMenuFromDocumentService from "../services/ProductServices/ImportMenuFromDocumentService";
+import uploadMenuFileConfig from "../config/uploadMenuFile";
 import Product from "../models/Product";
 import Form from "../models/Form";
 import AddOnGroup from "../models/AddOnGroup";
@@ -339,4 +343,101 @@ export const duplicate = async (
   });
 
   return res.status(200).json(product);
+};
+
+function sendSSE(res: Response, data: object): void {
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+export const importFromMenu = async (req: Request, res: Response): Promise<Response> => {
+  const { companyId } = req.user;
+  const file = req.file as Express.Multer.File;
+  if (!file || !file.filename) {
+    throw new AppError("Envie um arquivo (PDF ou imagem) do cardápio.", 400);
+  }
+  const filePath = (file as any).path || path.join(uploadMenuFileConfig.directory, file.filename);
+  const isPdf = file.mimetype === "application/pdf";
+
+  if (isPdf) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    try {
+      const preview = await ImportMenuFromDocumentService({
+        companyId,
+        filePath,
+        mimeType: file.mimetype,
+        onPageExtracted: (page, total) => {
+          sendSSE(res, { event: "page", page, total });
+          if (typeof (res as any).flush === "function") (res as any).flush();
+        },
+      });
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      }
+      sendSSE(res, { event: "done", preview });
+    } catch (err: any) {
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      }
+      sendSSE(res, { event: "error", message: err?.message || "Erro ao processar o cardápio." });
+    }
+    res.end();
+    return res;
+  }
+
+  try {
+    const preview = await ImportMenuFromDocumentService({
+      companyId,
+      filePath,
+      mimeType: file.mimetype,
+    });
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+    return res.json({ preview });
+  } catch (err) {
+    if (fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    }
+    throw err;
+  }
+};
+
+export const confirmImportFromMenu = async (req: Request, res: Response): Promise<Response> => {
+  const { companyId } = req.user;
+  const { produtos } = req.body as { produtos: Array<{ nome: string; descricao?: string; grupo?: string; valor: number }> };
+  if (!Array.isArray(produtos) || produtos.length === 0) {
+    throw new AppError("Envie uma lista de produtos para importar.", 400);
+  }
+  const created: Product[] = [];
+  const io = getIO();
+  for (const item of produtos) {
+    const value = typeof item.valor === "number" ? item.valor : parseFloat(String(item.valor).replace(",", "."));
+    if (isNaN(value) || value < 0) continue;
+    const name = String(item.nome || "").trim();
+    const grupo = (item.grupo && String(item.grupo).trim()) || "Outros";
+    if (!name) continue;
+    try {
+      const product = await CreateProductService({
+        name,
+        description: item.descricao ?? undefined,
+        value,
+        quantity: 0,
+        isMenuProduct: true,
+        grupo,
+        companyId,
+      });
+      created.push(product);
+      io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-product`, {
+        action: "create",
+        product,
+      });
+    } catch {
+      // skip invalid items
+    }
+  }
+  return res.status(200).json({ created, count: created.length });
 };

@@ -3,6 +3,7 @@ import { Configuration, OpenAIApi } from "openai";
 // Configuração centralizada do OpenAI
 export const OPENAI_DEFAULT_MODEL = "gpt-3.5-turbo";
 export const OPENAI_TRANSCRIPTION_MODEL = "whisper-1";
+export const OPENAI_VISION_MODEL = "gpt-4o-mini";
 
 // Validação da chave da API
 export const validateOpenAIApiKey = (apiKey: string | null | undefined): string => {
