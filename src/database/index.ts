@@ -53,6 +53,10 @@ import UserAppointment from "../models/UserAppointment";
 import Product from "../models/Product";
 import ProductVariation from "../models/ProductVariation";
 import ProductVariationOption from "../models/ProductVariationOption";
+import AddOnGroup from "../models/AddOnGroup";
+import AddOnSubgroup from "../models/AddOnSubgroup";
+import AddOnItem from "../models/AddOnItem";
+import GrupoAddOn from "../models/GrupoAddOn";
 import PrintDevice from "../models/PrintDevice";
 import PrintPedido from "../models/PrintPedido";
 import Module from "../models/Module";
@@ -124,6 +128,10 @@ const models = [
   Product,
   ProductVariation,
   ProductVariationOption,
+  AddOnGroup,
+  AddOnSubgroup,
+  AddOnItem,
+  GrupoAddOn,
   PrintDevice,
   PrintPedido,
   Module,

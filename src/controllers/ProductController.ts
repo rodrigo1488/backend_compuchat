@@ -9,6 +9,10 @@ import ListProductsService from "../services/ProductServices/ListProductsService
 import ShowProductService from "../services/ProductServices/ShowProductService";
 import Product from "../models/Product";
 import Form from "../models/Form";
+import AddOnGroup from "../models/AddOnGroup";
+import AddOnSubgroup from "../models/AddOnSubgroup";
+import AddOnItem from "../models/AddOnItem";
+import GrupoAddOn from "../models/GrupoAddOn";
 import AppError from "../errors/AppError";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
@@ -74,6 +78,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     halfAndHalfGrupo: Yup.string().nullable(),
     grupo: Yup.string().nullable(),
     imageUrl: Yup.string().nullable(),
+    addOnGroupId: Yup.number().nullable(),
     variations: Yup.array()
       .of(
         Yup.object().shape({
@@ -155,6 +160,7 @@ export const update = async (
     halfAndHalfGrupo: Yup.string().nullable(),
     grupo: Yup.string().nullable(),
     imageUrl: Yup.string().nullable(),
+    addOnGroupId: Yup.number().nullable(),
     variations: Yup.array()
       .of(
         Yup.object().shape({
@@ -240,22 +246,67 @@ export const getPublicMenuProducts = async (
     throw new AppError("ERR_FORM_NOT_FOUND", 404);
   }
 
-  // Buscar todos os produtos de cardápio da empresa (com variações)
+  // Buscar todos os produtos de cardápio da empresa (com variações e addOnGroupId)
   const products = await Product.findAll({
     where: {
       companyId: form.companyId,
       isMenuProduct: true,
     },
     order: [["grupo", "ASC"], ["name", "ASC"]],
-    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo"],
+    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo", "addOnGroupId"],
     include: [
       { association: "variations", include: [{ association: "options" }] },
     ],
   });
 
+  // Mapeamento grupo -> addOnGroupId (atribuição por categoria)
+  const grupoAssignments = await GrupoAddOn.findAll({
+    where: { companyId: form.companyId },
+    attributes: ["grupo", "addOnGroupId"],
+  });
+  const grupoToAddOnId = new Map(grupoAssignments.map((a) => [a.grupo, a.addOnGroupId]));
+
+  const addOnGroupIds = new Set<number>();
+  products.forEach((p) => {
+    const resolved = p.addOnGroupId ?? (p.grupo ? grupoToAddOnId.get(p.grupo) : undefined);
+    if (resolved) addOnGroupIds.add(resolved);
+  });
+
+  const addOnGroupsRaw = await AddOnGroup.findAll({
+    where: { id: Array.from(addOnGroupIds), companyId: form.companyId },
+    include: [
+      { model: AddOnSubgroup, as: "subgroups", include: [{ model: AddOnItem, as: "items" }] },
+      { model: AddOnItem, as: "items" },
+    ],
+  });
+
+  const addOnGroupMap = new Map(
+    addOnGroupsRaw.map((g) => {
+      const subs = (g.subgroups || []).slice().sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+      const subgroups = subs.map((sg: any) => ({
+        id: sg.id,
+        name: sg.name,
+        order: sg.order,
+        items: (sg.items || []).slice().sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)).map((it: any) => ({ id: it.id, label: it.label, value: Number(it.value), order: it.order })),
+      }));
+      const rootItems = (g.items || []).filter((it: any) => !it.addOnSubgroupId).sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)).map((it: any) => ({ id: it.id, label: it.label, value: Number(it.value), order: it.order }));
+      return [
+        g.id,
+        { id: g.id, name: g.name, subgroups, items: rootItems },
+      ];
+    })
+  );
+
+  const productsWithAddOn = products.map((p) => {
+    const po = p.toJSON() as Record<string, unknown> & { addOnGroupId?: number | null; grupo?: string };
+    const resolvedAddOnId = po.addOnGroupId ?? (po.grupo ? grupoToAddOnId.get(po.grupo) : undefined);
+    po.addOnGroup = resolvedAddOnId ? addOnGroupMap.get(resolvedAddOnId) ?? null : null;
+    return po;
+  });
+
   return res.json({
-    products,
-    count: products.length,
+    products: productsWithAddOn,
+    count: productsWithAddOn.length,
   });
 };
 

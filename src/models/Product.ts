@@ -14,6 +14,7 @@ import {
 } from "sequelize-typescript";
 import Company from "./Company";
 import ProductVariation from "./ProductVariation";
+import AddOnGroup from "./AddOnGroup";
 
 @Table
 class Product extends Model<Product> {
@@ -70,6 +71,13 @@ class Product extends Model<Product> {
 
   @BelongsTo(() => Company)
   company: Company;
+
+  @ForeignKey(() => AddOnGroup)
+  @Column
+  addOnGroupId: number | null;
+
+  @BelongsTo(() => AddOnGroup)
+  addOnGroup: AddOnGroup | null;
 
   @HasMany(() => ProductVariation)
   variations: ProductVariation[];

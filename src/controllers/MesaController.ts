@@ -16,6 +16,10 @@ import { Op } from "sequelize";
 import Form from "../models/Form";
 import Mesa from "../models/Mesa";
 import Product from "../models/Product";
+import AddOnGroup from "../models/AddOnGroup";
+import AddOnSubgroup from "../models/AddOnSubgroup";
+import AddOnItem from "../models/AddOnItem";
+import GrupoAddOn from "../models/GrupoAddOn";
 import AppError from "../errors/AppError";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
 
@@ -415,7 +419,7 @@ export const getPublicMesaByToken = async (req: Request, res: Response): Promise
   });
 };
 
-/** Produtos de cardápio da empresa para o link da mesa (mesa não depende de formulário). */
+/** Produtos de cardápio da empresa para o link da mesa (com variações e addOnGroup como no formulário público). */
 export const getPublicMesaProducts = async (req: Request, res: Response): Promise<Response> => {
   const { mesaId } = req.params;
   const tokenFromQuery = (req.query.t as string) || "";
@@ -437,14 +441,58 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
 
   const products = await Product.findAll({
     where: { companyId, isMenuProduct: true },
-    order: [
-      ["grupo", "ASC"],
-      ["name", "ASC"],
+    order: [["grupo", "ASC"], ["name", "ASC"]],
+    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo", "addOnGroupId"],
+    include: [
+      { association: "variations", include: [{ association: "options" }] },
     ],
-    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "imageUrl"],
   });
 
-  return res.json({ products, count: products.length });
+  const grupoAssignments = await GrupoAddOn.findAll({
+    where: { companyId },
+    attributes: ["grupo", "addOnGroupId"],
+  });
+  const grupoToAddOnId = new Map(grupoAssignments.map((a) => [a.grupo, a.addOnGroupId]));
+
+  const addOnGroupIds = new Set<number>();
+  products.forEach((p) => {
+    const resolved = p.addOnGroupId ?? (p.grupo ? grupoToAddOnId.get(p.grupo) : undefined);
+    if (resolved) addOnGroupIds.add(resolved);
+  });
+
+  const addOnGroupsRaw = await AddOnGroup.findAll({
+    where: { id: Array.from(addOnGroupIds), companyId },
+    include: [
+      { model: AddOnSubgroup, as: "subgroups", include: [{ model: AddOnItem, as: "items" }] },
+      { model: AddOnItem, as: "items" },
+    ],
+  });
+
+  const addOnGroupMap = new Map(
+    addOnGroupsRaw.map((g) => {
+      const subs = (g.subgroups || []).slice().sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+      const subgroups = subs.map((sg: any) => ({
+        id: sg.id,
+        name: sg.name,
+        order: sg.order,
+        items: (sg.items || []).slice().sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)).map((it: any) => ({ id: it.id, label: it.label, value: Number(it.value), order: it.order })),
+      }));
+      const rootItems = (g.items || []).filter((it: any) => !it.addOnSubgroupId).sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)).map((it: any) => ({ id: it.id, label: it.label, value: Number(it.value), order: it.order }));
+      return [
+        g.id,
+        { id: g.id, name: g.name, subgroups, items: rootItems },
+      ];
+    })
+  );
+
+  const productsWithAddOn = products.map((p) => {
+    const po = p.toJSON() as Record<string, unknown> & { addOnGroupId?: number | null; grupo?: string };
+    const resolvedAddOnId = po.addOnGroupId ?? (po.grupo ? grupoToAddOnId.get(po.grupo) : undefined);
+    po.addOnGroup = resolvedAddOnId ? addOnGroupMap.get(resolvedAddOnId) ?? null : null;
+    return po;
+  });
+
+  return res.json({ products: productsWithAddOn, count: productsWithAddOn.length });
 };
 
 /** Mesa por ID para cardápio público (QR da mesa): exige token assinado (t=); retorna orderToken para o submit.

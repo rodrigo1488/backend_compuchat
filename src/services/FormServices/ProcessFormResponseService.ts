@@ -25,6 +25,8 @@ import FormatAppointmentConfirmationMessage from "./FormatAppointmentConfirmatio
 import { createAppointmentToken } from "../../helpers/MesaLinkSign";
 import ProductVariation from "../../models/ProductVariation";
 import ProductVariationOption from "../../models/ProductVariationOption";
+import AddOnItem from "../../models/AddOnItem";
+import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
 
 interface Answer {
@@ -44,6 +46,7 @@ interface Request {
     productName?: string;
     productValue?: number;
     grupo?: string;
+    addons?: Array<{ addOnItemId: number; label?: string; value?: number }>;
   }>;
   responderPhone?: string;
   responderEmail?: string;
@@ -66,6 +69,7 @@ type MenuItemInput = {
   half2ProductId?: number;
   half1OptionId?: number | null;
   half2OptionId?: number | null;
+  addons?: Array<{ addOnItemId: number; label?: string; value?: number }>;
 };
 
 /** Normaliza menuItems: para itens tipo halfAndHalf, calcula productValue e productName no backend. */
@@ -171,7 +175,44 @@ const normalizeMenuItems = async (
         grupo: item.grupo || (base as any).grupo,
       });
     } else {
-      result.push(item);
+      const normalItem = { ...item } as any;
+      if (Array.isArray((item as any).addons) && (item as any).addons.length > 0 && item.productId) {
+        const product = await Product.findOne({
+          where: { id: item.productId, companyId },
+          attributes: ["id", "addOnGroupId", "grupo"],
+        });
+        let addOnGroupId: number | null = product ? (product as any).addOnGroupId : null;
+        if (addOnGroupId == null && product && (product as any).grupo) {
+          const ga = await GrupoAddOn.findOne({
+            where: { companyId, grupo: (product as any).grupo },
+            attributes: ["addOnGroupId"],
+          });
+          if (ga) addOnGroupId = ga.addOnGroupId;
+        }
+        if (addOnGroupId) {
+          const validItems = await AddOnItem.findAll({
+            where: { addOnGroupId },
+            attributes: ["id", "label", "value"],
+          });
+          const validMap = new Map(validItems.map((i) => [i.id, i]));
+          const validatedAddons: Array<{ addOnItemId: number; label: string; value: number }> = [];
+          let addonsTotal = 0;
+          for (const a of (item as any).addons) {
+            const v = validMap.get(a.addOnItemId);
+            if (v) {
+              validatedAddons.push({
+                addOnItemId: v.id,
+                label: a.label ?? v.label,
+                value: Number(a.value ?? v.value) || 0,
+              });
+              addonsTotal += Number(v.value) || 0;
+            }
+          }
+          normalItem.addons = validatedAddons;
+          normalItem.addonsTotal = Math.round(addonsTotal * 100) / 100;
+        }
+      }
+      result.push(normalItem);
     }
   }
   return result;
@@ -285,6 +326,16 @@ const ProcessFormResponseService = async ({
   if (isMenuForm && menuItems && menuItems.length > 0) {
     normalizedMenuItems = await normalizeMenuItems(menuItems, form.companyId);
     responseMetadata.menuItems = normalizedMenuItems;
+    const deliveryFeeFromMeta = Number((metadata as any)?.deliveryFee) || 0;
+    let subtotal = 0;
+    for (const it of normalizedMenuItems) {
+      const pv = Number(it.productValue) || 0;
+      const addonsTotal = Number(it.addonsTotal) || 0;
+      subtotal += (pv + addonsTotal) * (it.quantity || 0);
+    }
+    responseMetadata.subtotal = Math.round(subtotal * 100) / 100;
+    responseMetadata.total = Math.round((subtotal + deliveryFeeFromMeta) * 100) / 100;
+    responseMetadata.deliveryFee = deliveryFeeFromMeta;
     console.log("ProcessFormResponseService: Saving menuItems:", responseMetadata.menuItems);
   } else if (isMenuForm) {
     console.log("ProcessFormResponseService: Form is menu but no menuItems received");
@@ -339,16 +390,27 @@ const ProcessFormResponseService = async ({
     await response.update({ metadata: updatedMeta });
   }
 
-  // Create ResponseAnswers
-  const answersToCreate = answers.map((answer) => ({
-    responseId: response.id,
-    fieldId: answer.fieldId,
-    answer: Array.isArray(answer.answer) 
-      ? answer.answer.join(", ") 
-      : String(answer.answer),
-    answerData: answer.answerData || { value: answer.answer },
-    fileUrl: answer.fileUrl,
-  }));
+  // Create ResponseAnswers (normalizar telefones para formato de disparo antes de salvar)
+  const answersToCreate = answers.map((answer) => {
+    let answerStr = Array.isArray(answer.answer)
+      ? answer.answer.join(", ")
+      : String(answer.answer);
+    const field = fields.find((f) => f.id === answer.fieldId);
+    const isPhoneField = field && (
+      (field as any).fieldType === "phone" ||
+      ((field as any).metadata as any)?.autoFieldType === "phone"
+    );
+    if (isPhoneField && answerStr) {
+      answerStr = normalizeBrazilPhoneForWhatsapp(answerStr);
+    }
+    return {
+      responseId: response.id,
+      fieldId: answer.fieldId,
+      answer: answerStr,
+      answerData: answer.answerData || { value: answer.answer },
+      fileUrl: answer.fileUrl,
+    };
+  });
 
   await ResponseAnswer.bulkCreate(answersToCreate);
 
@@ -659,6 +721,7 @@ const ProcessFormResponseService = async ({
       const allMenuItems = normalizedMenuItems && normalizedMenuItems.length > 0 ? normalizedMenuItems : menuItems;
       const orderType = meta?.orderType === "delivery" ? "delivery" : "mesa";
 
+      // Payload de impressão: menuItems inclui addons e addonsTotal por item para o agente exibir na comanda
       const buildConteudo = (menuItemsForJob: typeof allMenuItems): Record<string, unknown> => {
         const conteudo: Record<string, unknown> = {
           event: "form.submitted",
@@ -859,6 +922,10 @@ const ProcessFormResponseService = async ({
           });
         }
         if (!contactForSend) return;
+        // Garantir número normalizado (12 dígitos) no contato antes do envio: contato de mesa pode ter 13 dígitos
+        if (contactPhone && contactForSend.number !== contactPhone) {
+          await contactForSend.update({ number: contactPhone });
+        }
         const ticket = await FindOrCreateTicketService(
           contactForSend,
           whatsappToUse.id,

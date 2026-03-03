@@ -1,6 +1,7 @@
 import Product from "../../models/Product";
 import ProductVariation from "../../models/ProductVariation";
 import ProductVariationOption from "../../models/ProductVariationOption";
+import AddOnGroup from "../../models/AddOnGroup";
 import AppError from "../../errors/AppError";
 import { ProductVariationInput } from "./CreateProductService";
 
@@ -19,6 +20,7 @@ interface Request {
   grupo?: string;
   imageUrl?: string;
   variations?: ProductVariationInput[];
+  addOnGroupId?: number | null;
 }
 
 const UpdateProductService = async ({
@@ -36,6 +38,7 @@ const UpdateProductService = async ({
   grupo,
   imageUrl,
   variations,
+  addOnGroupId,
 }: Request): Promise<Product> => {
   const product = await Product.findOne({
     where: { id: productId, companyId },
@@ -93,6 +96,18 @@ const UpdateProductService = async ({
 
   if (imageUrl !== undefined) {
     product.imageUrl = imageUrl?.trim() || null;
+  }
+
+  if (addOnGroupId !== undefined) {
+    if (addOnGroupId != null) {
+      const addOnGroup = await AddOnGroup.findOne({
+        where: { id: addOnGroupId, companyId },
+      });
+      if (!addOnGroup) {
+        throw new AppError("ERR_ADDON_GROUP_NOT_FOUND", 404);
+      }
+    }
+    product.addOnGroupId = addOnGroupId ?? null;
   }
 
   await product.save();

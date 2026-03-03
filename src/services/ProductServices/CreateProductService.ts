@@ -1,6 +1,7 @@
 import Product from "../../models/Product";
 import ProductVariation from "../../models/ProductVariation";
 import ProductVariationOption from "../../models/ProductVariationOption";
+import AddOnGroup from "../../models/AddOnGroup";
 import AppError from "../../errors/AppError";
 
 export interface ProductVariationInput {
@@ -22,6 +23,7 @@ interface Request {
   halfAndHalfPriceRule?: string | null;
   halfAndHalfGrupo?: string | null;
   variations?: ProductVariationInput[];
+  addOnGroupId?: number | null;
 }
 
 const CreateProductService = async ({
@@ -38,6 +40,7 @@ const CreateProductService = async ({
   imageUrl,
   companyId,
   variations = [],
+  addOnGroupId,
 }: Request): Promise<Product> => {
   if (!name || name.trim() === "") {
     throw new AppError("ERR_PRODUCT_NAME_REQUIRED", 400);
@@ -45,6 +48,15 @@ const CreateProductService = async ({
 
   if (value === undefined || value === null || value < 0) {
     throw new AppError("ERR_PRODUCT_VALUE_INVALID", 400);
+  }
+
+  if (addOnGroupId != null) {
+    const addOnGroup = await AddOnGroup.findOne({
+      where: { id: addOnGroupId, companyId },
+    });
+    if (!addOnGroup) {
+      throw new AppError("ERR_ADDON_GROUP_NOT_FOUND", 404);
+    }
   }
 
   const product = await Product.create({
@@ -60,6 +72,7 @@ const CreateProductService = async ({
     grupo: grupo?.trim() || null,
     imageUrl: imageUrl?.trim() || null,
     companyId,
+    addOnGroupId: addOnGroupId ?? null,
   });
 
   for (const v of variations) {

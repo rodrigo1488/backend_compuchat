@@ -6,6 +6,8 @@ interface MenuItem {
   productName?: string;
   productValue?: number;
   grupo?: string;
+  addons?: Array<{ label: string; value: number }>;
+  addonsTotal?: number;
 }
 
 interface CustomField {
@@ -87,26 +89,33 @@ const FormatMenuOrderMessage = async ({
   message += `📱 *Telefone:* ${customerPhone}\n\n`;
   message += "📋 *ITENS DO PEDIDO:*\n\n";
 
+  const lineTotal = (item: MenuItem) => {
+    const pv = item.productValue || 0;
+    const addonsTotal = item.addonsTotal || 0;
+    return (pv + addonsTotal) * item.quantity;
+  };
+
   let calculatedTotal = total;
   if (calculatedTotal == null) {
     calculatedTotal = 0;
-    // Adicionar itens agrupados por grupo
     Object.keys(itemsByGroup).forEach((grupo) => {
       itemsByGroup[grupo].forEach((item) => {
-        const itemTotal = (item.productValue || 0) * item.quantity;
-        calculatedTotal += itemTotal;
+        calculatedTotal += lineTotal(item);
       });
     });
-    // Adicionar taxa de entrega se houver
     calculatedTotal += deliveryFee || 0;
   }
 
-  // Adicionar itens agrupados por grupo na mensagem
   Object.keys(itemsByGroup).forEach((grupo) => {
     message += `*${grupo}*\n`;
     itemsByGroup[grupo].forEach((item) => {
-      const itemTotal = (item.productValue || 0) * item.quantity;
+      const itemTotal = lineTotal(item);
       message += `• ${item.productName} - Qtd: ${item.quantity} - R$ ${itemTotal.toFixed(2).replace(".", ",")}\n`;
+      if (item.addons && item.addons.length > 0) {
+        item.addons.forEach((a) => {
+          message += `  └ ${a.label} + R$ ${Number(a.value).toFixed(2).replace(".", ",")}\n`;
+        });
+      }
     });
     message += "\n";
   });
