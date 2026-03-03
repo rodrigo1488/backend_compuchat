@@ -144,7 +144,7 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
 
     // Buscar dispositivo com token e deviceId
     // extractAuthFromRequest já faz trim, então usamos os valores diretamente
-    logger.info("Print WS auth attempt:", {
+    logger.info(`Print WS auth attempt: deviceId="${deviceId}" tokenLength=${token?.length ?? 0}`, {
       deviceId: deviceId || "null",
       tokenLength: token?.length || 0,
       tokenPreview: token ? token.substring(0, 20) + "..." : "null"
@@ -163,7 +163,7 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
             where: { deviceId: deviceId }
           }).then((deviceByDeviceId) => {
             if (deviceByDeviceId) {
-              logger.warn("Print WS upgrade rejected: token mismatch", {
+              logger.warn(`Print WS upgrade rejected: token mismatch deviceId="${deviceId}"`, {
                 deviceId: deviceId || "null",
                 tokenReceivedPreview: token ? token.substring(0, 20) + "..." : "null",
                 tokenExpectedPreview: deviceByDeviceId.token.substring(0, 20) + "...",
@@ -172,7 +172,7 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
                 hint: `O token no agente não corresponde ao token no banco. DeviceId "${deviceId}" existe, mas o token está incorreto. Copie o token correto do PrintDevice no banco de dados.`
               });
             } else {
-              logger.warn("Print WS upgrade rejected: deviceId not found", {
+              logger.warn(`Print WS upgrade rejected: deviceId not found deviceId="${deviceId}"`, {
                 deviceId: deviceId || "null",
                 tokenPreview: token ? token.substring(0, 20) + "..." : "null",
                 hint: `DeviceId "${deviceId}" não existe no banco de dados. Crie um PrintDevice com este deviceId primeiro.`
