@@ -10,13 +10,14 @@ import DuplicateProductService from "../services/ProductServices/DuplicateProduc
 import ListProductsService from "../services/ProductServices/ListProductsService";
 import ShowProductService from "../services/ProductServices/ShowProductService";
 import ImportMenuFromDocumentService from "../services/ProductServices/ImportMenuFromDocumentService";
+import CreateAddOnGroupService from "../services/AddOnGroupServices/CreateAddOnGroupService";
 import uploadMenuFileConfig from "../config/uploadMenuFile";
 import Product from "../models/Product";
+import GrupoAddOn from "../models/GrupoAddOn";
 import Form from "../models/Form";
 import AddOnGroup from "../models/AddOnGroup";
 import AddOnSubgroup from "../models/AddOnSubgroup";
 import AddOnItem from "../models/AddOnItem";
-import GrupoAddOn from "../models/GrupoAddOn";
 import AppError from "../errors/AppError";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
@@ -408,7 +409,17 @@ export const importFromMenu = async (req: Request, res: Response): Promise<Respo
 
 export const confirmImportFromMenu = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
-  const { produtos } = req.body as { produtos: Array<{ nome: string; descricao?: string; grupo?: string; valor: number }> };
+  const {
+    produtos,
+    adicionais,
+  } = req.body as {
+    produtos: Array<{ nome: string; descricao?: string; grupo?: string; valor: number }>;
+    adicionais?: Array<{
+      nomeGrupo: string;
+      itens: Array<{ label: string; valor: number }>;
+      gruposProduto: string[];
+    }>;
+  };
   if (!Array.isArray(produtos) || produtos.length === 0) {
     throw new AppError("Envie uma lista de produtos para importar.", 400);
   }
@@ -439,5 +450,52 @@ export const confirmImportFromMenu = async (req: Request, res: Response): Promis
       // skip invalid items
     }
   }
+
+  if (Array.isArray(adicionais) && adicionais.length > 0) {
+    const grupoToItems = new Map<string, Array<{ label: string; value: number }>>();
+    for (const ad of adicionais) {
+      const nomeGrupo = (ad.nomeGrupo && String(ad.nomeGrupo).trim()) || "Adicionais";
+      const itens = (ad.itens || [])
+        .filter((it) => it && String(it.label || "").trim())
+        .map((it) => ({
+          label: String(it.label).trim(),
+          value: typeof it.valor === "number" ? it.valor : parseFloat(String(it.valor).replace(",", ".")) || 0,
+        }))
+        .filter((it) => it.value >= 0);
+      if (itens.length === 0) continue;
+      const gruposProduto = (ad.gruposProduto || []).filter((g) => typeof g === "string").map((g) => String(g).trim()).filter(Boolean);
+      if (gruposProduto.length === 0) continue;
+      for (const g of gruposProduto) {
+        const key = g || "Outros";
+        if (!grupoToItems.has(key)) grupoToItems.set(key, []);
+        const existing = grupoToItems.get(key)!;
+        const existingLabels = new Set(existing.map((i) => i.label));
+        for (const it of itens) {
+          if (!existingLabels.has(it.label)) {
+            existing.push(it);
+            existingLabels.add(it.label);
+          }
+        }
+      }
+    }
+    for (const [grupo, items] of grupoToItems.entries()) {
+      if (items.length === 0) continue;
+      try {
+        const addOnGroup = await CreateAddOnGroupService({
+          companyId,
+          name: `Adicionais - ${grupo}`,
+          items: items.map((it, i) => ({ label: it.label, value: it.value, order: i })),
+        });
+        const [row, created] = await GrupoAddOn.findOrCreate({
+          where: { companyId, grupo },
+          defaults: { companyId, grupo, addOnGroupId: addOnGroup.id },
+        });
+        if (!created) await row.update({ addOnGroupId: addOnGroup.id });
+      } catch {
+        // skip on error
+      }
+    }
+  }
+
   return res.status(200).json({ created, count: created.length });
 };
