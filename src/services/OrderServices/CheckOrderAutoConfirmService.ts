@@ -6,7 +6,8 @@ import UpdateOrderStatusService from "./UpdateOrderStatusService";
 
 /**
  * Busca pedidos em status "novo" que devem ser automaticamente
- * avançados para "confirmado" conforme autoConfirmMinutes do formulário.
+ * avançados para "confirmado". Usa autoConfirmMinutes (aba Quadro) ou,
+ * se não definido, autoAdvanceInterval (configuração "Avançar por todos os estágios") em minutos.
  */
 const CheckOrderAutoConfirmService = async (): Promise<void> => {
   try {
@@ -19,13 +20,17 @@ const CheckOrderAutoConfirmService = async (): Promise<void> => {
     });
 
     for (const form of forms) {
-      const formSettings = form.settings as any;
-      if (formSettings?.formType !== "cardapio") continue;
+      const formSettings = typeof form.settings === "object" && form.settings !== null
+        ? (form.settings as Record<string, unknown>)
+        : {};
+      if (formSettings.formType !== "cardapio") continue;
 
-      const autoConfirmMinutes = Number(formSettings?.autoConfirmMinutes) || 0;
-      if (autoConfirmMinutes <= 0) continue;
+      const autoConfirmMinutes = Number(formSettings.autoConfirmMinutes) || 0;
+      const autoAdvanceInterval = Number(formSettings.autoAdvanceInterval) || 0;
+      const minutesToUse = autoConfirmMinutes > 0 ? autoConfirmMinutes : (autoAdvanceInterval > 0 ? autoAdvanceInterval : 0);
+      if (minutesToUse <= 0) continue;
 
-      const cutoffTime = new Date(now.getTime() - autoConfirmMinutes * 60 * 1000);
+      const cutoffTime = new Date(now.getTime() - minutesToUse * 60 * 1000);
 
       const responses = await FormResponse.findAll({
         where: {

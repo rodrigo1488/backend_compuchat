@@ -2,6 +2,11 @@ import { Request, Response } from "express";
 import { TranslationService } from "../services/AiServices/TranslationService";
 import Message from "../models/Message";
 import AppError from "../errors/AppError";
+import { logger } from "../utils/logger";
+
+// Throttle de log para 429: evita encher o console quando a API do Gemini está no limite
+const RATE_LIMIT_LOG_INTERVAL_MS = 60000; // 1 minuto
+let lastRateLimitLogTime = 0;
 
 /**
  * Traduz uma mensagem específica
@@ -47,8 +52,16 @@ export const translateMessage = async (
 
     return res.status(200).json(result);
   } catch (err: any) {
-    console.error("Erro ao traduzir mensagem:", err);
-    
+    if (err instanceof AppError && err.statusCode === 429) {
+      const now = Date.now();
+      if (now - lastRateLimitLogTime >= RATE_LIMIT_LOG_INTERVAL_MS) {
+        lastRateLimitLogTime = now;
+        logger.warn("Tradução: limite da API do Gemini (429). As requisições serão retentadas com backoff.");
+      }
+    } else {
+      logger.error("Erro ao traduzir mensagem:", err);
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode).json({ error: err.message });
     }
@@ -114,8 +127,16 @@ export const translateMessagesBatch = async (
 
     return res.status(200).json({ translations: results });
   } catch (err: any) {
-    console.error("Erro ao traduzir mensagens em batch:", err);
-    
+    if (err instanceof AppError && err.statusCode === 429) {
+      const now = Date.now();
+      if (now - lastRateLimitLogTime >= RATE_LIMIT_LOG_INTERVAL_MS) {
+        lastRateLimitLogTime = now;
+        logger.warn("Tradução em batch: limite da API do Gemini (429).");
+      }
+    } else {
+      logger.error("Erro ao traduzir mensagens em batch:", err);
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode).json({ error: err.message });
     }
@@ -159,8 +180,16 @@ export const translateText = async (
 
     return res.status(200).json(result);
   } catch (err: any) {
-    console.error("Erro ao traduzir texto:", err);
-    
+    if (err instanceof AppError && err.statusCode === 429) {
+      const now = Date.now();
+      if (now - lastRateLimitLogTime >= RATE_LIMIT_LOG_INTERVAL_MS) {
+        lastRateLimitLogTime = now;
+        logger.warn("Tradução de texto: limite da API do Gemini (429).");
+      }
+    } else {
+      logger.error("Erro ao traduzir texto:", err);
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode).json({ error: err.message });
     }

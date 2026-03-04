@@ -6,6 +6,7 @@ import Ticket from "../../models/Ticket";
 import WhatsAppService from "../WhatsAppService";
 import Whatsapp from "../../models/Whatsapp";
 import { logger } from "../../utils/logger";
+import { Boom } from "@hapi/boom";
 
 import formatBody from "../../helpers/Mustache";
 
@@ -106,17 +107,25 @@ const SendWhatsAppMessage = async ({
 
     return sentMessage;
   } catch (err) {
+    const boomError = err as Boom;
+    const statusCode = boomError?.output?.statusCode;
+    const boomData = boomError?.data;
+
     logger.error({
       msg: "SendWhatsAppMessage: Erro ao enviar mensagem",
       ticketId: ticket.id,
       whatsappId: whatsapp.id,
-      error: err?.message || err
+      error: err?.message || err,
+      statusCode: statusCode ?? null,
+      errorType: err?.name || "unknown",
+      boomData: boomData ?? null
     });
     Sentry.captureException(err, {
       tags: {
         service: "SendWhatsAppMessage",
         ticketId: ticket.id,
-        whatsappId: whatsapp.id
+        whatsappId: whatsapp.id,
+        statusCode: statusCode || "unknown"
       }
     });
     throw new AppError("ERR_SENDING_WAPP_MSG");

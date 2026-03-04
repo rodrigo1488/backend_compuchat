@@ -263,10 +263,29 @@ ${text}
 Translation:`;
       }
 
-      const translatedText = await provider.generateText(prompt, {
-        temperature: 0.3,
-        maxTokens: Math.max(text.length * 2, 500)
-      });
+      // Retry com backoff em caso de rate limit (429) do Gemini
+      const MAX_RETRIES_429 = 3;
+      const BACKOFF_MS = [3000, 10000, 30000]; // 3s, 10s, 30s
+      let translatedText: string = "";
+
+      for (let attempt = 0; attempt <= MAX_RETRIES_429; attempt++) {
+        try {
+          translatedText = await provider.generateText(prompt, {
+            temperature: 0.3,
+            maxTokens: Math.max(text.length * 2, 500)
+          });
+          break;
+        } catch (err: any) {
+          const appErr = err instanceof AppError ? err : new AppError(err.message || "Erro ao traduzir", err.statusCode || 500);
+          if (appErr.statusCode === 429 && attempt < MAX_RETRIES_429) {
+            const delay = BACKOFF_MS[attempt];
+            logger.warn(`Gemini 429 (tentativa ${attempt + 1}/${MAX_RETRIES_429 + 1}). Aguardando ${delay / 1000}s antes de retry.`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          throw appErr;
+        }
+      }
 
       // Armazenar em cache
       translationCache.set(cacheKey, {
