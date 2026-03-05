@@ -4791,7 +4791,13 @@ const handleMessage = async (
         order: [["createdAt", "DESC"]]
       });
 
-      if (lastMessage && lastMessage.body.includes(whatsapp.greetingMessage)) {
+      const renderedGreetingMessage = formatBody(`${whatsapp.greetingMessage || ""}`, contact);
+
+      if (
+        renderedGreetingMessage &&
+        lastMessage &&
+        lastMessage.body.includes(renderedGreetingMessage)
+      ) {
         return;
       }
 
@@ -4800,10 +4806,14 @@ const handleMessage = async (
           async () => {
             // Usar getChatJid para obter destino correto
             const chatJid = getChatJid(ticket);
+            const greetingBody = formatBody(`${whatsapp.greetingMessage}`, contact);
+            if (!greetingBody.trim().replace(/\u200e/g, "").length) {
+              return;
+            }
             await wbot.sendMessage(
               chatJid,
               {
-                text: whatsapp.greetingMessage
+                text: greetingBody
               }
             );
           },

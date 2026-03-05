@@ -4,9 +4,9 @@ import AppError from "../../errors/AppError";
 import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
 import WhatsAppService from "../WhatsAppService";
-import Whatsapp from "../../models/Whatsapp";
 import { logger } from "../../utils/logger";
 import { Boom } from "@hapi/boom";
+import ResolveTicketWhatsApp from "../../helpers/ResolveTicketWhatsApp";
 
 import formatBody from "../../helpers/Mustache";
 
@@ -27,10 +27,7 @@ const SendWhatsAppMessage = async ({
   const number = ticket.contact.number;
 
   // Obter whatsapp do ticket
-  const whatsapp = await Whatsapp.findByPk(ticket.whatsappId);
-  if (!whatsapp) {
-    throw new AppError("ERR_WAPP_NOT_FOUND");
-  }
+  const whatsapp = await ResolveTicketWhatsApp(ticket);
 
   if (quotedMsg) {
     const chatMessages = await Message.findOne({

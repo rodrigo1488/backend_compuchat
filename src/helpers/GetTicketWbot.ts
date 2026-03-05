@@ -1,10 +1,8 @@
 import { WASocket } from "baileys";
 import { getWbot } from "../libs/wbot";
-import GetDefaultWhatsApp from "./GetDefaultWhatsApp";
 import Ticket from "../models/Ticket";
-import Whatsapp from "../models/Whatsapp";
 import { Store } from "../libs/store";
-import AppError from "../errors/AppError";
+import ResolveTicketWhatsApp from "./ResolveTicketWhatsApp";
 
 type Session = WASocket & {
   id?: number;
@@ -12,21 +10,16 @@ type Session = WASocket & {
 };
 
 const GetTicketWbot = async (ticket: Ticket): Promise<Session | null> => {
-  if (!ticket.whatsappId) {
-    const defaultWhatsapp = await GetDefaultWhatsApp(ticket.user.id);
-
-    await ticket.$set("whatsapp", defaultWhatsapp);
-  }
+  const resolvedWhatsapp = await ResolveTicketWhatsApp(ticket);
 
   // Verificar se é Instagram - Instagram não usa sessão Baileys
-  const whatsapp = await Whatsapp.findByPk(ticket.whatsappId);
-  if (whatsapp && whatsapp.type === "instagram") {
+  if (resolvedWhatsapp.type === "instagram") {
     // Instagram não precisa de sessão Baileys, retorna null
     // O código que usa GetTicketWbot deve verificar se é Instagram antes de chamar
     return null;
   }
 
-  const wbot = getWbot(ticket.whatsappId);
+  const wbot = getWbot(resolvedWhatsapp.id);
   return wbot;
 };
 

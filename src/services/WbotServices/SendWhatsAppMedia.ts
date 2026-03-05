@@ -8,6 +8,7 @@ import AppError from "../../errors/AppError";
 import Ticket from "../../models/Ticket";
 import { lookup } from "mime-types";
 import formatBody from "../../helpers/Mustache";
+import ResolveTicketWhatsApp from "../../helpers/ResolveTicketWhatsApp";
 
 interface Request {
   media: Express.Multer.File;
@@ -119,12 +120,8 @@ const SendWhatsAppMedia = async ({
   body
 }: Request): Promise<WAMessage | any> => {
   try {
-    // Obter whatsapp do ticket
-    const Whatsapp = (await import("../../models/Whatsapp")).default;
-    const whatsapp = await Whatsapp.findByPk(ticket.whatsappId);
-    if (!whatsapp) {
-      throw new AppError("ERR_WAPP_NOT_FOUND");
-    }
+    // Obter whatsapp do ticket com fallback seguro para conexão ativa.
+    const whatsapp = await ResolveTicketWhatsApp(ticket);
 
     const pathMedia = media.path;
     const typeMessage = media.mimetype.split("/")[0];
