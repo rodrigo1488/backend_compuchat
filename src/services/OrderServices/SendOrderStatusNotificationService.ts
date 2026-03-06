@@ -25,6 +25,11 @@ const SendOrderStatusNotificationService = async ({
   response,
   newStatus,
 }: Request): Promise<boolean> => {
+  const formSettings = form.settings as any;
+  if (formSettings?.disableWhatsAppMessages === true) {
+    return false;
+  }
+
   const statusesToNotify = ["em_preparo", "pronto", "saiu_entrega", "entregue"];
   if (!statusesToNotify.includes(newStatus)) {
     return false;
@@ -53,7 +58,6 @@ const SendOrderStatusNotificationService = async ({
     return false;
   }
 
-  const formSettings = form.settings as any;
   const orderStatusMessages = formSettings?.orderStatusMessages || {};
   const customTemplate = (orderStatusMessages[newStatus] || "").trim();
   const template = customTemplate || DEFAULT_MESSAGES[newStatus];

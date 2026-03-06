@@ -942,13 +942,15 @@ const ProcessFormResponseService = async ({
   }
 
   // Process menu form: send WhatsApp message to customer em segundo plano (não bloqueia a resposta)
+  const disableWhatsAppMessages = formSettings?.disableWhatsAppMessages === true;
   console.log("ProcessFormResponseService - Checking menu form:", {
     isMenuForm,
     menuItemsCount: menuItems?.length || 0,
     contactPhone: contactPhone ? "present" : "missing",
+    disableWhatsAppMessages,
   });
 
-  if (isMenuForm && menuItems && menuItems.length > 0 && contactPhone) {
+  if (isMenuForm && menuItems && menuItems.length > 0 && contactPhone && !disableWhatsAppMessages) {
     (async () => {
       try {
         console.log("ProcessFormResponseService (background) - Starting WhatsApp send");
@@ -1114,9 +1116,9 @@ const ProcessFormResponseService = async ({
     ],
   });
 
-  // Envio WhatsApp é em segundo plano; frontend não deve bloquear
+  // Envio WhatsApp é em segundo plano; frontend não deve bloquear (ou desabilitado por configuração)
   if (isMenuForm) {
-    (response as any).whatsappSent = "pending";
+    (response as any).whatsappSent = disableWhatsAppMessages ? false : "pending";
   }
 
   // For agendamento form, attach token so frontend can show success page links (reagendar, ical)
