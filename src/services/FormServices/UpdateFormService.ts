@@ -289,19 +289,35 @@ const UpdateFormService = async ({
         }
       }
 
-      // Remapear settings.deliveryFeeCondition.fieldId para o novo ID, se necessário.
+      // Remapear settings.*.fieldId para os novos IDs, se necessário.
       const currentSettings: any = (form.settings as any) || {};
       const cond = currentSettings?.deliveryFeeCondition;
       const condFieldId = cond?.fieldId;
       const mapped = condFieldId != null ? oldToNewFieldId[Number(condFieldId)] : undefined;
-      if (mapped) {
-        const nextSettings = {
-          ...currentSettings,
-          deliveryFeeCondition: {
+      const triggerRules = Array.isArray(currentSettings?.orderTriggerMessages)
+        ? currentSettings.orderTriggerMessages
+        : [];
+      const remappedTriggerRules = triggerRules.map((rule: any) => {
+        const ruleFieldId = rule?.fieldId != null ? Number(rule.fieldId) : null;
+        const mappedRuleFieldId = ruleFieldId != null ? oldToNewFieldId[ruleFieldId] : undefined;
+        return mappedRuleFieldId
+          ? { ...rule, fieldId: mappedRuleFieldId }
+          : rule;
+      });
+      const triggerRulesChanged =
+        JSON.stringify(remappedTriggerRules) !== JSON.stringify(triggerRules);
+
+      if (mapped || triggerRulesChanged) {
+        const nextSettings: any = { ...currentSettings };
+        if (mapped) {
+          nextSettings.deliveryFeeCondition = {
             ...(cond || {}),
             fieldId: mapped,
-          },
-        };
+          };
+        }
+        if (triggerRulesChanged) {
+          nextSettings.orderTriggerMessages = remappedTriggerRules;
+        }
         await form.update({ settings: nextSettings });
         await form.reload();
       }

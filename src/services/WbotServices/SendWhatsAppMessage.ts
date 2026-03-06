@@ -9,6 +9,7 @@ import { Boom } from "@hapi/boom";
 import ResolveTicketWhatsApp from "../../helpers/ResolveTicketWhatsApp";
 
 import formatBody from "../../helpers/Mustache";
+import { getChatJid } from "../../helpers/chatJid";
 
 interface Request {
   body: string;
@@ -24,7 +25,7 @@ const SendWhatsAppMessage = async ({
   mentions
 }: Request): Promise<WAMessage | any> => {
   let options: Record<string, any> = {};
-  const number = ticket.contact.number;
+  const chatJid = getChatJid(ticket);
 
   // Obter whatsapp do ticket
   const whatsapp = await ResolveTicketWhatsApp(ticket);
@@ -76,7 +77,7 @@ const SendWhatsAppMessage = async ({
     const formattedBody = formatBody(body, ticket.contact);
     const sentMessage = await WhatsAppService.sendMessage(
       whatsapp,
-      number,
+      chatJid,
       formattedBody,
       options
     );

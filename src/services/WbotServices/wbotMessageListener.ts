@@ -65,6 +65,8 @@ import { handleGemini } from "../IntegrationsServices/GeminiService";
 import ShowPromptService from "../PromptServices/ShowPromptService";
 import generateContextSummary from "../AiServices/GenerateContextSummaryService";
 import GetTicketWbot from "../../helpers/GetTicketWbot";
+import { getChatJid as getChatJidFromHelper } from "../../helpers/chatJid";
+import { isValidPhoneNumber as isValidPhoneNumberBase } from "../../helpers/validatePhoneNumber";
 import Company from "../../models/Company";
 import ListSettingsServiceOne from "../SettingServices/ListSettingsServiceOne";
 import ShowUserService from "../UserServices/ShowUserService";
@@ -143,13 +145,19 @@ export const extractChatId = (msg: proto.IWebMessageInfo): string => {
  * Extrai o identificador do REMETENTE REAL da mensagem.
  * Representa QUEM enviou a mensagem.
  * Use para: validações de usuário, permissões, histórico por usuário.
- * 
+ *
  * PRIORIDADE:
  * 1. participantAlt (Baileys 7.x - PN quando principal é LID)
  * 2. participant (grupos/broadcasts)
  * 3. msg.participant (fallback)
  * 4. remoteJidAlt (Baileys 7.x)
  * 5. remoteJid (chats privados - participant é null)
+ *
+ * LID/PN (Baileys 7.x): Quando nenhum campo tiver número válido (isValidPhoneNumber),
+ * o retorno pode ser um LID (formato numero@lid). Fluxos que exigem número de telefone
+ * (ex.: criação de contato, persistência em banco) devem: (1) verificar se o valor
+ * termina com @lid; (2) tentar resolver via mapeamento LID→PN (ex.: verifyContact com
+ * getPNForLID) ou logar e tratar explicitamente (rejeitar ou usar LID com cuidado).
  */
 export const extractSenderId = (msg: proto.IWebMessageInfo): string => {
   const key = msg.key as any;
@@ -244,101 +252,23 @@ export const extractMessageContext = (msg: proto.IWebMessageInfo) => {
   };
 };
 
-/**
- * Obtém o JID de destino para envio de mensagens de um ticket.
- * 
- * IMPORTANTE: Use esta função SEMPRE que for enviar mensagens para um ticket.
- * Ela garante que a mensagem seja enviada para o destino correto:
- * - Em grupos: retorna o JID do grupo (groupContact.number@g.us)
- * - Em privado: retorna o JID do contato (contact.number@s.whatsapp.net)
- * 
- * @param ticket - O ticket para o qual enviar a mensagem
- * @returns O JID formatado para envio
- */
-export const getChatJid = (ticket: {
-  contact: { number: string };
-  isGroup: boolean;
-  groupContact?: { number: string } | null;
-}): string => {
-  // Em grupos, usar o groupContact se disponível, senão usar o contact
-  if (ticket.isGroup && ticket.groupContact) {
-    return `${ticket.groupContact.number}@g.us`;
-  }
-  return `${ticket.contact.number}@${ticket.isGroup ? "g.us" : "s.whatsapp.net"}`;
-};
+/** Re-export da função centralizada para compatibilidade com imports existentes. */
+export const getChatJid = getChatJidFromHelper;
 
 export const isNumeric = (value: string) => /^-?\d+$/.test(value);
 
 /**
- * Valida se um número é um telefone válido.
- * Verifica comprimento e código de país para evitar salvar IDs de sessão ou LIDs.
- * 
- * @param number - Número a ser validado (pode conter caracteres não numéricos)
- * @returns true se o número é válido, false caso contrário
+ * Valida se um número é um telefone válido (para uso em sender/contato).
+ * LIDs e IDs de grupo tendem a ser rejeitados. Quando extractSenderId retorna um LID,
+ * isValidPhoneNumber(extraído) será false; use getPNForLID ou verifyContact para resolver.
+ * Implementação em helpers/validatePhoneNumber; re-export com log para compatibilidade.
  */
 export const isValidPhoneNumber = (number: string): boolean => {
-  const cleanNumber = number.replace(/\D/g, "");
-
-  // Telefone válido tem entre 10-15 dígitos
-  if (cleanNumber.length < 10 || cleanNumber.length > 15) {
-    // Log removido - usar logger.debug se necessário para diagnóstico
-    return false;
+  const result = isValidPhoneNumberBase(number);
+  if (result) {
+    logger.debug(`✅ Número válido: ${number.replace(/\D/g, "")}`);
   }
-
-  // Lista de códigos de país conhecidos (1-3 dígitos)
-  const knownCountryCodes = [
-    "1",    // EUA/Canadá
-    "44",   // Reino Unido
-    "49",   // Alemanha
-    "52",   // México
-    "55",   // Brasil
-    "56",   // Chile
-    "54",   // Argentina
-    "351",  // Portugal
-    "34",   // Espanha
-    "39",   // Itália
-    "33",   // França
-    "41",   // Suíça
-    "43",   // Áustria
-    "45",   // Dinamarca
-    "46",   // Suécia
-    "47",   // Noruega
-    "48",   // Polônia
-    "51",   // Peru
-    "53",   // Cuba
-    "57",   // Colômbia
-    "58",   // Venezuela
-    "60",   // Malásia
-    "61",   // Austrália
-    "62",   // Indonésia
-    "63",   // Filipinas
-    "64",   // Nova Zelândia
-    "65",   // Singapura
-    "66",   // Tailândia
-    "81",   // Japão
-    "82",   // Coreia do Sul
-    "84",   // Vietnã
-    "86",   // China
-    "90",   // Turquia
-    "91",   // Índia
-    "92",   // Paquistão
-    "93",   // Afeganistão
-    "94",   // Sri Lanka
-    "95",   // Myanmar
-    "98"    // Irã
-  ];
-
-  // Verificar se começa com algum código de país conhecido
-  const hasValidCountryCode = knownCountryCodes.some(code =>
-    cleanNumber.startsWith(code)
-  );
-
-  if (!hasValidCountryCode) {
-    return false;
-  }
-
-  logger.debug(`✅ Número válido: ${cleanNumber}`);
-  return true;
+  return result;
 };
 
 const writeFileAsync = promisify(writeFile);
@@ -814,13 +744,16 @@ const downloadMedia = async (msg: proto.IWebMessageInfo) => {
   return media;
 };
 
+/**
+ * Resolve ou cria contato a partir do remetente da mensagem (msgContact.id pode vir de extractSenderId).
+ * Quando o id é um LID (numero@lid), tentamos resolver para PN via getPNForLID antes de validar
+ * número; fluxos que dependem de número de telefone devem usar verifyContact para obter contato.
+ */
 const verifyContact = async (
   msgContact: IMe,
   wbot: Session,
   companyId: number
 ): Promise<Contact> => {
-  // Log removido para reduzir ruído
-
   let profilePicUrl: string;
 
   // Normalizar o ID do contato para garantir formato correto
@@ -5088,8 +5021,12 @@ const wbotMessageListener = async (
       ackFlushTimer = setTimeout(flushAckUpdates, debounceMs);
     });
 
-    // Handler para atualizações de mapeamento LID/PN (Baileys 7.x)
-    // O evento pode receber um objeto único { lid, pn } ou um objeto com múltiplos mapeamentos
+    // Handler para atualizações de mapeamento LID/PN (Baileys 7.x).
+    // Decisão atual: o mapeamento NÃO é persistido em banco (sem tabela LidMapping/campo Contact.lid).
+    // Apenas logamos e, quando aplicável, contatos existentes são logados; a resolução LID→PN em
+    // verifyContact usa getPNForLID do wbot (mapeamento em memória do Baileys). Se no futuro for
+    // necessário persistir, adicionar migration + persistência aqui e usar na resolução de contato.
+    // O evento pode receber um objeto único { lid, pn } ou um objeto com múltiplos mapeamentos.
     wbot.ev.on("lid-mapping.update", async (mapping: any) => {
       try {
         // O evento pode ter diferentes formatos dependendo da versão do Baileys

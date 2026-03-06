@@ -38,11 +38,9 @@ class WhatsAppService {
   ): Promise<any> {
     const whatsapp = await this.resolveWhatsapp(whatsappOrId);
     const provider = this.getProvider(whatsapp);
-    
-    // Remove @s.whatsapp.net se presente
-    const cleanNumber = number.replace(/@.*$/, "").replace(/\D/g, "");
-    
-    return provider.sendMessage(whatsapp, cleanNumber, body, options);
+    // Se já for JID completo (ex.: de getChatJid(ticket)), repassa como está
+    const destination = number.includes("@") ? number : number.replace(/@.*$/, "").replace(/\D/g, "");
+    return provider.sendMessage(whatsapp, destination, body, options);
   }
 
   /**
@@ -68,11 +66,8 @@ class WhatsAppService {
   ): Promise<any> {
     const whatsapp = await this.resolveWhatsapp(whatsappOrId);
     const provider = this.getProvider(whatsapp);
-    
-    // Remove @s.whatsapp.net se presente
-    const cleanNumber = number.replace(/@.*$/, "").replace(/\D/g, "");
-    
-    return provider.sendMedia(whatsapp, cleanNumber, mediaPath, options);
+    const destination = number.includes("@") ? number : number.replace(/@.*$/, "").replace(/\D/g, "");
+    return provider.sendMedia(whatsapp, destination, mediaPath, options);
   }
 
   /**

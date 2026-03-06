@@ -14,7 +14,9 @@ export interface SendMediaOptions {
 
 export interface IWhatsAppProvider {
   /**
-   * Envia uma mensagem de texto
+   * Envia uma mensagem de texto.
+   * @param number - Número de destino ou JID completo (ex.: 5511999999999@s.whatsapp.net ou 120363123456789@g.us).
+   *                 Quando a chamada vem de um ticket, use getChatJid(ticket) para garantir grupo vs privado.
    */
   sendMessage(
     whatsapp: Whatsapp,
@@ -24,7 +26,9 @@ export interface IWhatsAppProvider {
   ): Promise<any>;
 
   /**
-   * Envia uma mídia (imagem, vídeo, áudio, documento)
+   * Envia uma mídia (imagem, vídeo, áudio, documento).
+   * @param number - Número de destino ou JID completo (ex.: 5511999999999@s.whatsapp.net ou 120363123456789@g.us).
+   *                 Quando a chamada vem de um ticket, use getChatJid(ticket).
    */
   sendMedia(
     whatsapp: Whatsapp,

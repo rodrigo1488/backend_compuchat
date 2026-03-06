@@ -36,6 +36,12 @@ interface Answer {
   fileUrl?: string;
 }
 
+interface OrderTriggerMessageRule {
+  fieldId: number;
+  optionValue: string;
+  message: string;
+}
+
 interface Request {
   formId: number;
   answers: Answer[];
@@ -218,6 +224,35 @@ const normalizeMenuItems = async (
   return result;
 };
 
+const normalizeAnswerValues = (value: string | string[] | undefined): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => String(v ?? "").trim())
+      .filter((v) => v !== "");
+  }
+  const single = String(value ?? "").trim();
+  return single ? [single] : [];
+};
+
+const resolveTriggeredOrderMessages = (
+  rules: OrderTriggerMessageRule[],
+  answers: Answer[]
+): string[] => {
+  const triggered = new Set<string>();
+  for (const rule of rules) {
+    const expected = String(rule.optionValue || "").trim().toLowerCase();
+    const message = String(rule.message || "").trim();
+    if (!rule.fieldId || !expected || !message) continue;
+    const answer = answers.find((a) => Number(a.fieldId) === Number(rule.fieldId));
+    if (!answer) continue;
+    const values = normalizeAnswerValues(answer.answer).map((v) => v.toLowerCase());
+    if (values.includes(expected)) {
+      triggered.add(message);
+    }
+  }
+  return Array.from(triggered);
+};
+
 const ProcessFormResponseService = async ({
   formId,
   answers,
@@ -305,6 +340,16 @@ const ProcessFormResponseService = async ({
   const isQuotationForm = formSettings?.formType === "quotation";
   const isMenuForm = formSettings?.formType === "cardapio";
   const isAgendamentoForm = formSettings?.formType === "agendamento";
+  const orderTriggerMessageRules: OrderTriggerMessageRule[] = Array.isArray(formSettings?.orderTriggerMessages)
+    ? formSettings.orderTriggerMessages
+        .map((rule: any) => ({
+          fieldId: Number(rule?.fieldId),
+          optionValue: String(rule?.optionValue ?? ""),
+          message: String(rule?.message ?? ""),
+        }))
+        .filter((rule: OrderTriggerMessageRule) => !!rule.fieldId && !!rule.optionValue.trim() && !!rule.message.trim())
+    : [];
+  const triggeredOrderMessages = resolveTriggeredOrderMessages(orderTriggerMessageRules, answers);
 
   // Prepare metadata with quotationItems or menuItems if applicable
   const responseMetadata: any = metadata || {};
@@ -339,6 +384,9 @@ const ProcessFormResponseService = async ({
     console.log("ProcessFormResponseService: Saving menuItems:", responseMetadata.menuItems);
   } else if (isMenuForm) {
     console.log("ProcessFormResponseService: Form is menu but no menuItems received");
+  }
+  if (triggeredOrderMessages.length > 0) {
+    responseMetadata.triggeredOrderMessages = triggeredOrderMessages;
   }
 
   // Create FormResponse (orderStatus "novo" for menu/cardapio forms)
@@ -723,6 +771,22 @@ const ProcessFormResponseService = async ({
 
       // Payload de impressão: menuItems inclui addons e addonsTotal por item para o agente exibir na comanda
       const buildConteudo = (menuItemsForJob: typeof allMenuItems): Record<string, unknown> => {
+        const answersForPrint = answers
+          .map((answer) => {
+            const field = fields.find((f) => f.id === answer.fieldId);
+            return {
+              fieldId: answer.fieldId,
+              label: field?.label || "",
+              answer: answer.answer,
+            };
+          })
+          .concat(
+            triggeredOrderMessages.map((message, index) => ({
+              fieldId: -(index + 1),
+              label: "Mensagem automática",
+              answer: message,
+            }))
+          );
         const conteudo: Record<string, unknown> = {
           event: "form.submitted",
           formId: form.id,
@@ -737,14 +801,7 @@ const ProcessFormResponseService = async ({
             phone: contactPhone,
             email: contactEmail,
           },
-          answers: answers.map((answer) => {
-            const field = fields.find((f) => f.id === answer.fieldId);
-            return {
-              fieldId: answer.fieldId,
-              label: field?.label || "",
-              answer: answer.answer,
-            };
-          }),
+          answers: answersForPrint,
           menuItems: menuItemsForJob,
         };
         if (orderType === "delivery" && meta?.deliveryScanToken) {
@@ -950,6 +1007,14 @@ const ProcessFormResponseService = async ({
             return null;
           })
           .filter((f): f is { label: string; answer: string } => f !== null);
+        if (triggeredOrderMessages.length > 0) {
+          customFields.push(
+            ...triggeredOrderMessages.map((message) => ({
+              label: "Mensagem automática",
+              answer: message,
+            }))
+          );
+        }
         const meta = (response.metadata || metadata || {}) as Record<string, unknown>;
         const tableNumberMsg = (meta?.tableNumber as string) || undefined;
         const garcomNameMsg = (meta?.garcomName as string) || undefined;

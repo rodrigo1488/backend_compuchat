@@ -9,6 +9,7 @@ import Ticket from "../../models/Ticket";
 import { lookup } from "mime-types";
 import formatBody from "../../helpers/Mustache";
 import ResolveTicketWhatsApp from "../../helpers/ResolveTicketWhatsApp";
+import { getChatJid } from "../../helpers/chatJid";
 
 interface Request {
   media: Express.Multer.File;
@@ -126,7 +127,7 @@ const SendWhatsAppMedia = async ({
     const pathMedia = media.path;
     const typeMessage = media.mimetype.split("/")[0];
     const bodyMessage = formatBody(body, ticket.contact);
-    const number = ticket.contact.number;
+    const chatJid = getChatJid(ticket);
 
     // Se for Instagram, usa o Adapter
     if (whatsapp.type === "instagram") {
@@ -162,7 +163,7 @@ const SendWhatsAppMedia = async ({
     const WhatsAppService = (await import("../WhatsAppService")).default;
     const sentMessage = await WhatsAppService.sendMedia(
       whatsapp,
-      number,
+      chatJid,
       finalMediaPath,
       {
         fileName: media.originalname,
