@@ -2409,10 +2409,14 @@ export const verifyMessage = async (
     });
   }
 
+  // Normalizar id para string (Baileys pode retornar Buffer); evita ACK não encontrar a mensagem no banco
+  const rawId = isEdited
+    ? msg?.message?.editedMessage?.message?.protocolMessage?.key?.id
+    : msg.key.id;
+  const normalizedId = rawId != null ? String(rawId) : (msg.key?.id != null ? String(msg.key.id) : undefined);
+  if (!normalizedId) return;
   const messageData = {
-    id: isEdited
-      ? msg?.message?.editedMessage?.message?.protocolMessage?.key?.id
-      : msg.key.id,
+    id: normalizedId,
     ticketId: ticket.id,
     contactId: msg.key.fromMe ? undefined : contact.id,
     body,
@@ -4787,33 +4791,35 @@ const handleMsgAck = async (
   chat: number | null | undefined
 ) => {
   const io = getIO();
+  const messageId = msg?.key?.id != null ? String(msg.key.id) : "";
+  if (!messageId) return;
 
   try {
     // Busca leve primeiro: só ack para evitar update/emit desnecessários
-    const existing = await Message.findByPk(msg.key.id, { attributes: ["id", "ack"] });
+    const existing = await Message.findByPk(messageId, { attributes: ["id", "ack"] });
     if (existing && existing.ack === chat) {
       return;
     }
     if (!existing) {
-      const where: any = { id: msg.key.id };
+      const where: any = { id: messageId };
       if (msg.key.remoteJid) where.remoteJid = msg.key.remoteJid;
       if (msg.key.participant) where.participant = msg.key.participant;
       const alt = await Message.findOne({ where, attributes: ["id", "ack"] });
       if (!alt) {
-        logger.debug('Mensagem não encontrada para ACK', { messageId: msg.key.id });
+        logger.debug('Mensagem não encontrada para ACK', { messageId });
         return;
       }
       if (alt.ack === chat) return;
     }
 
-    let messageToUpdate = await Message.findByPk(msg.key.id, {
+    let messageToUpdate = await Message.findByPk(messageId, {
       include: [
         "contact",
         { model: Message, as: "quotedMsg", include: ["contact"] }
       ]
     });
     if (!messageToUpdate) {
-      const where: any = { id: msg.key.id };
+      const where: any = { id: messageId };
       if (msg.key.remoteJid) where.remoteJid = msg.key.remoteJid;
       if (msg.key.participant) where.participant = msg.key.participant;
       messageToUpdate = await Message.findOne({
@@ -4846,10 +4852,16 @@ const handleMsgAck = async (
     if (messageToUpdate.ack === ackToSet) return;
 
     await messageToUpdate.update({ ack: ackToSet });
+    await messageToUpdate.reload({
+      include: [
+        "contact",
+        { model: Message, as: "quotedMsg", include: ["contact"] }
+      ]
+    });
 
     logger.debug('ACK atualizado', { messageId: messageToUpdate.id, ticketId: messageToUpdate.ticketId, ack: chat });
 
-    // Emitir evento para o frontend
+    // Emitir evento para o frontend (reload garante ticketId/companyId/ack corretos)
     io.to(messageToUpdate.ticketId.toString()).emit(
       `company-${messageToUpdate.companyId}-appMessage`,
       {
@@ -4931,7 +4943,7 @@ const wbotMessageListener = async (
 
       for (const message of messages) {
         try {
-          const messageId = message.key.id;
+          const messageId = message.key.id != null ? String(message.key.id) : "";
           
           if (!messageId) {
             logger.warn({
