@@ -60,6 +60,9 @@ class Campaign extends Model<Campaign> {
   @Column
   estimatedCompletedAt: Date;
 
+  @Column({ defaultValue: false })
+  isRecurring: boolean;
+
   @CreatedAt
   createdAt: Date;
 

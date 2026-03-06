@@ -23,7 +23,7 @@ import User from "./models/User";
 import Company from "./models/Company";
 import Plan from "./models/Plan";
 import ShowFileService from "./services/FileServices/ShowService";
-import { differenceInSeconds } from "date-fns";
+import { differenceInSeconds, addMonths } from "date-fns";
 import formatBody from "./helpers/Mustache";
 import { ClosedAllOpenTickets } from "./services/WbotServices/wbotClosedTickets";
 import CloseInactiveTicketsService from "./services/TicketServices/CloseInactiveTicketsService";
@@ -627,23 +627,39 @@ async function verifyAndFinalizeCampaign(campaign) {
   });
 
   if (count1 === count2 && count1 > 0) {
-    // Busca o modelo da campanha para atualizar
     const campaignRecord = await Campaign.findByPk(campaign.id);
     if (campaignRecord) {
-      await campaignRecord.update({ status: "FINALIZADA", completedAt: moment() });
-      
-      // Libera o lock da empresa após finalizar a campanha
+      // Libera o lock da empresa
       const company = await Company.findByPk(campaign.companyId);
       if (company) {
         await company.update({ campaignRunning: false });
+      }
+
+      if (campaignRecord.isRecurring) {
+        // Recicla a campanha: apaga envios anteriores e agenda para o próximo mês
+        await CampaignShipping.destroy({ where: { campaignId: campaign.id } });
+
+        const lastScheduledAt = campaignRecord.scheduledAt || new Date();
+        const nextScheduledAt = addMonths(new Date(lastScheduledAt), 1);
+
+        await campaignRecord.update({
+          status: "PROGRAMADA",
+          scheduledAt: nextScheduledAt,
+          completedAt: null,
+          estimatedCompletedAt: null
+        });
+
+        logger.info(`[🔁] - Campanha recorrente ${campaign.id} reagendada para: ${nextScheduledAt.toISOString()}`);
+      } else {
+        await campaignRecord.update({ status: "FINALIZADA", completedAt: moment() });
         logger.info(`[📊] - Campanha finalizada. Lock liberado para empresa: ${campaign.companyId}`);
       }
-      
-      // Recarrega a campanha para emitir atualização
+
+      // Recarrega a campanha para emitir atualização via socket
       const updatedCampaign = await Campaign.findByPk(campaign.id, {
-        attributes: ['id', 'companyId', 'status', 'completedAt']
+        attributes: ['id', 'companyId', 'status', 'scheduledAt', 'completedAt', 'isRecurring']
       });
-      
+
       if (updatedCampaign) {
         const io = getIO();
         io.to(`company-${campaign.companyId}-mainchannel`).emit(`company-${campaign.companyId}-campaign`, {

@@ -17,6 +17,7 @@ interface Data {
   message4?: string;
   message5?: string;
   fileListId: number;
+  isRecurring?: boolean;
 }
 
 const CreateService = async (data: Data): Promise<Campaign> => {

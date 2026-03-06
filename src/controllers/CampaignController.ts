@@ -18,6 +18,7 @@ import Campaign from "../models/Campaign";
 import AppError from "../errors/AppError";
 import { CancelService } from "../services/CampaignService/CancelService";
 import { RestartService } from "../services/CampaignService/RestartService";
+import { RerunService } from "../services/CampaignService/RerunService";
 
 type IndexQuery = {
   searchParam: string;
@@ -144,6 +145,28 @@ export const restart = async (
   await RestartService(+id);
 
   return res.status(204).json({ message: "Reinício dos disparos" });
+};
+
+export const rerun = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { id } = req.params;
+  const { companyId } = req.user;
+  const { scheduledAt } = req.body;
+
+  const record = await RerunService(
+    +id,
+    scheduledAt ? new Date(scheduledAt) : undefined
+  );
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-campaign`, {
+    action: "update",
+    record
+  });
+
+  return res.status(200).json(record);
 };
 
 export const duplicate = async (
