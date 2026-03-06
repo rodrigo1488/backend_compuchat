@@ -5,6 +5,7 @@ import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateConta
 import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
 import SendWhatsAppMessage from "../WbotServices/SendWhatsAppMessage";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
+import { getIO } from "../../libs/socket";
 
 const DEFAULT_MESSAGES: Record<string, string> = {
   em_preparo: "👨‍🍳 Seu pedido está em preparo! Em breve estará pronto.",
@@ -137,6 +138,17 @@ const SendOrderStatusNotificationService = async ({
       ticket,
     });
     console.log("SendOrderStatusNotification: mensagem enviada com sucesso", { responseId: response.id });
+
+    // Fecha o ticket automaticamente após enviar a notificação.
+    // Se o cliente responder, o wbotMessageListener reabrirá o ticket como "pending".
+    await ticket.update({ status: "closed" });
+    const io = getIO();
+    io.to(`company-${form.companyId}-mainchannel`).emit(`company-${form.companyId}-ticket`, {
+      action: "delete",
+      ticket,
+      ticketId: ticket.id,
+    });
+
     return true;
   } catch (err: any) {
     console.error("SendOrderStatusNotification error:", err?.message);

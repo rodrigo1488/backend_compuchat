@@ -16,6 +16,8 @@ ticketRoutes.get("/tickets/u/:uuid", isAuth, TicketController.showFromUUID);
 
 ticketRoutes.post("/tickets", isAuth, TicketController.store);
 
+ticketRoutes.post("/tickets/bulk-close", isAuth, TicketController.bulkClose);
+
 ticketRoutes.put("/tickets/:ticketId", isAuth, TicketController.update);
 ticketRoutes.put("/tickets/:ticketId/mark-unread", isAuth, TicketController.markAsUnread);
 

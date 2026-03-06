@@ -236,6 +236,31 @@ export const markAsUnread = async (
   return res.status(200).json({ ticket: await ticket.reload() });
 };
 
+export const bulkClose = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { companyId } = req.user;
+  const { whatsappId } = req.body;
+
+  const where: any = { companyId, status: "pending" };
+  if (whatsappId) where.whatsappId = Number(whatsappId);
+
+  const tickets = await Ticket.findAll({ where });
+
+  const io = getIO();
+  for (const ticket of tickets) {
+    await ticket.update({ status: "closed" });
+    io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-ticket`, {
+      action: "delete",
+      ticket,
+      ticketId: ticket.id,
+    });
+  }
+
+  return res.status(200).json({ closed: tickets.length });
+};
+
 export const remove = async (
   req: Request,
   res: Response
