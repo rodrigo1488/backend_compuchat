@@ -2598,12 +2598,13 @@ const verifyQueue = async (
       if (body.trim().replace(/\u200e/g, '').length > 0) {
         // CORREÇÃO: Usar getChatJid para obter o destino correto do chat
         const chatJid = getChatJid(ticket);
-        await wbot.sendMessage(
+        const sentMsg = await wbot.sendMessage(
           chatJid,
           {
             text: body
           }
         );
+        if (sentMsg) await verifyMessage(sentMsg, ticket, contact);
       }
     }
 
@@ -4110,12 +4111,13 @@ const handleMessage = async (
               if (whatsapp.outOfHoursMessage && whatsapp.outOfHoursMessage.trim().length > 0) {
                 // Usar getChatJid para obter destino correto
                 const chatJid = getChatJid(ticket);
-                await wbot.sendMessage(
+                const sentMsg = await wbot.sendMessage(
                   chatJid,
                   {
                     text: body
                   }
                 );
+                if (sentMsg) await verifyMessage(sentMsg, ticket, contact);
               }
             },
             3000,
@@ -4166,12 +4168,13 @@ const handleMessage = async (
                   if (queue.outOfHoursMessage && queue.outOfHoursMessage.trim().length > 0) {
                     // Usar getChatJid para obter destino correto
                     const chatJid = getChatJid(ticket);
-                    await wbot.sendMessage(
+                    const sentMsg = await wbot.sendMessage(
                       chatJid,
                       {
                         text: body
                       }
                     );
+                    if (sentMsg) await verifyMessage(sentMsg, ticket, contact);
                   }
                 },
                 3000,
@@ -4690,12 +4693,13 @@ const handleMessage = async (
               async () => {
                 // Usar getChatJid para obter destino correto
                 const chatJid = getChatJid(ticket);
-                await wbot.sendMessage(
+                const sentMsg = await wbot.sendMessage(
                   chatJid,
                   {
                     text: body
                   }
                 );
+                if (sentMsg) await verifyMessage(sentMsg, ticket, contact);
               },
               3000,
               ticket.id
@@ -4743,12 +4747,13 @@ const handleMessage = async (
             if (!greetingBody.trim().replace(/\u200e/g, "").length) {
               return;
             }
-            await wbot.sendMessage(
+            const sentMsg = await wbot.sendMessage(
               chatJid,
               {
                 text: greetingBody
               }
             );
+            if (sentMsg) await verifyMessage(sentMsg, ticket, contact);
           },
           1000,
           ticket.id

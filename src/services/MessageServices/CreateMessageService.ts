@@ -34,6 +34,10 @@ const CreateMessageService = async ({
   
   while (retries < maxRetries) {
     try {
+      // Verificar se a mensagem já existia para emitir socket apenas em criação nova
+      // (evita dupla emissão quando controller e listener ambos gravam o mesmo id)
+      const existedBefore = await Message.findByPk(messageData.id, { attributes: ["id"] });
+
       // Tentar salvar a mensagem no banco
       await Message.upsert({ ...messageData, companyId });
 
@@ -81,19 +85,22 @@ const CreateMessageService = async ({
         await message.update({ queueId: message.ticket.queueId });
       }
 
-      // Emitir evento Socket.IO para atualizar frontend
-      const io = getIO();
-      io.to(message.ticketId.toString())
-        .to(`company-${companyId}-${message.ticket.status}`)
-        .to(`company-${companyId}-notification`)
-        .to(`queue-${message.ticket.queueId}-${message.ticket.status}`)
-        .to(`queue-${message.ticket.queueId}-notification`)
-        .emit(`company-${companyId}-appMessage`, {
-          action: "create",
-          message,
-          ticket: message.ticket,
-          contact: message.ticket.contact
-        });
+      // Emitir evento Socket.IO apenas quando a mensagem for nova (não existia antes)
+      // Evita duplicata no frontend quando controller e listener ambos chamam verifyMessage
+      if (!existedBefore) {
+        const io = getIO();
+        io.to(message.ticketId.toString())
+          .to(`company-${companyId}-${message.ticket.status}`)
+          .to(`company-${companyId}-notification`)
+          .to(`queue-${message.ticket.queueId}-${message.ticket.status}`)
+          .to(`queue-${message.ticket.queueId}-notification`)
+          .emit(`company-${companyId}-appMessage`, {
+            action: "create",
+            message,
+            ticket: message.ticket,
+            contact: message.ticket.contact
+          });
+      }
 
       return message;
     } catch (error: any) {

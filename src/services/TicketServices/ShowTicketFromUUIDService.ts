@@ -6,10 +6,11 @@ import Queue from "../../models/Queue";
 import Tag from "../../models/Tag";
 import Whatsapp from "../../models/Whatsapp";
 
-const ShowTicketUUIDService = async (uuid: string): Promise<Ticket> => {
+const ShowTicketUUIDService = async (uuid: string, companyId: number): Promise<Ticket> => {
   const ticket = await Ticket.findOne({
     where: {
-      uuid
+      uuid,
+      companyId
     },
     include: [
       {
@@ -43,6 +44,11 @@ const ShowTicketUUIDService = async (uuid: string): Promise<Ticket> => {
 
   if (!ticket) {
     throw new AppError("ERR_NO_TICKET_FOUND", 404);
+  }
+
+  // Garantia extra: ticket deve pertencer à empresa do usuário
+  if (ticket.companyId !== companyId) {
+    throw new AppError("ERR_ACCESS_DENIED_TICKET", 403);
   }
 
   return ticket;

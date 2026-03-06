@@ -195,8 +195,9 @@ export const showFromUUID = async (
   res: Response
 ): Promise<Response> => {
   const { uuid } = req.params;
+  const { companyId } = req.user;
 
-  const ticket: Ticket = await ShowTicketUUIDService(uuid);
+  const ticket: Ticket = await ShowTicketUUIDService(uuid, companyId);
 
   return res.status(200).json(ticket);
 };
