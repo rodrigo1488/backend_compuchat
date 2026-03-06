@@ -657,13 +657,17 @@ async function verifyAndFinalizeCampaign(campaign) {
   logger.info("[🚨] - Fim da verificação de finalização de campanhas");
 }
 
-function calculateDelay(index, baseDelay, longerIntervalAfter, greaterInterval, messageInterval) {
-  const diffSeconds = differenceInSeconds(baseDelay, new Date());
-  if (index > longerIntervalAfter) {
-    return diffSeconds * 1000 + greaterInterval
+function calculateDelay(index, baseDelayMs, longerIntervalAfter, greaterInterval, messageInterval) {
+  let accumulated: number;
+  if (index <= longerIntervalAfter) {
+    accumulated = index * messageInterval;
   } else {
-    return diffSeconds * 1000 + messageInterval
+    accumulated = longerIntervalAfter * messageInterval
+                  + (index - longerIntervalAfter) * greaterInterval;
   }
+  // Jitter de até 40% do intervalo para randomizar o timing e evitar bloqueios
+  const jitter = Math.floor(Math.random() * messageInterval * 0.4);
+  return baseDelayMs + accumulated + jitter;
 }
 
 async function getCampaignContacts(campaignId: number, batchSize: number = 100, offset: number = 0) {
@@ -729,6 +733,34 @@ async function handleProcessCampaign(job) {
     // Ativa o lock por empresa
     await company?.update({ campaignRunning: true });
 
+    const baseDelayMs = Math.max(0, differenceInSeconds(campaign.scheduledAt, new Date()) * 1000);
+    const longerIntervalAfter = settings.longerIntervalAfter; // contagem de mensagens (ex: 20)
+    const greaterInterval = parseToMilliseconds(settings.greaterInterval); // ms
+    let messageInterval = parseToMilliseconds(settings.messageInterval); // ms
+
+    const totalContacts = await ContactListItem.count({
+      where: { contactListId: campaign.contactListId, isWhatsappValid: true }
+    });
+
+    // Auto-scaling: para campanhas grandes garante duração mínima de 3h para evitar bloqueios
+    const MIN_DURATION_MS = 3 * 60 * 60 * 1000;
+    const LARGE_CAMPAIGN_THRESHOLD = 200;
+    if (totalContacts > LARGE_CAMPAIGN_THRESHOLD) {
+      const minIntervalMs = Math.ceil(MIN_DURATION_MS / totalContacts);
+      if (messageInterval < minIntervalMs) {
+        logger.info(`[📊] - Campanha grande (${totalContacts} contatos). Intervalo ajustado de ${messageInterval}ms para ${minIntervalMs}ms (~${Math.round(minIntervalMs / 1000)}s por contato)`);
+        messageInterval = minIntervalMs;
+      }
+    }
+
+    // Calcula e salva previsão de término baseada nos intervalos efetivos
+    const estimatedDurationMs = totalContacts <= longerIntervalAfter
+      ? totalContacts * messageInterval
+      : longerIntervalAfter * messageInterval + (totalContacts - longerIntervalAfter) * greaterInterval;
+    const estimatedCompletedAt = new Date(Date.now() + baseDelayMs + estimatedDurationMs);
+    await campaign.update({ estimatedCompletedAt });
+    logger.info(`[📊] - Previsão de término da campanha ${id}: ${estimatedCompletedAt.toISOString()} (${Math.round(estimatedDurationMs / 60000)} minutos)`);
+
     let offset = 0;
     let hasMoreContacts = true;
     let totalProcessed = 0;
@@ -746,11 +778,6 @@ async function handleProcessCampaign(job) {
 
       logger.info(`[📊] - Processando lote de ${contacts.length} contatos para campanha ${id} (offset: ${offset})`);
 
-      const baseDelay = campaign.scheduledAt;
-      const longerIntervalAfter = parseToMilliseconds(settings.longerIntervalAfter);
-      const greaterInterval = parseToMilliseconds(settings.greaterInterval);
-      const messageInterval = settings.messageInterval;
-
       // Processa jobs em sub-lotes menores para evitar sobrecarga de memória e Redis
       const subBatchSize = 10; // Processa 10 jobs por vez
       const subBatches: any[][] = [];
@@ -764,7 +791,7 @@ async function handleProcessCampaign(job) {
           const globalIndex = subBatches.indexOf(subBatch) * subBatchSize + subIndex;
           const delay = calculateDelay(
             offset + globalIndex,
-            baseDelay,
+            baseDelayMs,
             longerIntervalAfter,
             greaterInterval,
             messageInterval

@@ -57,6 +57,9 @@ class Campaign extends Model<Campaign> {
   @Column
   completedAt: Date;
 
+  @Column
+  estimatedCompletedAt: Date;
+
   @CreatedAt
   createdAt: Date;
 
