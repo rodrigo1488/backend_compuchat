@@ -39,7 +39,7 @@ const ListMesasService = async ({
     include: [
       { association: "contact", attributes: ["id", "name", "number"] },
       { association: "ticket", attributes: ["id", "status"] },
-      { association: "form", attributes: ["id", "slug"], required: false },
+      { association: "form", attributes: ["id", "slug", "publicId"], required: false },
     ],
     order: [
       ["displayOrder", "ASC"],
