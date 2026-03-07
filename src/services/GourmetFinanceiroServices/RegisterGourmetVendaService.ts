@@ -1,4 +1,5 @@
 import GourmetFinanceiro from "../../models/GourmetFinanceiro";
+import { getBrazilISODateString } from "../../helpers/BrazilTimezone";
 
 interface RequestMesa {
   companyId: number;
@@ -21,7 +22,7 @@ interface RequestDelivery {
 type Request = RequestMesa | RequestDelivery;
 
 const RegisterGourmetVendaService = async (data: Request): Promise<GourmetFinanceiro> => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getBrazilISODateString(new Date());
   const payload: any = {
     companyId: data.companyId,
     tipo: data.tipo,

@@ -1,6 +1,7 @@
 import Form from "../../models/Form";
 import FormResponse from "../../models/FormResponse";
 import { Op } from "sequelize";
+import { getBrazilDayBounds } from "../../helpers/BrazilTimezone";
 
 const RESPONSES_MAX_AGE_HOURS = 24;
 const getCutoff = () => new Date(Date.now() - RESPONSES_MAX_AGE_HOURS * 60 * 60 * 1000);
@@ -16,8 +17,7 @@ const QUEUE_STATUSES = ["novo", "confirmado", "em_preparo"];
 
 const OrdersStatsService = async (companyId: number | string): Promise<OrdersStats> => {
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const { startOfDay, endOfDay } = getBrazilDayBounds(now);
 
   const cardapioForms = await Form.findAll({
     where: {

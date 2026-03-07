@@ -28,6 +28,7 @@ import ProductVariationOption from "../../models/ProductVariationOption";
 import AddOnItem from "../../models/AddOnItem";
 import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
+import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
 
 interface Answer {
   fieldId: number;
@@ -408,11 +409,10 @@ const ProcessFormResponseService = async ({
     } else {
       createPayload.orderStatus = "novo";
     }
-    // Gerar protocolo único PED-YYYYMMDD-NNNN por empresa/dia
+    // Gerar protocolo único PED-YYYYMMDD-NNNN por empresa/dia (dia no fuso de Brasília)
     const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+    const { startOfDay, endOfDay } = getBrazilDayBounds(now);
+    const dateStr = getBrazilDateString(now);
     const count = await FormResponse.count({
       include: [
         {
@@ -769,7 +769,7 @@ const ProcessFormResponseService = async ({
       const allMenuItems = normalizedMenuItems && normalizedMenuItems.length > 0 ? normalizedMenuItems : menuItems;
       const orderType = meta?.orderType === "delivery" ? "delivery" : "mesa";
 
-      // Payload de impressão: menuItems inclui addons e addonsTotal por item para o agente exibir na comanda
+      // Payload de impressão: menuItems com addons e addonsTotal explícitos para o agente de impressão
       const buildConteudo = (menuItemsForJob: typeof allMenuItems): Record<string, unknown> => {
         const answersForPrint = answers
           .map((answer) => {
@@ -787,6 +787,21 @@ const ProcessFormResponseService = async ({
               answer: message,
             }))
           );
+        const menuItemsForPayload = (menuItemsForJob || []).map((it: any) => ({
+          ...it,
+          quantity: it.quantity ?? 1,
+          productName: it.productName ?? it.name,
+          productValue: it.productValue ?? 0,
+          grupo: it.grupo ?? "Outros",
+          addons: Array.isArray(it.addons) ? it.addons : [],
+          addonsTotal: typeof it.addonsTotal === "number" ? it.addonsTotal : 0,
+        }));
+        // Taxa de entrega: usar meta (ou response.metadata) para garantir que vai no payload de impressão
+        const deliveryFeeRaw =
+          orderType === "delivery"
+            ? Number(meta?.deliveryFee ?? (response.metadata as any)?.deliveryFee ?? 0)
+            : 0;
+        const deliveryFee = Math.round((Number.isFinite(deliveryFeeRaw) ? deliveryFeeRaw : 0) * 100) / 100;
         const conteudo: Record<string, unknown> = {
           event: "form.submitted",
           formId: form.id,
@@ -796,13 +811,14 @@ const ProcessFormResponseService = async ({
           submittedAt: response.submittedAt,
           tableNumber,
           garcomName,
+          deliveryFee,
           responder: {
             name: contactName,
             phone: contactPhone,
             email: contactEmail,
           },
           answers: answersForPrint,
-          menuItems: menuItemsForJob,
+          menuItems: menuItemsForPayload,
         };
         if (orderType === "delivery" && meta?.deliveryScanToken) {
           const token = meta.deliveryScanToken as string;

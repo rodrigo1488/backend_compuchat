@@ -1,5 +1,6 @@
 import Appointment from "../../models/Appointment";
 import { Op } from "sequelize";
+import { getBrazilDayBounds, getBrazilISODateString } from "../../helpers/BrazilTimezone";
 
 export interface AgendamentoStats {
   agendamentosHoje: number;
@@ -21,11 +22,9 @@ const AgendamentoStatsService = async (companyIdOrOptions: number | Options): Pr
   const companyId = typeof companyIdOrOptions === "number" ? companyIdOrOptions : companyIdOrOptions.companyId;
   const opts = typeof companyIdOrOptions === "object" ? companyIdOrOptions : { companyId };
   const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const dayStart = new Date(todayStr + "T00:00:00");
-  const dayEnd = new Date(todayStr + "T23:59:59.999");
-  const weekStart = new Date(now);
-  weekStart.setDate(weekStart.getDate() - 7);
+  const { startOfDay: dayStart, endOfDay: dayEnd } = getBrazilDayBounds(now);
+  const todayStr = getBrazilISODateString(now);
+  const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const baseWhere = { companyId };
 

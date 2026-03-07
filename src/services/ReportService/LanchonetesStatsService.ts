@@ -1,5 +1,6 @@
 import GourmetFinanceiro from "../../models/GourmetFinanceiro";
 import { Op } from "sequelize";
+import { getBrazilISODateString, getBrazilMonthStartString } from "../../helpers/BrazilTimezone";
 
 export interface LanchonetesStats {
   totalVendasDia: number;
@@ -10,12 +11,11 @@ export interface LanchonetesStats {
 
 const LanchonetesStatsService = async (companyId: number): Promise<LanchonetesStats> => {
   const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const startOfMonth = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-01";
+  const todayStr = getBrazilISODateString(now);
+  const startOfMonth = getBrazilMonthStartString(now);
   const daysEvolution = 30;
-  const startEvolution = new Date(now);
-  startEvolution.setDate(startEvolution.getDate() - daysEvolution);
-  const startEvolutionStr = startEvolution.toISOString().slice(0, 10);
+  const startEvolution = new Date(now.getTime() - (daysEvolution - 1) * 24 * 60 * 60 * 1000);
+  const startEvolutionStr = getBrazilISODateString(startEvolution);
 
   const baseWhere = { companyId };
 
@@ -49,9 +49,8 @@ const LanchonetesStatsService = async (companyId: number): Promise<LanchonetesSt
 
   const byDate: Record<string, { total: number; quantidade: number }> = {};
   for (let d = 0; d < daysEvolution; d++) {
-    const date = new Date(startEvolution);
-    date.setDate(date.getDate() + d);
-    const key = date.toISOString().slice(0, 10);
+    const date = new Date(startEvolution.getTime() + d * 24 * 60 * 60 * 1000);
+    const key = getBrazilISODateString(date);
     byDate[key] = { total: 0, quantidade: 0 };
   }
   registrosEvolution.forEach((r) => {
