@@ -70,18 +70,7 @@ const DashboardExtendedService = async (
     }
   });
 
-  // Tickets finalizados no período
-  const ticketsFinished = await Ticket.count({
-    where: {
-      companyId,
-      status: "closed",
-      updatedAt: {
-        [Op.between]: [+dateFrom, +dateTo]
-      }
-    }
-  });
-
-  // Total de tickets no período
+  // Total de tickets criados no período (denominador: "recebidos" no período)
   const ticketsTotal = await Ticket.count({
     where: {
       companyId,
@@ -91,10 +80,24 @@ const DashboardExtendedService = async (
     }
   });
 
-  // Taxa de resolução
-  const resolutionRate = ticketsTotal > 0 
-    ? Math.round((ticketsFinished / ticketsTotal) * 100) 
-    : 0;
+  // Tickets criados no período que já foram fechados (numerador alinhado ao denominador).
+  // Antes: contava-se fechados por updatedAt no período, incluindo tickets antigos —
+  // isso permitia taxa > 100%. Agora só contamos resoluções dentro do conjunto recebido no período.
+  const ticketsFinished = await Ticket.count({
+    where: {
+      companyId,
+      status: "closed",
+      createdAt: {
+        [Op.between]: [+dateFrom, +dateTo]
+      }
+    }
+  });
+
+  // Taxa de resolução (sempre ≤ 100% quando ticketsTotal > 0)
+  const resolutionRate =
+    ticketsTotal > 0
+      ? Math.min(100, Math.round((ticketsFinished / ticketsTotal) * 100))
+      : 0;
 
   // Campanhas ativas
   const activeCampaigns = await Campaign.count({

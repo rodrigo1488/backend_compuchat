@@ -99,7 +99,9 @@ export default async function DashboardDataService(
           coalesce(avg(ur.rate), 0) rating
         from "Users" u1
         left join traking t on t."userId" = u1.id
-        left join "UserRatings" ur on ur."userId" = t."userId" and ur."createdAt"::date = t."finishedAt"::date
+        -- JOIN por ticketId evita explosão de linhas (várias avaliações no mesmo dia/user)
+        -- que distorce avg(rate), count(tickets) e tempo médio.
+        left join "UserRatings" ur on ur."ticketId" = t."ticketId"
         group by 1, 2
       ) att on att.id = u.id
       where u."companyId" = ?
