@@ -197,6 +197,10 @@ export const showFromUUID = async (
   const { uuid } = req.params;
   const { companyId } = req.user;
 
+  if (!uuid || String(uuid).trim() === "" || String(uuid) === "undefined") {
+    return res.status(400).json({ error: "UUID do ticket é obrigatório" });
+  }
+
   const ticket: Ticket = await ShowTicketUUIDService(uuid, companyId);
 
   return res.status(200).json(ticket);

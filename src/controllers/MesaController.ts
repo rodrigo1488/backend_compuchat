@@ -22,6 +22,8 @@ import AddOnItem from "../models/AddOnItem";
 import GrupoAddOn from "../models/GrupoAddOn";
 import AppError from "../errors/AppError";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
+import Contact from "../models/Contact";
+import { v4 as uuidv4 } from "uuid";
 
 const getFrontendBaseUrl = (): string => {
   const baseUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL || "http://localhost:3000";
@@ -224,24 +226,46 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
 export const ocupar = async (req: Request, res: Response): Promise<Response> => {
   const { id } = req.params;
   const { companyId } = req.user;
-  const { contactId, ticketId, transferir } = req.body;
+  const { contactId, ticketId, transferir, contactName } = req.body;
 
   const schema = Yup.object().shape({
-    contactId: Yup.number().required("Contato é obrigatório"),
+    contactId: Yup.number().nullable(),
+    contactName: Yup.string().nullable(),
     ticketId: Yup.number().nullable(),
     transferir: Yup.boolean().nullable(),
   });
 
   try {
-    await schema.validate({ contactId, ticketId, transferir });
+    await schema.validate({ contactId, ticketId, transferir, contactName });
   } catch (err: any) {
     throw new AppError(err.message, 400);
+  }
+
+  let resolvedContactId = contactId;
+  if (!resolvedContactId) {
+    const name = String(contactName || "").trim();
+    if (!name) {
+      throw new AppError("ERR_CONTACT_REQUIRED", 400);
+    }
+    // Criar contato \"sem telefone\" com número único (campo Contact.number é obrigatório/único)
+    const pseudoNumber = `SEMTELEFONE-${companyId}-${uuidv4()}`;
+    const created = await Contact.create({
+      name,
+      number: pseudoNumber,
+      email: "",
+      companyId,
+      userId: null,
+      profilePicUrl: "",
+      isGroup: false,
+      disableBot: true,
+    } as any);
+    resolvedContactId = created.id;
   }
 
   const mesa = await OcuparMesaService({
     mesaId: Number(id),
     companyId,
-    contactId,
+    contactId: resolvedContactId,
     ticketId,
     transferir: !!transferir,
   });
@@ -267,6 +291,7 @@ export const liberar = async (req: Request, res: Response): Promise<Response> =>
   const { id } = req.params;
   const { companyId } = req.user;
   const mesaId = Number(id);
+  const { meiosPagamento } = req.body || {};
 
   let resumo: { total: number; mesa?: { number?: string; name?: string } } | null = null;
   try {
@@ -286,6 +311,7 @@ export const liberar = async (req: Request, res: Response): Promise<Response> =>
         valor: Number(resumo.total),
         mesaId,
         mesaNumero: resumo.mesa?.number || resumo.mesa?.name || String(mesaId),
+        meiosPagamento: meiosPagamento ?? null,
       });
     } catch (err) {
       console.error("RegisterGourmetVendaService (mesa):", err);

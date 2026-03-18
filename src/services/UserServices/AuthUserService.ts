@@ -33,10 +33,24 @@ const AuthUserService = async ({
   email,
   password
 }: Request): Promise<Response> => {
-  const user = await User.findOne({
-    where: { email },
-    include: ["queues", { model: Company, include: [{ model: Setting }] }]
-  });
+  let user: User | null;
+  try {
+    user = await User.findOne({
+      where: { email },
+      include: ["queues", { model: Company, include: [{ model: Setting }] }]
+    });
+  } catch (err: any) {
+    if (
+      err?.name === "TimeoutError" ||
+      /timed out|timeout|ETIMEDOUT/i.test(String(err?.message))
+    ) {
+      throw new AppError(
+        "Serviço temporariamente indisponível. Banco de dados não respondeu. Tente novamente em instantes.",
+        503
+      );
+    }
+    throw err;
+  }
 
   if (!user) {
     throw new AppError("ERR_USER_DONT_EXISTS", 401);

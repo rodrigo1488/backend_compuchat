@@ -121,6 +121,12 @@ const UpdateTicketService = async ({
 
     // Só processar mensagem de avaliação se o status está mudando PARA "closed" (não se já estava fechado)
     if (status !== undefined && ["closed"].indexOf(status) > -1 && oldStatus !== "closed") {
+      // Quando a avaliação ainda está pendente, mantemos `finishedAt` como `null`
+      // para que o listener do WhatsApp consiga reconhecer e salvar a nota do cliente.
+      // Importante: não podemos dar `return` antecipado antes de atualizar o `ticket.status`,
+      // senão o ticket continua em "open/pending" e a nota não é processada.
+      let ratingPending = false;
+
       // Só tentar obter configurações do WhatsApp se a conexão ainda existir
       let complationMessage: string | null = null;
       let ratingMessage: string | null = null;
@@ -138,6 +144,8 @@ const UpdateTicketService = async ({
       }
 
       if (setting?.value === "enabled") {
+        const ratingUserId = actionUserId != null ? Number(actionUserId) : null;
+
         if (ticketTraking.ratingAt == null) {
           // Validar se o ticket foi criado há menos de 3 dias
           const ticketCreatedAt = new Date(ticket.createdAt);
@@ -159,7 +167,8 @@ const UpdateTicketService = async ({
 
             await ticketTraking.update({
               ratingAt: moment().toDate(),
-              userId: actionUserId
+              // userId é usado no dashboard para atribuir a nota ao atendente.
+              userId: ratingUserId != null ? ratingUserId : undefined as any
             });
 
             io.to(`company-${ticket.companyId}-open`)
@@ -170,32 +179,40 @@ const UpdateTicketService = async ({
                 ticketId: ticket.id
               });
 
-            return { ticket, oldStatus, oldUserId };
+            ratingPending = true;
           }
+        }
+        // O dashboard vincula as métricas ao atendente via `TicketTraking.userId`,
+        // então precisamos garantir que esse campo esteja preenchido ao iniciar a coleta da avaliação.
+        if (ratingUserId != null && Number.isFinite(ratingUserId)) {
+          ticketTraking.userId = ratingUserId;
         }
         ticketTraking.ratingAt = moment().toDate();
         ticketTraking.rated = false;
       }
 
-      if (!isNil(complationMessage) && complationMessage !== "") {
-        const body = `\u200e${complationMessage}`;
-        try {
-          await SendWhatsAppMessage({ body, ticket });
-        } catch (msgErr) {
-          logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de conclusão para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+      if (!ratingPending) {
+        if (!isNil(complationMessage) && complationMessage !== "") {
+          const body = `\u200e${complationMessage}`;
+          try {
+            await SendWhatsAppMessage({ body, ticket });
+          } catch (msgErr) {
+            logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de conclusão para o ticket ${ticketId} (conexão indisponível):`, msgErr);
+          }
         }
-      }
-      await ticket.update({
-        promptId: null,
-        integrationId: null,
-        useIntegration: false,
-        typebotStatus: false,
-        typebotSessionId: null
-      })
 
-      ticketTraking.finishedAt = moment().toDate();
-      ticketTraking.whatsappId = ticket.whatsappId;
-      ticketTraking.userId = ticket.userId;
+        await ticket.update({
+          promptId: null,
+          integrationId: null,
+          useIntegration: false,
+          typebotStatus: false,
+          typebotSessionId: null
+        })
+
+        ticketTraking.finishedAt = moment().toDate();
+        ticketTraking.whatsappId = ticket.whatsappId;
+        ticketTraking.userId = ticket.userId;
+      }
 
       /*    queueId = null;
             userId = null; */

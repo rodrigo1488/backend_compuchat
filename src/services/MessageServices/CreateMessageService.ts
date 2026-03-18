@@ -1,6 +1,7 @@
 import { getIO } from "../../libs/socket";
 import Message from "../../models/Message";
 import Ticket from "../../models/Ticket";
+import Queue from "../../models/Queue";
 import Whatsapp from "../../models/Whatsapp";
 import Contact from "../../models/Contact";
 import { logger } from "../../utils/logger";
@@ -41,36 +42,32 @@ const CreateMessageService = async ({
       // Tentar salvar a mensagem no banco
       await Message.upsert({ ...messageData, companyId });
 
-      // Buscar a mensagem salva com todos os relacionamentos
+      // Buscar a mensagem com relacionamentos mínimos necessários para o emit (otimização de latência)
       const message = await Message.findByPk(messageData.id, {
+        attributes: { exclude: ["dataJson"] },
         include: [
           {
             model: Contact,
             as: "contact",
-            required: false // LEFT JOIN para incluir mensagens sem contactId (mensagens do bot)
+            required: false,
+            attributes: ["id", "name", "profilePicUrl"]
           },
           {
             model: Ticket,
             as: "ticket",
+            attributes: ["id", "status", "queueId", "contactId", "companyId", "lastMessage", "fromMe"],
             include: [
-              "contact",
-              "queue",
-              {
-                model: Whatsapp,
-                as: "whatsapp",
-                attributes: ["name"]
-              }
+              { model: Contact, as: "contact", required: false, attributes: ["id", "name"] },
+              { model: Queue, as: "queue", required: false, attributes: ["id", "name"] },
+              { model: Whatsapp, as: "whatsapp", required: false, attributes: ["name", "type"] }
             ]
           },
           {
             model: Message,
             as: "quotedMsg",
             required: false,
-            include: [{
-              model: Contact,
-              as: "contact",
-              required: false
-            }]
+            attributes: ["id", "body", "fromMe", "mediaType"],
+            include: [{ model: Contact, as: "contact", required: false, attributes: ["id", "name"] }]
           }
         ]
       });

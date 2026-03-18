@@ -90,26 +90,21 @@ const ListMessagesService = async ({
     attributes: ["id", "name"] // Limitar atributos
   });
 
-  // Para primeira página: buscar mais recentes primeiro, depois reverter
-  // Para páginas seguintes: buscar mais antigas primeiro (scroll infinito)
-  const isFirstPage = pageNumber === "1";
-  
+  // Paginação consistente: sempre DESC (mais recentes primeiro), offset = (page-1)*limit.
+  // Página 1 = 20 mais recentes; página 2 = próximas 20 mais antigas. Depois revertemos para ordem cronológica.
   const { count, rows: messages } = await Message.findAndCountAll({
     ...options,
     limit,
     attributes: {
-      exclude: ["dataJson"] // Excluir campo pesado que não é usado na listagem
+      exclude: ["dataJson"]
     },
     include: includes,
     offset,
-    order: isFirstPage 
-      ? [["createdAt", "DESC"], ["id", "DESC"]] // Primeira página: mais recentes primeiro
-      : [["createdAt", "ASC"], ["id", "ASC"]]   // Páginas seguintes: mais antigas primeiro
+    order: [["createdAt", "DESC"], ["id", "DESC"]]
   });
 
   const hasMore = count > offset + messages.length;
 
-  // Logging de debug para diagnóstico de mensagens faltantes
   logger.debug({
     msg: "ListMessagesService: Resultado da query",
     ticketId,
@@ -120,17 +115,10 @@ const ListMessagesService = async ({
     offset,
     limit,
     hasMore,
-    isFirstPage,
-    filters: {
-      queues: queues.length > 0 ? queues : "nenhum",
-      includeQuoted
-    },
-    messageIds: messages.map(m => m.id).slice(0, 5) // Primeiros 5 IDs para debug
+    messageIds: messages.map(m => m.id).slice(0, 5)
   });
 
-  // Se é a primeira página, reverter a ordem para mostrar mais antigas primeiro, mais recentes por último
-  // Se não, já está na ordem correta (mais antigas primeiro)
-  const sortedMessages = isFirstPage ? messages.reverse() : messages;
+  const sortedMessages = messages.reverse();
 
   return {
     messages: sortedMessages,

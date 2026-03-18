@@ -19,18 +19,39 @@ import AutoLiberarMesasService from "./services/MesaServices/AutoLiberarMesasSer
 import { Op } from "sequelize";
 import PrintPedido from "./models/PrintPedido";
 import FormResponse from "./models/FormResponse";
+import {
+  isDbUnavailableError,
+  logCronDbUnavailable,
+} from "./utils/dbUnavailable";
 
 const server = app.listen(process.env.PORT, async () => {
-  const companies = await Company.findAll();
+  let companies: Company[] = [];
+  try {
+    companies = await Company.findAll();
+  } catch (err: any) {
+    // Evita derrubar o processo se o banco não estiver acessível (timeout, rede, credenciais)
+    logger.error(
+      "Falha ao carregar empresas na inicialização — verifique PostgreSQL e DATABASE_URL/host. WhatsApp não será iniciado até o banco responder.",
+      err?.message || err
+    );
+    companies = [];
+  }
+
   const allPromises: any[] = [];
-  companies.map(async c => {
-    const promise = StartAllWhatsAppsSessions(c.id);
-    allPromises.push(promise);
+  companies.forEach((c) => {
+    allPromises.push(StartAllWhatsAppsSessions(c.id));
   });
 
-  Promise.all(allPromises).then(() => {
+  if (allPromises.length === 0) {
     startQueueProcess();
-  });
+  } else {
+    Promise.all(allPromises)
+      .then(() => startQueueProcess())
+      .catch((e) => {
+        logger.error("Erro ao iniciar sessões WhatsApp na subida:", e);
+        startQueueProcess();
+      });
+  }
   
   // Testar chaves da API do Gemini após inicialização
   setTimeout(async () => {
@@ -45,7 +66,9 @@ const server = app.listen(process.env.PORT, async () => {
         logger.info(`Inicialização: ${result.total} ticket(s) travado(s) foram fechados.`);
       }
     } catch (err: any) {
-      logger.error("Erro ao fechar tickets travados na inicialização:", err);
+      if (isDbUnavailableError(err))
+        logCronDbUnavailable("CloseStuckTickets init");
+      else logger.error("Erro ao fechar tickets travados na inicialização:", err);
     }
   }, 3000);
 
@@ -53,15 +76,12 @@ const server = app.listen(process.env.PORT, async () => {
 });
 
 cron.schedule("* * * * *", async () => {
-
   try {
-    // Log removido para reduzir ruído - usar logger.debug se necessário
     await TransferTicketQueue();
+  } catch (error: any) {
+    if (isDbUnavailableError(error)) logCronDbUnavailable("TransferTicketQueue");
+    else logger.error("TransferTicketQueue:", error);
   }
-  catch (error) {
-    logger.error(error);
-  }
-
 });
 
 // Job para verificar e processar renovações de assinaturas
@@ -91,7 +111,9 @@ cron.schedule("0 9 * * *", async () => {
     
     logger.info("Verificação de renovações concluída");
   } catch (error: any) {
-    logger.error("Erro no job de renovação de assinaturas:", error);
+    if (isDbUnavailableError(error))
+      logCronDbUnavailable("renewal");
+    else logger.error("Erro no job de renovação de assinaturas:", error);
   }
 });
 
@@ -101,7 +123,8 @@ cron.schedule("* * * * *", async () => {
   try {
     await CheckRemindersService();
   } catch (error: any) {
-    logger.error("Erro ao processar lembretes:", error);
+    if (isDbUnavailableError(error)) logCronDbUnavailable("CheckReminders");
+    else logger.error("Erro ao processar lembretes:", error);
   }
 });
 
@@ -110,7 +133,9 @@ cron.schedule("* * * * *", async () => {
   try {
     await CheckAgendamentoRemindersService();
   } catch (error: any) {
-    logger.error("Erro ao processar lembretes de agendamento:", error);
+    if (isDbUnavailableError(error))
+      logCronDbUnavailable("CheckAgendamentoReminders");
+    else logger.error("Erro ao processar lembretes de agendamento:", error);
   }
 });
 
@@ -119,7 +144,8 @@ cron.schedule("* * * * *", async () => {
   try {
     await CheckWaitlistAndNotifyService();
   } catch (error: any) {
-    logger.error("Erro ao processar lista de espera:", error);
+    if (isDbUnavailableError(error)) logCronDbUnavailable("CheckWaitlist");
+    else logger.error("Erro ao processar lista de espera:", error);
   }
 });
 
@@ -128,7 +154,9 @@ cron.schedule("* * * * *", async () => {
   try {
     await CheckOrderAutoConfirmService();
   } catch (error: any) {
-    logger.error("Erro no job de auto-confirmação de pedidos:", error);
+    if (isDbUnavailableError(error))
+      logCronDbUnavailable("CheckOrderAutoConfirm");
+    else logger.error("Erro no job de auto-confirmação de pedidos:", error);
   }
 });
 
@@ -149,7 +177,8 @@ cron.schedule("* * * * *", async () => {
       logger.info(`Reverted ${affected} stuck print job(s) to pending`);
     }
   } catch (error: any) {
-    logger.error("Erro ao reverter jobs de impressão travados:", error);
+    if (isDbUnavailableError(error)) logCronDbUnavailable("PrintPedido revert");
+    else logger.error("Erro ao reverter jobs de impressão travados:", error);
   }
 });
 
@@ -166,7 +195,8 @@ cron.schedule("0 2 * * *", async () => {
       logger.info(`Cleaned up ${result} expired print job(s)`);
     }
   } catch (error: any) {
-    logger.error("Erro no cleanup de jobs de impressão:", error);
+    if (isDbUnavailableError(error)) logCronDbUnavailable("PrintPedido cleanup");
+    else logger.error("Erro no cleanup de jobs de impressão:", error);
   }
 });
 
@@ -181,7 +211,8 @@ cron.schedule("0 3 * * *", async () => {
       logger.info(`Removidas ${result} resposta(s) de formulário com mais de 24h`);
     }
   } catch (error: any) {
-    logger.error("Erro no cleanup de respostas de formulário:", error);
+    if (isDbUnavailableError(error)) logCronDbUnavailable("FormResponse cleanup");
+    else logger.error("Erro no cleanup de respostas de formulário:", error);
   }
 });
 
@@ -196,7 +227,9 @@ cron.schedule("0 0 * * *", async () => {
       logger.info("Verificação diária de tickets travados concluída (nenhum ticket para fechar).");
     }
   } catch (error: any) {
-    logger.error("Erro no job de fechamento de tickets travados:", error);
+    if (isDbUnavailableError(error))
+      logCronDbUnavailable("CloseStuckTickets");
+    else logger.error("Erro no job de fechamento de tickets travados:", error);
   }
 });
 
@@ -212,7 +245,8 @@ cron.schedule("0 * * * *", async () => {
       logger.info("Verificação de mesas concluída (nenhuma mesa para liberar).");
     }
   } catch (error: any) {
-    logger.error("Erro no job de liberação automática de mesas:", error);
+    if (isDbUnavailableError(error)) logCronDbUnavailable("AutoLiberarMesas");
+    else logger.error("Erro no job de liberação automática de mesas:", error);
   }
 });
 

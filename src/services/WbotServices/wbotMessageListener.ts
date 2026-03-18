@@ -2380,14 +2380,26 @@ export const verifyMediaMessage = async (
   return newMessage;
 };
 
+export type VerifyMessageOptions = {
+  /** Body original do envio (ex.: do job). Quando fromMe, usar este em vez do echo do WA para o frontend fazer match com a mensagem otimista. */
+  originalBody?: string;
+};
+
 export const verifyMessage = async (
   msg: proto.IWebMessageInfo,
   ticket: Ticket,
-  contact: Contact
+  contact: Contact,
+  options?: VerifyMessageOptions
 ) => {
   const io = getIO();
-  const quotedMsg = await verifyQuotedMessage(msg);
-  const body = getBodyMessage(msg);
+  // Só buscar mensagem citada quando houver referência (evita query desnecessária)
+  const quotedMsg = getQuotedMessageId(msg) ? await verifyQuotedMessage(msg) : null;
+  const bodyFromMsg = getBodyMessage(msg);
+  // Para mensagens fromMe, preferir body original (ex. do job) para o frontend substituir a otimista corretamente
+  const body =
+    msg.key.fromMe && options?.originalBody != null && String(options.originalBody).trim() !== ""
+      ? options.originalBody
+      : bodyFromMsg;
   const isEdited = getTypeMessage(msg) == "editedMessage";
 
   // Garantir ACK inicial correto
@@ -2441,7 +2453,8 @@ export const verifyMessage = async (
   });
 
   await ticket.update({
-    lastMessage: body
+    lastMessage: body,
+    fromMe: msg.key.fromMe ?? false
   });
 
   try {
@@ -2463,6 +2476,26 @@ export const verifyMessage = async (
     });
     // Re-lançar o erro para que o chamador saiba que a mensagem não foi salva
     throw error;
+  }
+
+  // Quando o atendente responde (fromMe), emitir atualização do ticket para o frontend
+  // atualizar a lista e remover o status "Aguardando resposta"
+  if (msg.key.fromMe) {
+    await ticket.reload({
+      include: [
+        { model: Queue, as: "queue", include: [{ model: Prompt, as: "prompt" }] },
+        { model: User, as: "user" },
+        { model: Contact, as: "contact" }
+      ]
+    });
+    io.to(`company-${ticket.companyId}-${ticket.status}`)
+      .to(`queue-${ticket.queueId}-${ticket.status}`)
+      .to(ticket.id.toString())
+      .emit(`company-${ticket.companyId}-ticket`, {
+        action: "update",
+        ticket,
+        ticketId: ticket.id
+      });
   }
 
   // Verificar se é uma resposta de avaliação ANTES de reabrir o ticket
@@ -4060,7 +4093,7 @@ const handleMessage = async (
           // Validar que a mensagem é um número inteiro antes de processar avaliação
           const ratingMatch = bodyMessage?.trim().match(/^[1-5]$/);
           if (ratingMatch) {
-            handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
+            await handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
           }
           return;
         }

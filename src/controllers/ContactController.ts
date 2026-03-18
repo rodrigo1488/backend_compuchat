@@ -222,7 +222,9 @@ const createNewContact = async ( newContact : ContactData, companyId : number, s
     if( !validNumber )
       throw new AppError("Não foi possível localizar o número informado no Whatsapp");
 
-    newContact.number = number;
+    // Salvar o número normalizado (jid retornado pelo Baileys), para manter consistência
+    // no armazenamento e no momento de abrir/envia a conversa.
+    newContact.number = validNumber.jid.replace(/\D/g, "");
 
     /**
      * Código desabilitado por demora no retorno
@@ -253,6 +255,12 @@ const createUploadedContact = async ( newContact : ContactData, companyId : numb
   }
 
   newContact.number = newContact.number.replace(/\D/g, "");
+
+  // Valida no WhatsApp e normaliza o número final.
+  await CheckIsValidContact(newContact.number, companyId);
+  const validNumber = await CheckContactNumber(newContact.number, companyId);
+  newContact.number = validNumber.jid.replace(/\D/g, "");
+
   const contact = await CreateContactService({
     ...newContact,
     companyId

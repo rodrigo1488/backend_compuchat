@@ -63,6 +63,7 @@ import Module from "../models/Module";
 import CompanyModule from "../models/CompanyModule";
 import Mesa from "../models/Mesa";
 import GourmetFinanceiro from "../models/GourmetFinanceiro";
+import GourmetDespesa from "../models/GourmetDespesa";
 import AppointmentService from "../models/AppointmentService";
 import Appointment from "../models/Appointment";
 import AppointmentWaitlist from "../models/AppointmentWaitlist";
@@ -138,6 +139,7 @@ const models = [
   CompanyModule,
   Mesa,
   GourmetFinanceiro,
+  GourmetDespesa,
   AppointmentService,
   Appointment,
   AppointmentWaitlist,

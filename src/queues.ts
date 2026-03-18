@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/node";
-import BullQueue from "bull";
+import BullQueue, { Job } from "bull";
 import { MessageData, SendMessage } from "./helpers/SendMessage";
 import Whatsapp from "./models/Whatsapp";
 import { logger } from "./utils/logger";
@@ -27,12 +27,23 @@ import { differenceInSeconds, addMonths } from "date-fns";
 import formatBody from "./helpers/Mustache";
 import { ClosedAllOpenTickets } from "./services/WbotServices/wbotClosedTickets";
 import CloseInactiveTicketsService from "./services/TicketServices/CloseInactiveTicketsService";
-
+import {
+  isDbUnavailableError,
+  logCronDbUnavailable,
+} from "./utils/dbUnavailable";
+import { createBullRedisClient } from "./config/redis";
+import ShowTicketService from "./services/TicketServices/ShowTicketService";
+import SendWhatsAppMessage from "./services/WbotServices/SendWhatsAppMessage";
+import { verifyMessage } from "./services/WbotServices/wbotMessageListener";
+import CreateMessageService from "./services/MessageServices/CreateMessageService";
+import Message from "./models/Message";
 
 const nodemailer = require('nodemailer');
 const CronJob = require('cron').CronJob;
 
 const connection = process.env.REDIS_URI || "";
+/** Evita [ioredis] Unhandled error event em ECONNRESET — ver createBullRedisClient */
+const bullRedisOpts = { createClient: createBullRedisClient };
 const limiterMax = process.env.REDIS_OPT_LIMITER_MAX || 1;
 const limiterDuration = process.env.REDIS_OPT_LIMITER_DURATION || 3000;
 
@@ -54,24 +65,42 @@ interface DispatchCampaignData {
   contactListItemId: number;
 }
 
-export const userMonitor = new BullQueue("UserMonitor", connection);
+export const userMonitor = new BullQueue(
+  "UserMonitor",
+  connection,
+  bullRedisOpts
+);
 
-export const queueMonitor = new BullQueue("QueueMonitor", connection);
+export const queueMonitor = new BullQueue(
+  "QueueMonitor",
+  connection,
+  bullRedisOpts
+);
 
 export const messageQueue = new BullQueue("MessageQueue", connection, {
+  ...bullRedisOpts,
   limiter: {
     max: limiterMax as number,
     duration: limiterDuration as number
   }
 });
 
-export const scheduleMonitor = new BullQueue("ScheduleMonitor", connection);
+export const scheduleMonitor = new BullQueue(
+  "ScheduleMonitor",
+  connection,
+  bullRedisOpts
+);
 export const sendScheduledMessages = new BullQueue(
   "SendScheduledMessages",
-  connection
+  connection,
+  bullRedisOpts
 );
 
-export const campaignQueue = new BullQueue("CampaignQueue", connection);
+export const campaignQueue = new BullQueue(
+  "CampaignQueue",
+  connection,
+  bullRedisOpts
+);
 
 async function handleSendMessage(job) {
   const jobId = job.id;
@@ -150,6 +179,93 @@ async function handleSendMessage(job) {
     
     // Não re-lançar na última tentativa - deixar o Bull marcar como falho
     // Isso evita loop infinito mas permite que o job seja inspecionado manualmente
+  }
+}
+
+interface SendTicketMessageData {
+  ticketId: number;
+  body: string;
+  quotedMsgId?: string;
+  mentions?: string[];
+  companyId: number;
+}
+
+async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise<void> {
+  const jobId = job.id;
+  const { ticketId, body, quotedMsgId, mentions, companyId } = job.data;
+  const maxRetries = 3;
+  const retries = job.attemptsMade || 0;
+
+  try {
+    const ticket = await ShowTicketService(ticketId, companyId);
+    if (!ticket?.contact) {
+      throw new Error("Ticket ou contato não encontrado");
+    }
+
+    let quotedMsg: Message | null = null;
+    if (quotedMsgId) {
+      quotedMsg = await Message.findByPk(quotedMsgId);
+    }
+
+    logger.debug({
+      msg: "handleSendTicketMessage: Enviando mensagem do ticket",
+      jobId,
+      ticketId,
+      companyId
+    });
+
+    const sentMessage = await SendWhatsAppMessage({ body, ticket, quotedMsg: quotedMsg || undefined, mentions });
+    if (sentMessage?.key) {
+      await verifyMessage(sentMessage, ticket, ticket.contact, { originalBody: body });
+    }
+  } catch (e: any) {
+    const isLastAttempt = retries + 1 >= maxRetries;
+    logger.error({
+      msg: `handleSendTicketMessage: Erro (tentativa ${retries + 1}/${maxRetries})`,
+      jobId,
+      ticketId,
+      companyId,
+      error: e?.message || e
+    });
+    Sentry.captureException(e, { tags: { service: "handleSendTicketMessage", jobId, ticketId } });
+
+    // Garantir que falhas no job resultem em mensagem com ack erro e emit ao frontend.
+    if (isLastAttempt) {
+      try {
+        const ticket = await ShowTicketService(ticketId, companyId);
+        const errorMessageData = {
+          id: `${ticketId}-${Date.now()}-error`,
+          ticketId,
+          contactId: ticket.contactId,
+          body: body || "",
+          fromMe: true,
+          read: true,
+          mediaType: "conversation",
+          ack: -1,
+          companyId,
+          dataJson: JSON.stringify({ error: e?.message || "Erro desconhecido", originalBody: body })
+        };
+        await CreateMessageService({ messageData: errorMessageData, companyId });
+      } catch (saveErr: any) {
+        logger.error({ msg: "handleSendTicketMessage: Falha ao salvar mensagem de erro", ticketId, error: saveErr?.message });
+        // Fallback: emitir sendFailed para o frontend marcar a mensagem otimista como falha
+        try {
+          const io = getIO();
+          io.to(ticketId.toString())
+            .to(`company-${companyId}-${"open"}`)
+            .to(`company-${companyId}-notification`)
+            .emit(`company-${companyId}-appMessage`, {
+              action: "sendFailed",
+              ticketId,
+              body: body || "",
+              fromMe: true
+            });
+        } catch (emitErr: any) {
+          logger.error({ msg: "handleSendTicketMessage: Falha ao emitir sendFailed", ticketId, error: emitErr?.message });
+        }
+      }
+    }
+    throw e;
   }
 }
 
@@ -271,8 +387,11 @@ async function handleCloseTicketsAutomatic() {
         }
       }));
     } catch (e: any) {
-      Sentry.captureException(e);
-      logger.error("handleCloseTicketsAutomatic -> cron error", e.message);
+      if (isDbUnavailableError(e)) logCronDbUnavailable("handleCloseTicketsAutomatic");
+      else {
+        Sentry.captureException(e);
+        logger.error("handleCloseTicketsAutomatic -> cron error", e.message);
+      }
     }
   });
   job.start()
@@ -1208,6 +1327,7 @@ export async function startQueueProcess() {
   logger.info("[🏁] - Iniciando processamento de filas");
 
   messageQueue.process("SendMessage", handleSendMessage);
+  messageQueue.process("SendTicketMessage", handleSendTicketMessage);
 
   scheduleMonitor.process("Verify", handleVerifySchedules);
 

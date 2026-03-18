@@ -78,7 +78,11 @@ export const ordersStats = async (req: Request, res: Response): Promise<Response
 
 export const lanchonetesStats = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
-  const stats = await LanchonetesStatsService(companyId);
+  const { initialDate, finalDate } = req.query as any;
+  const stats = await LanchonetesStatsService(companyId, {
+    initialDate: initialDate as string | undefined,
+    finalDate: finalDate as string | undefined,
+  });
   return res.status(200).json(stats);
 };
 

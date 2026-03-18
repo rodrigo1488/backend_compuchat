@@ -59,6 +59,12 @@ class Company extends Model<Company> {
   autoRenew: boolean;
 
   @Column
+  asaasCustomerId: string;
+
+  @Column
+  asaasSubscriptionId: string;
+
+  @Column
   lastRenewalAttempt: Date;
 
   @Column

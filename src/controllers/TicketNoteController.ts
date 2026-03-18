@@ -126,6 +126,11 @@ export const findFilteredList = async (
 ): Promise<Response> => {
   try {
     const { contactId, ticketId } = req.query as QueryFilteredNotes;
+    const contactIdStr = contactId != null ? String(contactId) : "";
+    const ticketIdStr = ticketId != null ? String(ticketId) : "";
+    if (!contactIdStr || !ticketIdStr || contactIdStr === "undefined" || ticketIdStr === "undefined") {
+      return res.status(400).json({ message: "contactId e ticketId são obrigatórios" });
+    }
     const notes: TicketNote[] = await FindNotesByContactIdAndTicketId({
       contactId,
       ticketId

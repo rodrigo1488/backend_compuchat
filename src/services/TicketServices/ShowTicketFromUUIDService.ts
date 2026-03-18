@@ -7,9 +7,13 @@ import Tag from "../../models/Tag";
 import Whatsapp from "../../models/Whatsapp";
 
 const ShowTicketUUIDService = async (uuid: string, companyId: number): Promise<Ticket> => {
+  const uuidStr = uuid != null ? String(uuid).trim() : "";
+  if (!uuidStr || uuidStr === "undefined") {
+    throw new AppError("UUID do ticket é obrigatório", 400);
+  }
   const ticket = await Ticket.findOne({
     where: {
-      uuid,
+      uuid: uuidStr,
       companyId
     },
     include: [

@@ -12,8 +12,8 @@ import {
 } from "sequelize-typescript";
 import Company from "./Company";
 
-@Table({ tableName: "GourmetFinanceiro" })
-class GourmetFinanceiro extends Model<GourmetFinanceiro> {
+@Table({ tableName: "GourmetDespesa" })
+class GourmetDespesa extends Model<GourmetDespesa> {
   @PrimaryKey
   @AutoIncrement
   @Column
@@ -27,7 +27,10 @@ class GourmetFinanceiro extends Model<GourmetFinanceiro> {
   company: Company;
 
   @Column
-  tipo: string;
+  descricao: string;
+
+  @Column(DataType.TEXT)
+  observacoes: string;
 
   @Column({
     type: DataType.DECIMAL(10, 2),
@@ -36,28 +39,7 @@ class GourmetFinanceiro extends Model<GourmetFinanceiro> {
   valor: number;
 
   @Column
-  dataVenda: string;
-
-  @Column
-  mesaId: number;
-
-  @Column
-  mesaNumero: string;
-
-  @Column
-  formResponseId: number;
-
-  @Column
-  protocol: string;
-
-  @Column
-  entregadorUserId: number;
-
-  @Column
-  entregadorNome: string;
-
-  @Column(DataType.JSON)
-  meiosPagamento: any;
+  dataVencimento: string;
 
   @CreatedAt
   createdAt: Date;
@@ -66,4 +48,4 @@ class GourmetFinanceiro extends Model<GourmetFinanceiro> {
   updatedAt: Date;
 }
 
-export default GourmetFinanceiro;
+export default GourmetDespesa;

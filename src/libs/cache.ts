@@ -1,8 +1,15 @@
 import Redis from "ioredis";
 import { REDIS_URI_CONNECTION } from "../config/redis";
+import { logger } from "../utils/logger";
 import * as crypto from "crypto";
 
-const redis = new Redis(REDIS_URI_CONNECTION);
+const redis = REDIS_URI_CONNECTION
+  ? new Redis(REDIS_URI_CONNECTION)
+  : new Redis({ host: "127.0.0.1", port: 6379 });
+
+redis.on("error", (err: NodeJS.ErrnoException) => {
+  logger.warn(`[redis/cache] ${err.code || ""} ${err.message}`);
+});
 
 function encryptParams(params: any) {
   const str = JSON.stringify(params);

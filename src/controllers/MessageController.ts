@@ -131,24 +131,37 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
       })
     );
   } else {
+    // Enfileirar envio para responder rápido ao frontend (otimização de UX).
+    // O frontend já exibe a mensagem via atualização otimista; o job persiste e emite socket ao concluir.
+    const queues = req.app.get("queues") as { messageQueue?: { add: (name: string, data: any, opts?: any) => Promise<unknown> } };
+    if (queues?.messageQueue) {
+      const quotedMsgId = quotedMsg && typeof quotedMsg === "object" && "id" in quotedMsg ? (quotedMsg as { id: string }).id : undefined;
+      await queues.messageQueue.add(
+        "SendTicketMessage",
+        {
+          ticketId: ticket.id,
+          body: body || "",
+          quotedMsgId,
+          mentions,
+          companyId
+        },
+        { removeOnComplete: true, attempts: 3 }
+      );
+      return res.send();
+    }
+    // Fallback: envio síncrono se fila não estiver disponível
     try {
       const sentMessage = await SendWhatsAppMessage({ body, ticket, quotedMsg, mentions });
-      
-      // CRÍTICO: Salvar mensagem no banco após envio bem-sucedido
-      // Isso garante que mensagens enviadas apareçam na listagem do frontend
       if (sentMessage && sentMessage.key) {
         await verifyMessage(sentMessage, ticket, ticket.contact);
       }
     } catch (error: any) {
-      // Se o envio falhar, ainda tentar salvar a mensagem com status de erro para rastreabilidade
       logger.error({
         msg: "MessageController.store: Erro ao enviar mensagem via WhatsApp",
         ticketId: ticket.id,
         companyId,
         error: error?.message || error
       });
-      
-      // Salvar mensagem com status de erro (ACK = -1 indica erro)
       const errorMessageData = {
         id: `${ticket.id}-${Date.now()}-error`,
         ticketId: ticket.id,
@@ -157,22 +170,15 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
         fromMe: true,
         read: true,
         mediaType: "conversation",
-        ack: -1, // Status de erro
+        ack: -1,
         companyId,
         dataJson: JSON.stringify({ error: error?.message || "Erro desconhecido", originalBody: body })
       };
-      
       try {
         await CreateMessageService({ messageData: errorMessageData, companyId });
       } catch (saveError) {
-        logger.error({
-          msg: "MessageController.store: Erro ao salvar mensagem de erro no banco",
-          ticketId: ticket.id,
-          error: saveError
-        });
+        logger.error({ msg: "MessageController.store: Erro ao salvar mensagem de erro no banco", ticketId: ticket.id, error: saveError });
       }
-      
-      // Re-lançar o erro original para que o frontend saiba que falhou
       throw error;
     }
   }

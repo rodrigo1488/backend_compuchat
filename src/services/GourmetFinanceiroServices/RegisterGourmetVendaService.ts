@@ -5,6 +5,7 @@ interface RequestMesa {
   companyId: number;
   tipo: "mesa";
   valor: number;
+  meiosPagamento?: any;
   mesaId: number;
   mesaNumero?: string | null;
 }
@@ -13,13 +14,21 @@ interface RequestDelivery {
   companyId: number;
   tipo: "delivery";
   valor: number;
+  meiosPagamento?: any;
   formResponseId: number;
   protocol?: string | null;
   entregadorUserId?: number | null;
   entregadorNome?: string | null;
 }
 
-type Request = RequestMesa | RequestDelivery;
+interface RequestPdv {
+  companyId: number;
+  tipo: "pdv";
+  valor: number;
+  meiosPagamento?: any;
+}
+
+type Request = RequestMesa | RequestDelivery | RequestPdv;
 
 const RegisterGourmetVendaService = async (data: Request): Promise<GourmetFinanceiro> => {
   const today = getBrazilISODateString(new Date());
@@ -28,10 +37,18 @@ const RegisterGourmetVendaService = async (data: Request): Promise<GourmetFinanc
     tipo: data.tipo,
     valor: data.valor,
     dataVenda: today,
+    meiosPagamento: (data as any).meiosPagamento ?? null,
   };
   if (data.tipo === "mesa") {
     payload.mesaId = data.mesaId;
     payload.mesaNumero = data.mesaNumero ?? null;
+    payload.formResponseId = null;
+    payload.protocol = null;
+    payload.entregadorUserId = null;
+    payload.entregadorNome = null;
+  } else if (data.tipo === "pdv") {
+    payload.mesaId = null;
+    payload.mesaNumero = null;
     payload.formResponseId = null;
     payload.protocol = null;
     payload.entregadorUserId = null;
