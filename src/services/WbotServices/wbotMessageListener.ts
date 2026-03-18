@@ -3007,17 +3007,16 @@ export const handleRating = async (
   // Clamp entre 1 e 5
   const finalRate = Math.min(5, Math.max(1, rateInt));
 
+  // Guarda valores antes de atualizar o ticket (queueId vira null no update)
+  const companyId = ticket.companyId;
+  const queueId = ticket.queueId;
+
   await UserRating.create({
     ticketId: ticketTraking.ticketId,
     companyId: ticketTraking.companyId,
     userId: ticketTraking.userId,
     rate: finalRate
   });
-
-  if (complationMessage) {
-    const body = formatBody(`‎${complationMessage}`, ticket.contact);
-    await SendWhatsAppMessage({ body, ticket });
-  }
 
   await ticketTraking.update({
     finishedAt: moment().toDate(),
@@ -3032,22 +3031,39 @@ export const handleRating = async (
     status: "closed"
   });
 
-  io.to(`company-${ticket.companyId}-open`)
-    .to(`queue-${ticket.queueId}-open`)
+  io.to(`company-${companyId}-open`)
+    .to(`queue-${queueId}-open`)
     .emit(`company-${ticket.companyId}-ticket`, {
       action: "delete",
       ticket,
       ticketId: ticket.id
     });
 
-  io.to(`company-${ticket.companyId}-${ticket.status}`)
-    .to(`queue-${ticket.queueId}-${ticket.status}`)
+  io.to(`company-${companyId}-${ticket.status}`)
+    .to(`queue-${queueId}-${ticket.status}`)
     .to(ticket.id.toString())
     .emit(`company-${ticket.companyId}-ticket`, {
       action: "update",
       ticket,
       ticketId: ticket.id
     });
+
+  // Enviar mensagem de conclusão do WhatsApp pode falhar (ex: conexão fechada).
+  // Nao podemos deixar essa falha impedir a persistencia da avaliacao no banco.
+  if (complationMessage) {
+    try {
+      const body = formatBody(`‎${complationMessage}`, ticket.contact);
+      await SendWhatsAppMessage({ body, ticket });
+    } catch (err) {
+      logger.warn({
+        msg: "handleRating: falha ao enviar mensagem de conclusão",
+        ticketId: ticket.id,
+        companyId,
+        whatsappId: ticket.whatsappId,
+        error: err?.message || err
+      });
+    }
+  }
 };
 
 const handleChartbot = async (

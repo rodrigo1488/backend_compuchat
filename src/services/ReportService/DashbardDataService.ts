@@ -116,19 +116,17 @@ export default async function DashboardDataService(
   const replacements: any[] = [companyId];
 
   if (_.has(params, "days")) {
-    // Para o dashboard, faz mais sentido filtrar pela finalizacao/avaliacao do atendimento,
-    // porque o usuário espera ver os tickets resolvidos no período selecionado.
-    where += ` and coalesce(tt."finishedAt", tt."ratingAt", tt."queuedAt") >= (now() - '? days'::interval)`;
+    where += ` and tt."queuedAt" >= (now() - '? days'::interval)`;
     replacements.push(parseInt(`${params.days}`.replace(/\D/g, ""), 10));
   }
 
   if (_.has(params, "date_from")) {
-    where += ` and coalesce(tt."finishedAt", tt."ratingAt", tt."queuedAt") >= ?`;
+    where += ` and tt."queuedAt" >= ?`;
     replacements.push(`${params.date_from} 00:00:00`);
   }
 
   if (_.has(params, "date_to")) {
-    where += ` and coalesce(tt."finishedAt", tt."ratingAt", tt."queuedAt") <= ?`;
+    where += ` and tt."finishedAt" <= ?`;
     replacements.push(`${params.date_to} 23:59:59`);
   }
 
