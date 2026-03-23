@@ -6,6 +6,7 @@ import Whatsapp from "../../models/Whatsapp";
 import Contact from "../../models/Contact";
 import { logger } from "../../utils/logger";
 import * as Sentry from "@sentry/node";
+import TicketTraking from "../../models/TicketTraking";
 
 export interface MessageData {
   id: string;
@@ -50,14 +51,23 @@ const CreateMessageService = async ({
             model: Contact,
             as: "contact",
             required: false,
-            attributes: ["id", "name", "profilePicUrl"]
+            // `contact` aqui é o contato "direto" da mensagem (não do ticket)
+            // Mantemos profilePicUrl para compatibilidade de UI.
+            attributes: ["id", "name", "number", "isGroup", "profilePicUrl"]
           },
           {
             model: Ticket,
             as: "ticket",
-            attributes: ["id", "status", "queueId", "contactId", "companyId", "lastMessage", "fromMe"],
+                // Inclui userId para que o frontend consiga filtrar notificação por responsável.
+                attributes: ["id", "uuid", "status", "queueId", "userId", "contactId", "companyId", "lastMessage", "fromMe", "isGroup"],
             include: [
-              { model: Contact, as: "contact", required: false, attributes: ["id", "name"] },
+              {
+                model: Contact,
+                as: "contact",
+                required: false,
+                // Campos necessários para classificar "grupo" no frontend em tempo real
+                attributes: ["id", "name", "number", "isGroup", "profilePicUrl"],
+              },
               { model: Queue, as: "queue", required: false, attributes: ["id", "name"] },
               { model: Whatsapp, as: "whatsapp", required: false, attributes: ["name", "type"] }
             ]
@@ -85,6 +95,22 @@ const CreateMessageService = async ({
       // Emitir evento Socket.IO apenas quando a mensagem for nova (não existia antes)
       // Evita duplicata no frontend quando controller e listener ambos chamam verifyMessage
       if (!existedBefore) {
+        // Se o Ticket vier com `userId` null no payload, inferimos via TicketTraking
+        // (finishedAt IS NULL). Isso garante que o frontend consiga distinguir
+        // "responsável" vs "pendente" para notificar corretamente.
+        const t = (message as any)?.ticket;
+        if (t?.id != null && t?.userId == null) {
+          const tr = await TicketTraking.findOne({
+            where: {
+              ticketId: t.id,
+              finishedAt: null
+            }
+          });
+          if (tr?.userId != null) {
+            t.userId = tr.userId;
+          }
+        }
+
         const io = getIO();
         io.to(message.ticketId.toString())
           .to(`company-${companyId}-${message.ticket.status}`)
@@ -94,6 +120,7 @@ const CreateMessageService = async ({
           .emit(`company-${companyId}-appMessage`, {
             action: "create",
             message,
+            // Envia o ticket potencialmente atualizado (ex.: userId vindo do TicketTraking)
             ticket: message.ticket,
             contact: message.ticket.contact
           });

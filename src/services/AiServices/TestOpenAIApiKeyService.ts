@@ -33,12 +33,13 @@ const TestOpenAIApiKeyService = async ({
   try {
     console.log(`🧪 Testando chave OpenAI...`);
 
-    const isValid = await testOpenAIApiKey(apiKey);
+    const testResult = await testOpenAIApiKey(apiKey);
 
-    if (!isValid) {
+    if (testResult.ok === false) {
+      const hint = testResult.detail ? ` Detalhe da API: ${testResult.detail}` : "";
       return {
         valid: false,
-        message: "Chave da API do OpenAI inválida ou não está funcionando. Verifique a configuração."
+        message: `Chave da API do OpenAI não passou no teste.${hint}. Verifique se a chave está ativa, não expirou e se há créditos/cota na conta.`
       };
     }
 

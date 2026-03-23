@@ -29,6 +29,7 @@ import AddOnItem from "../../models/AddOnItem";
 import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
+import { assertMenuOrderHoursAllowed } from "../../helpers/menuOrderHours";
 
 interface Answer {
   fieldId: number;
@@ -370,6 +371,7 @@ const ProcessFormResponseService = async ({
   
   let normalizedMenuItems: any[] | null = null;
   if (isMenuForm && menuItems && menuItems.length > 0) {
+    assertMenuOrderHoursAllowed(formSettings);
     normalizedMenuItems = await normalizeMenuItems(menuItems, form.companyId);
     responseMetadata.menuItems = normalizedMenuItems;
     const deliveryFeeFromMeta = Number((metadata as any)?.deliveryFee) || 0;

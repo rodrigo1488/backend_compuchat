@@ -1,4 +1,5 @@
 import axios from "axios";
+import { sanitizeApiKey, stripBearerPrefix } from "../helpers/sanitizeApiKey";
 
 // Configuração centralizada do Gemini
 export const GEMINI_MODEL = "models/gemini-2.5-flash";
@@ -6,10 +7,12 @@ export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1";
 
 // Validação da chave da API
 export const validateGeminiApiKey = (apiKey: string | null | undefined): string => {
-  if (!apiKey || apiKey.trim() === "") {
+  let k = sanitizeApiKey(apiKey);
+  k = stripBearerPrefix(k);
+  if (!k) {
     throw new Error("Chave da API do Gemini não configurada. Configure GEMINI_API_KEY.");
   }
-  return apiKey.trim();
+  return k;
 };
 
 // Interpretação de erros da API do Gemini
@@ -49,7 +52,7 @@ export const handleGeminiError = (err: any): never => {
 export const testGeminiApiKey = async (apiKey: string): Promise<boolean> => {
   try {
     const response = await axios.post(
-      `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
         contents: [
           { parts: [{ text: "ping" }] }

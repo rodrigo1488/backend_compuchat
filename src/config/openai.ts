@@ -1,4 +1,5 @@
 import { Configuration, OpenAIApi } from "openai";
+import { sanitizeApiKey, stripBearerPrefix } from "../helpers/sanitizeApiKey";
 
 // Configuração centralizada do OpenAI
 export const OPENAI_DEFAULT_MODEL = "gpt-3.5-turbo";
@@ -7,16 +8,18 @@ export const OPENAI_VISION_MODEL = "gpt-4o-mini";
 
 // Validação da chave da API
 export const validateOpenAIApiKey = (apiKey: string | null | undefined): string => {
-  if (!apiKey || apiKey.trim() === "") {
+  let trimmedKey = sanitizeApiKey(apiKey);
+  trimmedKey = stripBearerPrefix(trimmedKey);
+
+  if (!trimmedKey) {
     throw new Error("Chave da API do OpenAI não configurada. Configure OPENAI_API_KEY.");
   }
-  
-  // OpenAI API keys geralmente começam com "sk-"
-  const trimmedKey = apiKey.trim();
+
+  // Chaves da OpenAI (incl. sk-proj-...) começam com "sk-"
   if (!trimmedKey.startsWith("sk-")) {
     throw new Error("Formato de chave da API do OpenAI inválido. A chave deve começar com 'sk-'.");
   }
-  
+
   return trimmedKey;
 };
 
@@ -68,30 +71,35 @@ export const createOpenAIClient = (apiKey: string) => {
   return new OpenAIApi(configuration);
 };
 
-// Teste automático da chave da API
-export const testOpenAIApiKey = async (apiKey: string): Promise<boolean> => {
+export type TestOpenAIApiKeyResult = { ok: true } | { ok: false; detail?: string };
+
+/** Teste leve com modelo amplamente disponível (gpt-3.5-turbo pode falhar em contas novas). */
+export const testOpenAIApiKey = async (apiKey: string): Promise<TestOpenAIApiKeyResult> => {
   try {
     const client = createOpenAIClient(apiKey);
-    
-    // Fazer uma requisição simples para testar a chave (API antiga)
+
     await client.createChatCompletion({
-      model: OPENAI_DEFAULT_MODEL,
+      model: OPENAI_VISION_MODEL,
       messages: [
         {
           role: "user",
-          content: "ping"
+          content: "Reply with OK only."
         }
       ],
-      max_tokens: 5
+      max_tokens: 8
     });
-    
-    return true;
+
+    return { ok: true };
   } catch (err: any) {
+    const detail =
+      err?.response?.data?.error?.message ||
+      err?.response?.data?.message ||
+      err?.message;
     console.error("❌ Falha no teste da chave OpenAI:", {
       status: err?.response?.status,
       error: err?.response?.data?.error,
       message: err?.message
     });
-    return false;
+    return { ok: false, detail: typeof detail === "string" ? detail : undefined };
   }
 };

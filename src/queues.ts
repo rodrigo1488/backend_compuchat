@@ -37,6 +37,8 @@ import SendWhatsAppMessage from "./services/WbotServices/SendWhatsAppMessage";
 import { verifyMessage } from "./services/WbotServices/wbotMessageListener";
 import CreateMessageService from "./services/MessageServices/CreateMessageService";
 import Message from "./models/Message";
+import ResolveTicketWhatsApp from "./helpers/ResolveTicketWhatsApp";
+import { StartWhatsAppSession } from "./services/WbotServices/StartWhatsAppSession";
 
 const nodemailer = require('nodemailer');
 const CronJob = require('cron').CronJob;
@@ -220,6 +222,9 @@ async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise
     }
   } catch (e: any) {
     const isLastAttempt = retries + 1 >= maxRetries;
+    const isWappNotInitialized =
+      typeof e?.message === "string" &&
+      e.message.includes("ERR_WAPP_NOT_INITIALIZED");
     logger.error({
       msg: `handleSendTicketMessage: Erro (tentativa ${retries + 1}/${maxRetries})`,
       jobId,
@@ -228,6 +233,32 @@ async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise
       error: e?.message || e
     });
     Sentry.captureException(e, { tags: { service: "handleSendTicketMessage", jobId, ticketId } });
+
+    // Evitar crash: se a sessão Baileys ainda não existe em memória,
+    // iniciamos a sessão (best-effort) e não re-lançamos a exceção.
+    if (isWappNotInitialized) {
+      try {
+        const ticket = await ShowTicketService(ticketId, companyId);
+        const whatsapp = await ResolveTicketWhatsApp(ticket);
+        void StartWhatsAppSession(whatsapp, companyId).catch((startErr: any) => {
+          logger.error({
+            msg: "handleSendTicketMessage: falha ao iniciar sessão WhatsApp",
+            jobId,
+            ticketId,
+            companyId,
+            error: startErr?.message || startErr
+          });
+        });
+      } catch (startErr: any) {
+        logger.error({
+          msg: "handleSendTicketMessage: erro ao resolver WhatsApp para iniciar sessão",
+          jobId,
+          ticketId,
+          companyId,
+          error: startErr?.message || startErr
+        });
+      }
+    }
 
     // Garantir que falhas no job resultem em mensagem com ack erro e emit ao frontend.
     if (isLastAttempt) {
@@ -265,6 +296,9 @@ async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise
         }
       }
     }
+    // Para ERR_WAPP_NOT_INITIALIZED, não re-lançar para impedir crash via unhandled rejection.
+    if (isWappNotInitialized) return;
+
     throw e;
   }
 }
