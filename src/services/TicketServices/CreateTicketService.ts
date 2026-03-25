@@ -98,11 +98,27 @@ const CreateTicketService = async ({
   }
 
   const io = getIO();
+  const ticketPayload = {
+    ...ticket.toJSON(),
+    id: ticket.id,
+    uuid: ticket.uuid,
+    status: ticket.status,
+    queueId: ticket.queueId ?? null,
+    userId: ticket.userId ?? null,
+    unreadMessages: ticket.unreadMessages ?? 0,
+    companyId
+  };
 
-  io.to(ticket.id.toString()).emit("ticket", {
-    action: "update",
-    ticket
-  });
+  io.to(ticket.id.toString())
+    .to(`company-${companyId}-${ticket.status}`)
+    .to(`company-${companyId}-notification`)
+    .to(`queue-${ticket.queueId}-${ticket.status}`)
+    .to(`queue-${ticket.queueId}-notification`)
+    .to(`user-${ticket.userId}`)
+    .emit(`company-${companyId}-ticket`, {
+      action: "create",
+      ticket: ticketPayload
+    });
 
   return ticket;
 };

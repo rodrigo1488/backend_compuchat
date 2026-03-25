@@ -2325,7 +2325,7 @@ export const verifyMediaMessage = async (
   }
 
   // Verificar se é uma resposta de avaliação ANTES de reabrir o ticket
-  if (!msg.key.fromMe && ticket.status === "closed") {
+  if (!msg.key.fromMe && ticket.status === "rating") {
     // Buscar ticketTraking para verificar se há avaliação pendente
     const ticketTraking = await FindOrCreateATicketTrakingService({
       ticketId: ticket.id,
@@ -2333,10 +2333,11 @@ export const verifyMediaMessage = async (
       whatsappId: ticket.whatsappId
     });
 
-    // Se for uma resposta de avaliação, processar e não reabrir o ticket
-    if (ticketTraking && verifyRating(ticketTraking)) {
-      const bodyMessage = body?.trim() || "";
-      const ratingMatch = bodyMessage.match(/^[1-3]$/);
+    const vr = ticketTraking ? verifyRating(ticketTraking) : false;
+    const bodyMessage = body?.trim() || "";
+    const ratingMatch = bodyMessage.match(/^[1-3]$/);
+
+    if (ticketTraking && vr) {
       if (ratingMatch) {
         await handleRating(parseFloat(ratingMatch[0]), ticket, ticketTraking);
         return newMessage; // Não reabrir o ticket, apenas processar a avaliação
@@ -2359,8 +2360,8 @@ export const verifyMediaMessage = async (
       ]
     });
 
-    io.to(`company-${ticket.companyId}-closed`)
-      .to(`queue-${ticket.queueId}-closed`)
+    io.to(`company-${ticket.companyId}-rating`)
+      .to(`queue-${ticket.queueId}-rating`)
       .emit(`company-${ticket.companyId}-ticket`, {
         action: "delete",
         ticket,
@@ -2499,7 +2500,7 @@ export const verifyMessage = async (
   }
 
   // Verificar se é uma resposta de avaliação ANTES de reabrir o ticket
-  if (!msg.key.fromMe && ticket.status === "closed") {
+  if (!msg.key.fromMe && ticket.status === "rating") {
     // Buscar ticketTraking para verificar se há avaliação pendente
     const ticketTraking = await FindOrCreateATicketTrakingService({
       ticketId: ticket.id,
@@ -2508,9 +2509,11 @@ export const verifyMessage = async (
     });
 
     // Se for uma resposta de avaliação, processar e não reabrir o ticket
-    if (ticketTraking && verifyRating(ticketTraking)) {
-      const bodyMessage = body?.trim() || "";
-      const ratingMatch = bodyMessage.match(/^[1-3]$/);
+    const vr = ticketTraking ? verifyRating(ticketTraking) : false;
+    const bodyMessage = body?.trim() || "";
+    const ratingMatch = bodyMessage.match(/^[1-3]$/);
+
+    if (ticketTraking && vr) {
       if (ratingMatch) {
         await handleRating(parseFloat(ratingMatch[0]), ticket, ticketTraking);
         return; // Não reabrir o ticket, apenas processar a avaliação
@@ -2533,8 +2536,8 @@ export const verifyMessage = async (
       ]
     });
 
-    io.to(`company-${ticket.companyId}-closed`)
-      .to(`queue-${ticket.queueId}-closed`)
+    io.to(`company-${ticket.companyId}-rating`)
+      .to(`queue-${ticket.queueId}-rating`)
       .emit(`company-${ticket.companyId}-ticket`, {
         action: "delete",
         ticket,
@@ -3004,8 +3007,8 @@ export const handleRating = async (
     ticket.companyId
   );
 
-  // Clamp entre 1 e 5
-  const finalRate = Math.min(5, Math.max(1, rateInt));
+  // Clamp entre 1 e 3
+  const finalRate = Math.min(3, Math.max(1, rateInt));
 
   // Guarda valores antes de atualizar o ticket (queueId vira null no update)
   const companyId = ticket.companyId;
@@ -3449,40 +3452,28 @@ const flowbuilderIntegration = async (
 
   */
 
-  if (!msg.key.fromMe && ticket.status === "closed") {
-
-    console.log("===== CHANGE =====");
-    await ticket.update({ status: "pending" });
-    await ticket.reload({
-      include: [
-        {
-          model: Queue,
-          as: "queue",
-          include: [
-            { model: Prompt, as: "prompt" }
-          ]
-        },
-        { model: User, as: "user" },
-        { model: Contact, as: "contact" }
-      ]
+  if (!msg.key.fromMe && ticket.status === "rating") {
+    const ticketTraking = await FindOrCreateATicketTrakingService({
+      ticketId: ticket.id,
+      companyId,
+      whatsappId: ticket.whatsappId
     });
+
+    if (ticketTraking && verifyRating(ticketTraking)) {
+      const bodyMessage = body?.trim() || "";
+      const ratingMatch = bodyMessage.match(/^[1-3]$/);
+      if (ratingMatch) {
+        await handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
+        return;
+      }
+    }
+
     await UpdateTicketService({
       ticketData: { status: "pending", integrationId: ticket.integrationId },
       ticketId: ticket.id,
       companyId
     });
-
-    io.of(String(companyId)).emit(`company-${companyId}-ticket`, {
-      action: "delete",
-      ticket,
-      ticketId: ticket.id
-    });
-
-    io.to(ticket.status).emit(`company-${companyId}-ticket`, {
-      action: "update",
-      ticket,
-      ticketId: ticket.id
-    });
+    return;
   }
 
   if (msg.key.fromMe) {
@@ -3914,6 +3905,7 @@ const flowBuilderQueue = async (
 
   if (
     ticket.status === "closed" ||
+    ticket.status === "rating" ||
     ticket.status === "interrupted" ||
     ticket.status === "open"
   ) {
@@ -4107,7 +4099,7 @@ const handleMessage = async (
       if (!isFromMe) {
         if (ticketTraking !== null && verifyRating(ticketTraking)) {
           // Validar que a mensagem é um número inteiro antes de processar avaliação
-          const ratingMatch = bodyMessage?.trim().match(/^[1-5]$/);
+          const ratingMatch = bodyMessage?.trim().match(/^[1-3]$/);
           if (ratingMatch) {
             await handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
           }

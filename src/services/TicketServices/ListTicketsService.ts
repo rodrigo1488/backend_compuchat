@@ -53,10 +53,22 @@ const ListTicketsService = async ({
     throw new AppError("companyId é obrigatório e não pode ser undefined", 400);
   }
 
+  const normalizedQueueIds = Array.isArray(queueIds) ? queueIds : [];
+  const queueFilter =
+    normalizedQueueIds.length > 0
+      ? { [Op.or]: [normalizedQueueIds, null] }
+      : undefined;
+
   let whereCondition: Filterable["where"] = {
     [Op.or]: [{ userId }, { status: "pending" }],
-    queueId: { [Op.or]: [queueIds, null] }
+    status: { [Op.ne]: "rating" }
   };
+  if (queueFilter) {
+    whereCondition = {
+      ...whereCondition,
+      queueId: queueFilter
+    };
+  }
   let includeCondition: Includeable[];
 
   includeCondition = [
@@ -88,7 +100,13 @@ const ListTicketsService = async ({
   ];
 
   if (showAll === "true") {
-    whereCondition = { queueId: { [Op.or]: [queueIds, null] } };
+    whereCondition = { status: { [Op.ne]: "rating" } };
+    if (queueFilter) {
+      whereCondition = {
+        ...whereCondition,
+        queueId: queueFilter
+      };
+    }
   }
 
   if (status) {
@@ -166,9 +184,15 @@ const ListTicketsService = async ({
 
     whereCondition = {
       [Op.or]: [{ userId }, { status: "pending" }],
-      queueId: { [Op.or]: [userQueueIds, null] },
-      unreadMessages: { [Op.gt]: 0 }
+      unreadMessages: { [Op.gt]: 0 },
+      status: { [Op.ne]: "rating" }
     };
+    if (userQueueIds.length > 0) {
+      whereCondition = {
+        ...whereCondition,
+        queueId: { [Op.or]: [userQueueIds, null] }
+      };
+    }
   }
 
   if (Array.isArray(tags) && tags.length > 0) {

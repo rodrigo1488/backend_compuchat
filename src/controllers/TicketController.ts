@@ -109,10 +109,15 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
   });
 
   const io = getIO();
-  io.to(ticket.status).emit(`company-${companyId}-ticket`, {
-    action: "update",
-    ticket
-  });
+  io.to(`company-${companyId}-${ticket.status}`)
+    .to(`company-${companyId}-notification`)
+    .to(`queue-${ticket.queueId}-${ticket.status}`)
+    .to(`queue-${ticket.queueId}-notification`)
+    .to(`user-${ticket.userId}`)
+    .emit(`company-${companyId}-ticket`, {
+      action: "create",
+      ticket
+    });
   return res.status(200).json(ticket);
 };
 

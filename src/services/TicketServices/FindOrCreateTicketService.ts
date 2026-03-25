@@ -25,7 +25,8 @@ const FindOrCreateTicketService = async (
   let ticket = await Ticket.findOne({
     where: {
       status: {
-        [Op.or]: ["open", "pending", "closed"]
+        // Inclui "rating" para não cair no fallback das 2h que forçava pending e quebrava a etapa de avaliação
+        [Op.or]: ["open", "pending", "closed", "rating"]
       },
       contactId: groupContact ? groupContact.id : contact.id,
       companyId,
@@ -60,7 +61,7 @@ const FindOrCreateTicketService = async (
   }
 
   if (ticket?.status === "closed") {
-    await ticket.update({ queueId: null, userId: null });
+    await ticket.update({ queueId: null, userId: null, status: "pending" });
   }
 
   if (!ticket && groupContact) {
@@ -107,19 +108,29 @@ const FindOrCreateTicketService = async (
     });
 
     if (ticket) {
-      await ticket.update({
-        status: "pending",
-        userId: null,
-        unreadMessages,
-        queueId: null,
-        companyId
-      });
-      await FindOrCreateATicketTrakingService({
-        ticketId: ticket.id,
-        companyId,
-        whatsappId: ticket.whatsappId,
-        userId: ticket.userId
-      });
+      // Não forçar pending se o ticket estiver em avaliação (rating) — fallback legado sem filtro de status
+      if (ticket.status === "rating") {
+        await ticket.update({
+          unreadMessages,
+          whatsappId,
+          integrationId: whatsapp?.integrationId || ticket.integrationId,
+          promptId: whatsapp?.promptId || ticket.promptId
+        });
+      } else {
+        await ticket.update({
+          status: "pending",
+          userId: null,
+          unreadMessages,
+          queueId: null,
+          companyId
+        });
+        await FindOrCreateATicketTrakingService({
+          ticketId: ticket.id,
+          companyId,
+          whatsappId: ticket.whatsappId,
+          userId: ticket.userId
+        });
+      }
     }
   }
 

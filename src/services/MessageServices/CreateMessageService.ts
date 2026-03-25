@@ -58,8 +58,8 @@ const CreateMessageService = async ({
           {
             model: Ticket,
             as: "ticket",
-                // Inclui userId para que o frontend consiga filtrar notificação por responsável.
-                attributes: ["id", "uuid", "status", "queueId", "userId", "contactId", "companyId", "lastMessage", "fromMe", "isGroup"],
+            // Payload mínimo para roteamento/contagem no frontend em tempo real.
+            attributes: ["id", "uuid", "status", "queueId", "userId", "contactId", "companyId", "lastMessage", "fromMe", "isGroup", "unreadMessages"],
             include: [
               {
                 model: Contact,
@@ -112,6 +112,17 @@ const CreateMessageService = async ({
         }
 
         const io = getIO();
+        const ticketPayload = {
+          ...message.ticket?.toJSON?.(),
+          id: message.ticket?.id,
+          uuid: message.ticket?.uuid,
+          status: message.ticket?.status,
+          queueId: message.ticket?.queueId ?? null,
+          userId: message.ticket?.userId ?? null,
+          unreadMessages: message.ticket?.unreadMessages ?? 0,
+          companyId
+        };
+
         io.to(message.ticketId.toString())
           .to(`company-${companyId}-${message.ticket.status}`)
           .to(`company-${companyId}-notification`)
@@ -120,8 +131,7 @@ const CreateMessageService = async ({
           .emit(`company-${companyId}-appMessage`, {
             action: "create",
             message,
-            // Envia o ticket potencialmente atualizado (ex.: userId vindo do TicketTraking)
-            ticket: message.ticket,
+            ticket: ticketPayload,
             contact: message.ticket.contact
           });
       }

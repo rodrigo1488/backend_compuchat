@@ -53,7 +53,7 @@ const UpdateTicketService = async ({
 }: Request): Promise<Response> => {
 
   try {
-    const { status } = ticketData;
+    let { status } = ticketData;
     let { queueId, userId, whatsappId } = ticketData;
     let chatbot: boolean | null = ticketData.chatbot || false;
     let queueOptionId: number | null = ticketData.queueOptionId || null;
@@ -119,10 +119,16 @@ const UpdateTicketService = async ({
       queueOptionId = null;
     }
 
-    // Só processar mensagem de avaliação se o status está mudando PARA "closed" (não se já estava fechado)
-    if (status !== undefined && ["closed"].indexOf(status) > -1 && oldStatus !== "closed") {
+    // Entrada no modo de avaliação: envia instrução e move ticket para status "rating".
+    if (status !== undefined && status === "rating" && oldStatus !== "rating") {
+      if (setting?.value !== "enabled") {
+        // Sem avaliação habilitada, resolver fecha direto para não deixar ticket preso em rating.
+        status = "closed";
+      }
+    }
+
+    if (status !== undefined && status === "rating" && oldStatus !== "rating") {
       // Só tentar obter configurações do WhatsApp se a conexão ainda existir
-      let complationMessage: string | null = null;
       let ratingMessage: string | null = null;
       if (ticket.whatsappId !== null && ticket.whatsappId !== undefined) {
         try {
@@ -130,7 +136,6 @@ const UpdateTicketService = async ({
             ticket.whatsappId,
             companyId
           );
-          complationMessage = whatsappService.complationMessage;
           ratingMessage = whatsappService.ratingMessage;
         } catch (err) {
           // Se a conexão foi encerrada, continuar sem mensagens de avaliação
@@ -161,20 +166,26 @@ const UpdateTicketService = async ({
               ratingAt: moment().toDate(),
               userId: actionUserId
             });
-
-            io.to(`company-${ticket.companyId}-open`)
-              .to(`queue-${ticket.queueId}-open`)
-              .to(ticketId.toString())
-              .emit(`company-${ticket.companyId}-ticket`, {
-                action: "delete",
-                ticketId: ticket.id
-              });
-
-            return { ticket, oldStatus, oldUserId };
           }
         }
         ticketTraking.ratingAt = moment().toDate();
         ticketTraking.rated = false;
+      }
+    }
+
+    // Fechamento definitivo (ex.: rejeição manual ou outros fluxos diretos para closed).
+    if (status !== undefined && status === "closed" && oldStatus !== "closed") {
+      let complationMessage: string | null = null;
+      if (ticket.whatsappId !== null && ticket.whatsappId !== undefined) {
+        try {
+          const whatsappService = await ShowWhatsAppService(
+            ticket.whatsappId,
+            companyId
+          );
+          complationMessage = whatsappService.complationMessage;
+        } catch (err) {
+          // Se a conexão foi encerrada, continuar sem mensagens de conclusão
+        }
       }
 
       if (!isNil(complationMessage) && complationMessage !== "") {
@@ -368,13 +379,24 @@ const UpdateTicketService = async ({
     if (ticket.status !== oldStatus || ticket.user?.id !== oldUserId) {
 
       io.to(`company-${companyId}-${oldStatus}`)
-        .to(`queue-${ticket.queueId}-${oldStatus}`)
+        .to(`queue-${oldQueueId}-${oldStatus}`)
         .to(`user-${oldUserId}`)
         .emit(`company-${companyId}-ticket`, {
           action: "delete",
           ticketId: ticket.id
         });
     }
+
+    const ticketPayload = {
+      ...ticket.toJSON(),
+      id: ticket.id,
+      uuid: ticket.uuid,
+      status: ticket.status,
+      queueId: ticket.queueId ?? null,
+      userId: ticket.userId ?? null,
+      unreadMessages: ticket.unreadMessages ?? 0,
+      companyId
+    };
 
     io.to(`company-${companyId}-${ticket.status}`)
       .to(`company-${companyId}-notification`)
@@ -385,7 +407,7 @@ const UpdateTicketService = async ({
       .to(`user-${oldUserId}`)
       .emit(`company-${companyId}-ticket`, {
         action: "update",
-        ticket
+        ticket: ticketPayload
       });
 
     return { ticket, oldStatus, oldUserId };
