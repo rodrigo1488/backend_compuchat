@@ -144,29 +144,20 @@ const UpdateTicketService = async ({
 
       if (setting?.value === "enabled") {
         if (ticketTraking.ratingAt == null) {
-          // Validar se o ticket foi criado há menos de 3 dias
-          const ticketCreatedAt = new Date(ticket.createdAt);
-          const now = new Date();
-          const daysSinceCreation = Math.floor((now.getTime() - ticketCreatedAt.getTime()) / (1000 * 60 * 60 * 24));
-          const isCreatedLessThan3Days = daysSinceCreation < 3;
-
-          // Enviar mensagem de avaliação apenas se o ticket foi criado há menos de 3 dias
-          if (isCreatedLessThan3Days) {
-            const ratingTxt = ratingMessage || "";
-            let bodyRatingMessage = `\u200e${ratingTxt}\n\n`;
-            bodyRatingMessage +=
-              "Digite de 1 à 3 para qualificar nosso atendimento:\n*1* - _Insatisfeito_\n*2* - _Satisfeito_\n*3* - _Muito Satisfeito_\n\n";
-            try {
-              await SendWhatsAppMessage({ body: bodyRatingMessage, ticket });
-            } catch (msgErr) {
-              logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de avaliação para o ticket ${ticketId} (conexão indisponível):`, msgErr);
-            }
-
-            await ticketTraking.update({
-              ratingAt: moment().toDate(),
-              userId: actionUserId
-            });
+          const ratingTxt = ratingMessage || "";
+          let bodyRatingMessage = `\u200e${ratingTxt}\n\n`;
+          bodyRatingMessage +=
+            "Digite de 1 à 3 para qualificar nosso atendimento:\n*1* - _Insatisfeito_\n*2* - _Satisfeito_\n*3* - _Muito Satisfeito_\n\n";
+          try {
+            await SendWhatsAppMessage({ body: bodyRatingMessage, ticket });
+          } catch (msgErr) {
+            logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de avaliação para o ticket ${ticketId} (conexão indisponível):`, msgErr);
           }
+
+          await ticketTraking.update({
+            ratingAt: moment().toDate(),
+            userId: actionUserId
+          });
         }
         ticketTraking.ratingAt = moment().toDate();
         ticketTraking.rated = false;

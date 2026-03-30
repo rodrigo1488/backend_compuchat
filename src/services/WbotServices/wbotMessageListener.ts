@@ -2324,6 +2324,12 @@ export const verifyMediaMessage = async (
     throw error;
   }
 
+  if (!msg.key.fromMe) {
+    await ticket.reload({
+      attributes: ["id", "status", "queueId", "companyId", "whatsappId", "userId"]
+    });
+  }
+
   // Verificar se é uma resposta de avaliação ANTES de reabrir o ticket
   if (!msg.key.fromMe && ticket.status === "rating") {
     // Buscar ticketTraking para verificar se há avaliação pendente
@@ -2477,6 +2483,13 @@ export const verifyMessage = async (
     });
     // Re-lançar o erro para que o chamador saiba que a mensagem não foi salva
     throw error;
+  }
+
+  // Garantir status atual do banco para o fluxo de avaliação (evita instância stale)
+  if (!msg.key.fromMe) {
+    await ticket.reload({
+      attributes: ["id", "status", "queueId", "companyId", "whatsappId", "userId"]
+    });
   }
 
   // Quando o atendente responde (fromMe), emitir atualização do ticket para o frontend
@@ -3452,28 +3465,13 @@ const flowbuilderIntegration = async (
 
   */
 
-  if (!msg.key.fromMe && ticket.status === "rating") {
-    const ticketTraking = await FindOrCreateATicketTrakingService({
-      ticketId: ticket.id,
-      companyId,
-      whatsappId: ticket.whatsappId
-    });
-
-    if (ticketTraking && verifyRating(ticketTraking)) {
-      const bodyMessage = body?.trim() || "";
-      const ratingMatch = bodyMessage.match(/^[1-3]$/);
-      if (ratingMatch) {
-        await handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
-        return;
-      }
+  // Ticket em "rating": o listener principal já persistiu e tratou avaliação em handleMessage.
+  // Não executar FlowBuilder sobre o mesmo evento (evita interferir em envios/socket de avaliação).
+  if (!msg.key.fromMe) {
+    await ticket.reload({ attributes: ["status"] });
+    if (ticket.status === "rating") {
+      return;
     }
-
-    await UpdateTicketService({
-      ticketData: { status: "pending", integrationId: ticket.integrationId },
-      ticketId: ticket.id,
-      companyId
-    });
-    return;
   }
 
   if (msg.key.fromMe) {
@@ -4095,20 +4093,13 @@ const handleMessage = async (
       whatsappId: whatsapp?.id
     });
 
-    try {
-      if (!isFromMe) {
-        if (ticketTraking !== null && verifyRating(ticketTraking)) {
-          // Validar que a mensagem é um número inteiro antes de processar avaliação
-          const ratingMatch = bodyMessage?.trim().match(/^[1-3]$/);
-          if (ratingMatch) {
-            await handleRating(parseInt(ratingMatch[0], 10), ticket, ticketTraking);
-          }
-          return;
-        }
-      }
-    } catch (e) {
-      Sentry.captureException(e);
-      console.log(e);
+    // Avaliação (rating): não duplicar lógica aqui — verifyMessage / verifyMediaMessage
+    // gravam a mensagem primeiro e depois tratam nota 1–3 ou reabertura (texto livre/mídia).
+
+    if (hasMedia) {
+      mediaSent = await verifyMediaMessage(msg, ticket, contact);
+    } else {
+      await verifyMessage(msg, ticket, contact);
     }
 
     // Atualiza o ticket se a ultima mensagem foi enviada por mim, para que possa ser finalizado.
@@ -4119,12 +4110,6 @@ const handleMessage = async (
     } catch (e) {
       Sentry.captureException(e);
       console.log(e);
-    }
-
-    if (hasMedia) {
-      mediaSent = await verifyMediaMessage(msg, ticket, contact);
-    } else {
-      await verifyMessage(msg, ticket, contact);
     }
 
     const currentSchedule = await VerifyCurrentSchedule(companyId);
