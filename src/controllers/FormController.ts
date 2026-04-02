@@ -14,6 +14,7 @@ import UpdateFormService from "../services/FormServices/UpdateFormService";
 import DeleteFormService from "../services/FormServices/DeleteFormService";
 import AppError from "../errors/AppError";
 import { normalizeBrazilPhoneForWhatsapp } from "../helpers/NormalizeBrazilPhone";
+import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -260,6 +261,8 @@ export const getPublicForm = async (
 
   const formData: any = form.toJSON();
   console.log(`[PublicForm] Formulário encontrado: ${formData.name} (${formData.fields?.length || 0} campos)`);
+
+  setPublicApiNoCacheHeaders(res);
   
   // Se for formulário de agendamento, incluir horários da empresa se scheduleType for "company"
   const formSettings = formData.settings || {};
@@ -413,6 +416,7 @@ export const uploadLogo = async (req: Request, res: Response): Promise<Response>
 
 /** GET /public/forms/:slug/most-ordered - Retorna IDs dos produtos mais pedidos (para seção "Os mais pedidos"). */
 export const getPublicMostOrdered = async (req: Request, res: Response): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
   const form = await Form.findOne({
     where: { publicId, isActive: true },
@@ -445,6 +449,7 @@ export const getPublicMostOrdered = async (req: Request, res: Response): Promise
 
 /** GET /public/forms/:slug/repeat-data?phone=... - Retorna dados para "Peça de novo" e pré-preenchimento por telefone. */
 export const getPublicRepeatData = async (req: Request, res: Response): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
   const phoneRaw = String((req.query as any)?.phone || "");
   if (!phoneRaw || phoneRaw.trim() === "") {

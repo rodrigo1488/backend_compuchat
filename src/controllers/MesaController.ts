@@ -22,6 +22,7 @@ import AddOnSubgroup from "../models/AddOnSubgroup";
 import AddOnItem from "../models/AddOnItem";
 import GrupoAddOn from "../models/GrupoAddOn";
 import AppError from "../errors/AppError";
+import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
 import Contact from "../models/Contact";
 import CreateTicketService from "../services/TicketServices/CreateTicketService";
@@ -522,6 +523,7 @@ export const destroy = async (req: Request, res: Response): Promise<Response> =>
 
 /** Lista mesas da empresa para o cardápio público. Não filtra por formId: todas as mesas da empresa. */
 export const getPublicMesas = async (req: Request, res: Response): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
 
   const form = await Form.findOne({
@@ -565,6 +567,7 @@ export const getMesaLinkQr = async (req: Request, res: Response): Promise<Respon
 
 /** Abertura por mesa apenas (URL /mesa/:id?t=). Redireciona para o cardápio correto. Mesas independentes do formulário. */
 export const getPublicMesaByToken = async (req: Request, res: Response): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { mesaId } = req.params;
   const tokenFromQuery = (req.query.t as string) || "";
   const mesaIdNum = Number(mesaId);
@@ -622,6 +625,7 @@ export const getPublicMesaByToken = async (req: Request, res: Response): Promise
 
 /** Produtos de cardápio da empresa para o link da mesa (com variações e addOnGroup como no formulário público). */
 export const getPublicMesaProducts = async (req: Request, res: Response): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { mesaId } = req.params;
   const tokenFromQuery = (req.query.t as string) || "";
   const mesaIdNum = Number(mesaId);
@@ -699,6 +703,7 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
 /** Mesa por ID para cardápio público (QR da mesa): exige token assinado (t=); retorna orderToken para o submit.
  * Aceita token só-mesa (verifyMesaLinkOnly) ou token form+mesa (verifyMesaLink) para compatibilidade. */
 export const getPublicMesaById = async (req: Request, res: Response): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { publicId, mesaId } = req.params as any;
   const tokenFromQuery = (req.query.t as string) || "";
 

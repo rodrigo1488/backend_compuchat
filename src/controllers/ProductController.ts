@@ -19,6 +19,7 @@ import AddOnGroup from "../models/AddOnGroup";
 import AddOnSubgroup from "../models/AddOnSubgroup";
 import AddOnItem from "../models/AddOnItem";
 import AppError from "../errors/AppError";
+import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -239,6 +240,7 @@ export const getPublicMenuProducts = async (
   req: Request,
   res: Response
 ): Promise<Response> => {
+  setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
 
   // Buscar formulário pelo publicId para obter companyId
