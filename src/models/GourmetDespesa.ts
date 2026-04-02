@@ -29,6 +29,12 @@ class GourmetDespesa extends Model<GourmetDespesa> {
   @Column
   descricao: string;
 
+  @Column({
+    type: DataType.STRING(255),
+    allowNull: true,
+  })
+  fornecedor: string | null;
+
   @Column(DataType.TEXT)
   observacoes: string;
 

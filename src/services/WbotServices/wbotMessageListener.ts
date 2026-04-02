@@ -731,8 +731,14 @@ const downloadMedia = async (msg: proto.IWebMessageInfo) => {
 
   if (!mineType) console.log(msg);
 
+  if (!mineType) {
+    return null;
+  }
+
+  const resolvedMime = mineType.mimetype || "application/octet-stream";
+
   if (!filename) {
-    const ext = mimeExtension(mineType.mimetype);
+    const ext = mimeExtension(resolvedMime);
     filename = `${new Date().getTime()}.${ext}`;
   } else {
     filename = `${new Date().getTime()}_${filename}`;
@@ -740,7 +746,7 @@ const downloadMedia = async (msg: proto.IWebMessageInfo) => {
 
   const media = {
     data: buffer,
-    mimetype: mineType.mimetype,
+    mimetype: resolvedMime,
     filename
   };
 

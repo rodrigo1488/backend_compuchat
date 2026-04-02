@@ -22,19 +22,25 @@ export default {
       return cb(null, fileName);
     }
   }),
-  fileFilter: (req, file, cb) => {
-    const allowedMimes = [
-      "image/jpeg",
-      "image/jpg",
-      "image/png",
-      "image/gif",
-      "image/webp"
-    ];
+  fileFilter: (_req, file, cb) => {
+    const m = file.mimetype || "";
+    const allowed =
+      /^image\//.test(m) ||
+      /^video\//.test(m) ||
+      /^audio\//.test(m) ||
+      /^text\//.test(m) ||
+      /^font\//.test(m) ||
+      /^application\//.test(m) ||
+      m === "application/octet-stream";
 
-    if (allowedMimes.includes(file.mimetype)) {
+    if (allowed) {
       cb(null, true);
     } else {
-      cb(new Error("Invalid file type. Only JPEG, PNG, GIF and WEBP are allowed."));
+      cb(
+        new Error(
+          "Tipo de arquivo não permitido. Use imagens, vídeo, áudio, texto ou documentos (PDF, Office, etc.)."
+        )
+      );
     }
   },
   limits: {

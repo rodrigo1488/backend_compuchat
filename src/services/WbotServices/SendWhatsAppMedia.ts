@@ -52,14 +52,26 @@ export const getMessageOptions = async (
   pathMedia: string,
   body?: string
 ): Promise<any> => {
-  const mimeType = lookup(pathMedia) || "";
+  let mimeType = lookup(pathMedia) || "";
+  if (!mimeType && fileName) {
+    mimeType = lookup(path.extname(fileName)) || "";
+  }
+  if (!mimeType) {
+    mimeType = "application/octet-stream";
+  }
   const typeMessage = mimeType.split("/")[0];
 
   try {
-    if (!mimeType) {
-      throw new Error("Invalid mimetype");
-    }
     let options: AnyMessageContent;
+
+    const safeName = fileName || path.basename(pathMedia) || "arquivo";
+
+    const asDocument = (): AnyMessageContent => ({
+      document: fs.readFileSync(pathMedia),
+      caption: body ? body : null,
+      fileName: safeName,
+      mimetype: mimeType
+    });
 
     if (typeMessage === "video") {
       options = {
@@ -86,25 +98,21 @@ export const getMessageOptions = async (
           ptt: true
         };
       }
-    } else if (typeMessage === "document") {
-      options = {
-        document: fs.readFileSync(pathMedia),
-        caption: body ? body : null,
-        fileName: fileName,
-        mimetype: mimeType
-      };
-    } else if (typeMessage === "application") {
-      options = {
-        document: fs.readFileSync(pathMedia),
-        caption: body ? body : null,
-        fileName: fileName,
-        mimetype: mimeType
-      };
-    } else {
+    } else if (typeMessage === "image") {
       options = {
         image: fs.readFileSync(pathMedia),
         caption: body ? body : null
       };
+    } else if (
+      typeMessage === "document" ||
+      typeMessage === "application" ||
+      typeMessage === "text" ||
+      typeMessage === "font"
+    ) {
+      options = asDocument();
+    } else {
+      // Tipos desconhecidos: enviar como documento (evita tratar .txt como imagem)
+      options = asDocument();
     }
 
     return options;

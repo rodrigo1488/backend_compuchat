@@ -10,12 +10,14 @@ const DESPESA_EXTRACTION_PROMPT = `Analise a imagem (foto/scan) de um documento 
 Responda APENAS com um JSON válido, sem explicação nem markdown, no formato exato:
 {
   "descricao": "string curta (ex.: 'Conta de luz', 'Boleto Internet', 'NF Mercado')",
+  "fornecedor": "nome do emitente ou credor (ex.: razão social, nome do fornecedor, nome da empresa no cabeçalho). String vazia se não houver legível.",
   "observacoes": "string opcional (pode ser vazia)",
   "valor": 123.45,
   "dataVencimento": "YYYY-MM-DD"
 }
 
 Regras:
+- "fornecedor": extraia o nome da empresa/emitente que emitiu (boleto, NF, fatura). Se não houver, use "".
 - Use ponto para decimais (123.45).
 - Se o documento tiver mais de um valor (ex.: total, juros, desconto), use o TOTAL a pagar.
 - Se não encontrar data de vencimento, tente data de emissão; se mesmo assim não existir, use a data de hoje.
@@ -25,6 +27,7 @@ Regras:
 
 export type ExtractedDespesa = {
   descricao: string;
+  fornecedor: string;
   observacoes: string;
   valor: number;
   dataVencimento: string; // YYYY-MM-DD
@@ -48,6 +51,8 @@ function parseAndValidate(rawJson: string): ExtractedDespesa {
   const parsed = JSON.parse(rawJson) as any;
 
   const descricao = typeof parsed.descricao === "string" ? parsed.descricao.trim() : "";
+  let fornecedor = typeof parsed.fornecedor === "string" ? parsed.fornecedor.trim() : "";
+  if (fornecedor.length > 255) fornecedor = fornecedor.slice(0, 255);
   const observacoes = typeof parsed.observacoes === "string" ? parsed.observacoes.trim() : "";
 
   let valor = 0;
@@ -70,6 +75,7 @@ function parseAndValidate(rawJson: string): ExtractedDespesa {
 
   return {
     descricao: descricao || "Despesa",
+    fornecedor,
     observacoes,
     valor: Math.round(valor * 100) / 100,
     dataVencimento,
