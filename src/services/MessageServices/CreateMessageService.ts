@@ -27,24 +27,38 @@ interface Request {
   companyId: number;
 }
 
+/** Texto seguro para coluna NOT NULL (ex.: falha de descriptografia em grupo / tipo desconhecido). */
+export const normalizeMessageBodyForDb = (
+  body: string | null | undefined
+): string => {
+  if (body != null && String(body).trim() !== "") {
+    return String(body);
+  }
+  return "[Mensagem indisponível — não foi possível ler o conteúdo]";
+};
+
 const CreateMessageService = async ({
   messageData,
   companyId
 }: Request): Promise<Message> => {
   let retries = 0;
   const maxRetries = 3;
-  
+  const payload = {
+    ...messageData,
+    body: normalizeMessageBodyForDb(messageData.body),
+  };
+
   while (retries < maxRetries) {
     try {
       // Verificar se a mensagem já existia para emitir socket apenas em criação nova
       // (evita dupla emissão quando controller e listener ambos gravam o mesmo id)
-      const existedBefore = await Message.findByPk(messageData.id, { attributes: ["id"] });
+      const existedBefore = await Message.findByPk(payload.id, { attributes: ["id"] });
 
       // Tentar salvar a mensagem no banco
-      await Message.upsert({ ...messageData, companyId });
+      await Message.upsert({ ...payload, companyId });
 
       // Buscar a mensagem com relacionamentos mínimos necessários para o emit (otimização de latência)
-      const message = await Message.findByPk(messageData.id, {
+      const message = await Message.findByPk(payload.id, {
         attributes: { exclude: ["dataJson"] },
         include: [
           {
@@ -84,7 +98,7 @@ const CreateMessageService = async ({
 
       // Validação crítica: se a mensagem não foi encontrada após upsert, algo está errado
       if (!message) {
-        throw new Error(`ERR_CREATING_MESSAGE: Mensagem ${messageData.id} não encontrada após upsert`);
+        throw new Error(`ERR_CREATING_MESSAGE: Mensagem ${payload.id} não encontrada após upsert`);
       }
 
       // Sincronizar queueId se necessário (após confirmar que message existe)
@@ -143,8 +157,8 @@ const CreateMessageService = async ({
       
       logger.error({
         msg: `CreateMessageService: Erro ao salvar mensagem (tentativa ${retries}/${maxRetries})`,
-        messageId: messageData.id,
-        ticketId: messageData.ticketId,
+        messageId: payload.id,
+        ticketId: payload.ticketId,
         companyId,
         error: error?.message || error,
         stack: error?.stack
@@ -153,8 +167,8 @@ const CreateMessageService = async ({
       Sentry.captureException(error, {
         tags: {
           service: "CreateMessageService",
-          messageId: messageData.id,
-          ticketId: messageData.ticketId,
+          messageId: payload.id,
+          ticketId: payload.ticketId,
           companyId,
           retry: retries
         }

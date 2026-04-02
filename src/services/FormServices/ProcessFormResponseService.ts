@@ -29,6 +29,7 @@ import AddOnItem from "../../models/AddOnItem";
 import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
+import EvaluateCardapioOrderHours from "./EvaluateCardapioOrderHours";
 
 interface Answer {
   fieldId: number;
@@ -63,6 +64,8 @@ interface Request {
   metadata?: object;
   /** Token de sessão da mesa (retornado ao abrir link assinado). Garante que o pedido vá para a mesa correta. */
   orderToken?: string;
+  /** true quando o submit vem com JWT da mesma empresa (ex.: PDV Mesas) — ignora bloqueio de horário do cardápio. */
+  orderHoursBypass?: boolean;
 }
 
 type MenuItemInput = {
@@ -266,6 +269,7 @@ const ProcessFormResponseService = async ({
   userAgent,
   metadata,
   orderToken,
+  orderHoursBypass,
 }: Request): Promise<FormResponse> => {
   // Load form with fields
   const form = await Form.findByPk(formId, {
@@ -352,6 +356,18 @@ const ProcessFormResponseService = async ({
     : [];
   const triggeredOrderMessages = resolveTriggeredOrderMessages(orderTriggerMessageRules, answers);
 
+  if (
+    isMenuForm &&
+    menuItems &&
+    menuItems.length > 0 &&
+    !orderHoursBypass
+  ) {
+    const hoursCheck = EvaluateCardapioOrderHours(formSettings);
+    if (!hoursCheck.allowed) {
+      throw new AppError(hoursCheck.message, 400);
+    }
+  }
+
   // Prepare metadata with quotationItems or menuItems if applicable
   const responseMetadata: any = metadata || {};
   if (isAgendamentoForm && metadata) {
@@ -388,6 +404,42 @@ const ProcessFormResponseService = async ({
   }
   if (triggeredOrderMessages.length > 0) {
     responseMetadata.triggeredOrderMessages = triggeredOrderMessages;
+  }
+
+  let tableId = (metadata as any)?.tableId ?? (responseMetadata as any)?.tableId;
+  if (orderToken) {
+    const decoded = verifyOrderToken(orderToken);
+    if (!decoded || decoded.formId !== form.id) {
+      throw new AppError("ERR_MESA_LINK_INVALID", 403);
+    }
+    tableId = decoded.mesaId;
+  }
+
+  // QR público: quando validação por palavra-chave está ativa, não permitir pedido direto em mesa livre.
+  // A mesa deve ser ocupada/confirmada antes de enviar pedidos.
+  if (isMenuForm && tableId != null) {
+    const mesaId = typeof tableId === "string" ? parseInt(tableId, 10) : Number(tableId);
+    if (!Number.isNaN(mesaId)) {
+      const mesa = await Mesa.findOne({
+        where: { id: mesaId, companyId: form.companyId },
+        attributes: ["id", "status"],
+      });
+      const requireMesaOccupation = formSettings?.requireMesaOccupation !== false;
+      const mesaKeywordValidation = formSettings?.mesaOccupationKeywordValidation === true;
+      const orderType = (responseMetadata.orderType ?? (metadata as any)?.orderType) as string | undefined;
+      const placedByGarcom = !!(responseMetadata.garcomName ?? responseMetadata.placedByGarcom ?? (metadata as any)?.placedByGarcom);
+      const isGarcomOrder = orderType === "mesa" && placedByGarcom;
+
+      if (
+        mesa &&
+        !isGarcomOrder &&
+        requireMesaOccupation &&
+        mesaKeywordValidation &&
+        mesa.status === "livre"
+      ) {
+        throw new AppError("Mesa requer confirmação de ocupação antes de realizar pedidos pelo QR Code.", 409);
+      }
+    }
   }
 
   // Create FormResponse (orderStatus "novo" for menu/cardapio forms)
@@ -464,15 +516,6 @@ const ProcessFormResponseService = async ({
 
   let contact = null;
   let ticket = null;
-
-  let tableId = (metadata as any)?.tableId ?? (responseMetadata as any)?.tableId;
-  if (orderToken) {
-    const decoded = verifyOrderToken(orderToken);
-    if (!decoded || decoded.formId !== form.id) {
-      throw new AppError("ERR_MESA_LINK_INVALID", 403);
-    }
-    tableId = decoded.mesaId;
-  }
 
   // Reutilizar contact/ticket da mesa quando pedido é para mesa já ocupada (ex.: Garçom adiciona pedido)
   if (isMenuForm && tableId != null) {

@@ -1,6 +1,7 @@
 import express from "express";
 import multer from "multer";
 import isAuth from "../middleware/isAuth";
+import optionalAuth from "../middleware/optionalAuth";
 import uploadFormLogo from "../config/uploadFormLogo";
 
 import * as FormController from "../controllers/FormController";
@@ -60,6 +61,6 @@ routes.post("/public/forms/:publicId/waitlist", AppointmentController.addToWaitl
 routes.get("/public/forms/:publicId", FormController.getPublicForm);
 routes.get("/public/forms/:publicId/most-ordered", FormController.getPublicMostOrdered);
 routes.get("/public/forms/:publicId/repeat-data", FormController.getPublicRepeatData);
-routes.post("/public/forms/:publicId/submit", FormResponseController.store);
+routes.post("/public/forms/:publicId/submit", optionalAuth, FormResponseController.store);
 
 export default routes;

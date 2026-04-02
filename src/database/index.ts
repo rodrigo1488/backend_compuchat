@@ -62,6 +62,7 @@ import PrintPedido from "../models/PrintPedido";
 import Module from "../models/Module";
 import CompanyModule from "../models/CompanyModule";
 import Mesa from "../models/Mesa";
+import MesaOccupationConfirmation from "../models/MesaOccupationConfirmation";
 import GourmetFinanceiro from "../models/GourmetFinanceiro";
 import GourmetDespesa from "../models/GourmetDespesa";
 import AppointmentService from "../models/AppointmentService";
@@ -138,6 +139,7 @@ const models = [
   Module,
   CompanyModule,
   Mesa,
+  MesaOccupationConfirmation,
   GourmetFinanceiro,
   GourmetDespesa,
   AppointmentService,

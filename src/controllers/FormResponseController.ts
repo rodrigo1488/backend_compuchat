@@ -361,12 +361,17 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
 
   console.log(`FormResponseController: Processing response for formId=${form.id}, publicId=${publicId}, hasOrderToken=${!!data.orderToken}`);
 
+  const userCompanyId = (req as any).user?.companyId;
+  const orderHoursBypass =
+    userCompanyId != null && Number(userCompanyId) === Number(form.companyId);
+
   const response = await ProcessFormResponseService({
     formId: form.id,
     ...data,
     orderToken: data.orderToken,
     ipAddress: Array.isArray(ipAddress) ? ipAddress[0] : ipAddress,
     userAgent,
+    orderHoursBypass,
   });
 
   const io = getIO();

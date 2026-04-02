@@ -24,7 +24,10 @@ import Ticket from "../../models/Ticket";
 import Message from "../../models/Message";
 
 import { getIO } from "../../libs/socket";
-import CreateMessageService, { MessageData } from "../MessageServices/CreateMessageService";
+import CreateMessageService, {
+  MessageData,
+  normalizeMessageBodyForDb
+} from "../MessageServices/CreateMessageService";
 import { logger } from "../../utils/logger";
 import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateContactService";
 import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
@@ -2403,10 +2406,12 @@ export const verifyMessage = async (
   const quotedMsg = getQuotedMessageId(msg) ? await verifyQuotedMessage(msg) : null;
   const bodyFromMsg = getBodyMessage(msg);
   // Para mensagens fromMe, preferir body original (ex. do job) para o frontend substituir a otimista corretamente
-  const body =
+  const bodyRaw =
     msg.key.fromMe && options?.originalBody != null && String(options.originalBody).trim() !== ""
       ? options.originalBody
       : bodyFromMsg;
+  /** Evita NULL no banco quando o WA não descriptografa (ex. grupo sem sessão / skmsg) ou tipo desconhecido */
+  const body = normalizeMessageBodyForDb(bodyRaw);
   const isEdited = getTypeMessage(msg) == "editedMessage";
 
   // Garantir ACK inicial correto
