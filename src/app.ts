@@ -48,7 +48,14 @@ app.use(
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+      "Cache-Control",
+      "Pragma",
+    ],
     exposedHeaders: ["Content-Range", "X-Content-Range"],
     maxAge: 600 // Cache preflight response for 10 minutes
   })
