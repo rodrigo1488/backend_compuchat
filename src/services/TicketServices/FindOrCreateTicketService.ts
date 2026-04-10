@@ -20,7 +20,8 @@ const FindOrCreateTicketService = async (
   whatsappId: number,
   unreadMessages: number,
   companyId: number,
-  groupContact?: Contact
+  groupContact?: Contact,
+  fromMe?: boolean
 ): Promise<Ticket> => {
   let ticket = await Ticket.findOne({
     where: {
@@ -61,6 +62,12 @@ const FindOrCreateTicketService = async (
   }
 
   if (ticket?.status === "closed") {
+    if (fromMe) {
+      // Mensagem enviada pelo próprio sistema (eco fromMe) — não reabrir o ticket.
+      // Ecos de mensagens automáticas (complationMessage, ratingMessage, expiresInactiveMessage)
+      // chegam com fromMe=true e não devem causar reabertura.
+      return await ShowTicketService(ticket.id, companyId);
+    }
     await ticket.update({ queueId: null, userId: null, status: "pending" });
   }
 

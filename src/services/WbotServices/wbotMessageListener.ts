@@ -4081,8 +4081,16 @@ const handleMessage = async (
       wbot.id!,
       unreadMessages,
       companyId,
-      groupContact
+      groupContact,
+      isFromMe
     );
+
+    // Ecos de mensagens automáticas enviadas pelo sistema (fromMe=true) não devem
+    // acionar fluxos de atendimento em tickets fechados ou em avaliação.
+    if (isFromMe && (ticket.status === "closed" || ticket.status === "rating")) {
+      logger.debug(`handleMessage: eco fromMe ignorado — ticket ${ticket.id} em status "${ticket.status}"`);
+      return;
+    }
 
     await provider(ticket, msg, companyId, contact, wbot as WASocket);
 

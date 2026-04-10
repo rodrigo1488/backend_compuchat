@@ -86,13 +86,16 @@ export const ClosedAllOpenTickets = async (companyId: number): Promise<void> => 
 
           if (dataUltimaInteracaoChamado < dataLimite && showTicket.fromMe) {
 
-            closeTicket(showTicket, showTicket.status, bodyExpiresMessageInactive);
-
+            // Enviar mensagem de inatividade ANTES de fechar o ticket para evitar race condition:
+            // se fechássemos primeiro, o eco (fromMe=true) da mensagem chegaria com o ticket já
+            // em "closed" e FindOrCreateTicketService o reabriria indevidamente para "pending".
             if (expiresInactiveMessage !== "" && expiresInactiveMessage !== undefined) {
               const sentMessage = await SendWhatsAppMessage({ body: bodyExpiresMessageInactive, ticket: showTicket });
 
               await verifyMessage(sentMessage, showTicket, showTicket.contact);
             }
+
+            closeTicket(showTicket, showTicket.status, bodyExpiresMessageInactive);
 
             await ticketTraking.update({
               finishedAt: moment().toDate(),

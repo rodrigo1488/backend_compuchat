@@ -144,6 +144,11 @@ const UpdateTicketService = async ({
 
       if (setting?.value === "enabled") {
         if (ticketTraking.ratingAt == null) {
+          // Atualizar status para "rating" ANTES de enviar a mensagem para evitar
+          // race condition: o eco da mensagem chegaria com o ticket ainda em "open"/"pending"
+          // e FindOrCreateTicketService o reabriria indevidamente.
+          await ticket.update({ status: "rating" });
+
           const ratingTxt = ratingMessage || "";
           let bodyRatingMessage = `\u200e${ratingTxt}\n\n`;
           bodyRatingMessage +=
@@ -179,6 +184,18 @@ const UpdateTicketService = async ({
         }
       }
 
+      // Atualizar status para "closed" ANTES de enviar a mensagem de conclusão para evitar
+      // race condition: o eco da complationMessage chegaria com o ticket ainda em status anterior
+      // e FindOrCreateTicketService o reabriria indevidamente.
+      await ticket.update({
+        status: "closed",
+        promptId: null,
+        integrationId: null,
+        useIntegration: false,
+        typebotStatus: false,
+        typebotSessionId: null
+      });
+
       if (!isNil(complationMessage) && complationMessage !== "") {
         const body = `\u200e${complationMessage}`;
         try {
@@ -187,13 +204,6 @@ const UpdateTicketService = async ({
           logger.warn(`UpdateTicketService: Não foi possível enviar mensagem de conclusão para o ticket ${ticketId} (conexão indisponível):`, msgErr);
         }
       }
-      await ticket.update({
-        promptId: null,
-        integrationId: null,
-        useIntegration: false,
-        typebotStatus: false,
-        typebotSessionId: null
-      })
 
       ticketTraking.finishedAt = moment().toDate();
       ticketTraking.whatsappId = ticket.whatsappId;
