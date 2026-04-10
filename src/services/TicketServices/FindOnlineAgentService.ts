@@ -43,6 +43,7 @@ export const findOnlineAgent = async ({
           id: { [Op.in]: userIds },
           companyId,
           online: true,
+          active: true,
           profile: "user" // Apenas usuários, não admins
         },
         attributes: ["id", "name", "email", "online", "profile", "companyId"]
@@ -55,6 +56,7 @@ export const findOnlineAgent = async ({
         where: {
           companyId,
           online: true,
+          active: true,
           profile: "user" // Apenas usuários, não admins
         },
         attributes: ["id", "name", "email", "online", "profile", "companyId"]

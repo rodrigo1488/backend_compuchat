@@ -9,7 +9,8 @@ interface Params {
 const SimpleListService = async ({ companyId }: Params): Promise<User[]> => {
   const users = await User.findAll({
     where: {
-      companyId
+      companyId,
+      active: true,
     },
     attributes: ["name", "id", "email"],
     include: [

@@ -47,8 +47,9 @@ const CreateUserService = async ({
     if (company !== null) {
       const usersCount = await User.count({
         where: {
-          companyId
-        }
+          companyId,
+          active: true,
+        },
       });
 
       if (usersCount >= company.plan.users) {

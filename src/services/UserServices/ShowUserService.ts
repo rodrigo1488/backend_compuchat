@@ -18,6 +18,7 @@ const ShowUserService = async (id: string | number): Promise<User> => {
       "allTicket",
       "avatar",
       "defaultRoute",
+      "active",
     ],
     include: [
       { model: Queue, as: "queues", attributes: ["id", "name", "color"] },

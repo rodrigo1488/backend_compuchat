@@ -33,6 +33,11 @@ export const RefreshTokenService = async (
 
     const user = await ShowUserService(id);
 
+    if (!user.active) {
+      res.clearCookie("jrt");
+      throw new AppError("ERR_SESSION_EXPIRED", 401);
+    }
+
     if (user.tokenVersion !== tokenVersion) {
       res.clearCookie("jrt");
       throw new AppError("ERR_SESSION_EXPIRED", 401);

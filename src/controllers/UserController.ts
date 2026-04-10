@@ -9,6 +9,7 @@ import ListUsersService from "../services/UserServices/ListUsersService";
 import UpdateUserService from "../services/UserServices/UpdateUserService";
 import ShowUserService from "../services/UserServices/ShowUserService";
 import DeleteUserService from "../services/UserServices/DeleteUserService";
+import SetUserActiveService from "../services/UserServices/SetUserActiveService";
 import SimpleListService from "../services/UserServices/SimpleListService";
 import ListContactsByUserService from "../services/ContactServices/ListContactsByUserService";
 import User from "../models/User";
@@ -126,6 +127,51 @@ export const update = async (
   });
 
   return res.status(200).json(user);
+};
+
+export const setActive = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  if (req.user.profile !== "admin") {
+    throw new AppError("ERR_NO_PERMISSION", 403);
+  }
+
+  const { userId } = req.params;
+  const { companyId, id: requestUserId } = req.user;
+  const { active } = req.body as { active?: boolean };
+
+  if (typeof active !== "boolean") {
+    throw new AppError("Campo active deve ser booleano", 400);
+  }
+
+  const user = await SetUserActiveService({
+    userId,
+    companyId,
+    requestUserId: +requestUserId,
+    active,
+  });
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-user`, {
+    action: "update",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      profile: user.profile,
+      companyId: user.companyId,
+      active: user.active,
+    },
+  });
+
+  return res.status(200).json({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    profile: user.profile,
+    active: user.active,
+  });
 };
 
 export const remove = async (
