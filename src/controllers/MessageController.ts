@@ -102,10 +102,18 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
 
   const ticket = await ShowTicketService(ticketId, companyId);
 
+  const isInternalMessage =
+    isInternal === true ||
+    (typeof isInternal === "string" && isInternal.toLowerCase() === "true");
+
+  if (ticket.status === "closed" && !isInternalMessage) {
+    throw new AppError("ERR_TICKET_CLOSED_CANNOT_SEND", 400);
+  }
+
   SetTicketMessagesAsRead(ticket);
 
   // Se for mensagem interna, apenas salvar no banco sem enviar via WhatsApp
-  if (isInternal) {
+  if (isInternalMessage) {
     // Criar mensagem interna diretamente no banco
     const messageData = {
       id: `${ticketId}-${Date.now()}`,
