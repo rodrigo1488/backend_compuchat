@@ -202,18 +202,23 @@ export const initIO = (httpServer: Server): SocketIO => {
       logger.debug(`leaveNotification[${c}]: User: ${user.id}`);
     });
  
+    // Salas por status: admin usa company-${id}-${status}; atendentes usam queue-${queueId}-${status}
+    // (o mesmo padrão de emit em UpdateTicketService / wbot). Antes só "pending" fazia join para não-admin —
+    // abas "open" e "closed" não recebiam eventos em tempo real.
+    const queueTicketStatuses = ["pending", "open", "closed", "group", "rating"];
+
     socket.on("joinTickets", (status: string) => {
       if (counters.incrementCounter(`status-${status}`) === 1) {
         if (user.profile === "admin") {
           logger.debug(`Admin ${user.id} of company ${user.companyId} joined ${status} tickets channel.`);
           socket.join(`company-${user.companyId}-${status}`);
-        } else if (status === "pending") {
+        } else if (queueTicketStatuses.includes(status)) {
           user.queues.forEach((queue) => {
-            logger.debug(`User ${user.id} of company ${user.companyId} joined queue ${queue.id} pending tickets channel.`);
-            socket.join(`queue-${queue.id}-pending`);
+            logger.debug(`User ${user.id} of company ${user.companyId} joined queue ${queue.id} ${status} tickets channel.`);
+            socket.join(`queue-${queue.id}-${status}`);
           });
           if (user.allTicket === "enabled") {
-            socket.join("queue-null-pending");
+            socket.join(`queue-null-${status}`);
           }
         } else {
           logger.debug(`User ${user.id} cannot subscribe to ${status}`);
@@ -226,13 +231,13 @@ export const initIO = (httpServer: Server): SocketIO => {
         if (user.profile === "admin") {
           logger.debug(`Admin ${user.id} of company ${user.companyId} leaved ${status} tickets channel.`);
           socket.leave(`company-${user.companyId}-${status}`);
-        } else if (status === "pending") {
+        } else if (queueTicketStatuses.includes(status)) {
           user.queues.forEach((queue) => {
-            logger.debug(`User ${user.id} of company ${user.companyId} leaved queue ${queue.id} pending tickets channel.`);
-            socket.leave(`queue-${queue.id}-pending`);
+            logger.debug(`User ${user.id} of company ${user.companyId} leaved queue ${queue.id} ${status} tickets channel.`);
+            socket.leave(`queue-${queue.id}-${status}`);
           });
           if (user.allTicket === "enabled") {
-            socket.leave("queue-null-pending");
+            socket.leave(`queue-null-${status}`);
           }
         }
       }
