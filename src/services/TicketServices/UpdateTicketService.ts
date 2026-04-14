@@ -356,7 +356,8 @@ const UpdateTicketService = async ({
       whatsappId: whatsappId !== null ? whatsappId : undefined,
       chatbot,
       queueOptionId,
-      sessionStartedAt: shouldResetSessionStart ? new Date() : ticket.sessionStartedAt
+      // Só grava ao reabrir/trocar canal — evita UPDATE com coluna inexistente antes da migration
+      ...(shouldResetSessionStart ? { sessionStartedAt: new Date() } : {})
     });
 
     await ticket.reload();
