@@ -4,6 +4,7 @@ import validateAIApiKey from "../middleware/validateAIApiKey";
 import * as AiSummaryController from "../controllers/AiSummaryController";
 import * as ChatAIController from "../controllers/ChatAIController";
 import * as CampaignAIController from "../controllers/CampaignAIController";
+import * as AiJobController from "../controllers/AiJobController";
 import uploadAudioMemory from "../config/uploadAudioMemory";
 
 const routes = express.Router();
@@ -25,8 +26,13 @@ routes.post("/ai/dashboard/command", isAuth, validateAIApiKey, AiSummaryControll
 routes.post("/chat-ai/analyze", isAuth, validateAIApiKey, ChatAIController.analyze);
 routes.post("/chat-ai/audio-summary", isAuth, validateAIApiKey, ChatAIController.audioSummary);
 routes.post("/chat-ai/improve", isAuth, validateAIApiKey, ChatAIController.improve);
+routes.post("/chat-ai/apply-reply-actions", isAuth, validateAIApiKey, ChatAIController.applyReplyActions);
 routes.post("/chat-ai/transcribe/:messageId", isAuth, validateAIApiKey, ChatAIController.transcribe);
 routes.post("/chat-ai/generate-ticket", isAuth, validateAIApiKey, ChatAIController.generateTicket);
+
+// Fila de jobs de IA em segundo plano
+routes.post("/ai/jobs", isAuth, validateAIApiKey, AiJobController.startJob);
+routes.get("/ai/jobs/:jobId", isAuth, AiJobController.getJobStatus);
 
 // Rotas para IA em campanhas
 routes.post("/ai/campaign/initial", isAuth, validateAIApiKey, CampaignAIController.generateCampaignInitialMessage);

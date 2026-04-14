@@ -95,7 +95,10 @@ export const createOpenAIClient = (): OpenAIApi => {
   if (!cachedOpenAIClient) {
     const configuration = new Configuration({
       apiKey: getLmStudioApiKey(),
-      basePath
+      basePath,
+      baseOptions: {
+        timeout: 300_000 // 5 min — modelos locais podem ser lentos a gerar
+      }
     });
     cachedOpenAIClient = new OpenAIApi(configuration);
   }

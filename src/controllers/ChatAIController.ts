@@ -1,5 +1,11 @@
 import { Request, Response } from "express";
-import { analyzeChatContext, summarizeUnreadAudios, improveMessage, generateTicketInfo } from "../services/AiServices/ChatAIService";
+import {
+  analyzeChatContext,
+  summarizeUnreadAudios,
+  improveMessage,
+  generateTicketInfo,
+  applyChatModelReplyActions
+} from "../services/AiServices/ChatAIService";
 import transcribeAndPersistAudioMessage from "../services/AiServices/TranscribeAndPersistAudioService";
 import AppError from "../errors/AppError";
 
@@ -110,7 +116,7 @@ export const improve = async (
   res: Response
 ): Promise<Response> => {
   try {
-    const { companyId } = req.user;
+    const { companyId, id: userId } = req.user;
     const { ticketId, draftText } = req.body;
 
     if (!ticketId) {
@@ -125,7 +131,9 @@ export const improve = async (
       draftText: draftText || ""
     });
 
-    console.log(`[ChatAIController] Mensagem melhorada com sucesso - improvedText length: ${result.improvedText?.length || 0}`);
+    console.log(
+      `[ChatAIController] Mensagem melhorada com sucesso - improvedText length: ${result.improvedText?.length || 0}, userId: ${userId}`
+    );
 
     return res.status(200).json(result);
   } catch (err: any) {
@@ -157,6 +165,45 @@ export const improve = async (
     return res.status(500).json({
       error: "ERR_CHAT_AI_IMPROVE",
       message: err.message || "Erro ao melhorar mensagem com IA"
+    });
+  }
+};
+
+export const applyReplyActions = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { companyId, id: userId } = req.user;
+    const { ticketId, modelReply } = req.body;
+
+    if (!ticketId) {
+      return res.status(400).json({ error: "ticketId é obrigatório" });
+    }
+    if (!modelReply || !String(modelReply).trim()) {
+      return res.status(400).json({ error: "modelReply é obrigatório" });
+    }
+
+    const result = await applyChatModelReplyActions({
+      ticketId: Number(ticketId),
+      companyId,
+      userId: Number(userId),
+      modelReply: String(modelReply)
+    });
+
+    return res.status(200).json(result);
+  } catch (err: any) {
+    console.error("[ChatAIController] Erro ao aplicar ações da resposta:", err);
+
+    if (err instanceof AppError) {
+      return res.status(err.statusCode || 500).json({
+        error: err.message || "ERR_CHAT_AI_APPLY_ACTIONS"
+      });
+    }
+
+    return res.status(500).json({
+      error: "ERR_CHAT_AI_APPLY_ACTIONS",
+      message: err.message || "Erro ao aplicar ações"
     });
   }
 };

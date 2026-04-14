@@ -66,6 +66,10 @@ const server = app.listen(process.env.PORT, async () => {
     }
   }, 3000);
 
+  // Permitir pedidos longos (IA local pode levar vários minutos)
+  server.timeout = 360_000;         // 6 min — prazo total do socket HTTP
+  server.keepAliveTimeout = 365_000; // ligeiramente acima do timeout de pedido
+
   logger.info(`Server started on port: ${process.env.PORT}`);
 });
 
