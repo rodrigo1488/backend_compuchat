@@ -14,6 +14,7 @@ import HelpArticle from "../../models/HelpArticle";
 import { AIProviderSelector } from "./AIProviderSelector";
 import { ChatMessage } from "./AIProviderInterface";
 import DashboardCommandService from "./DashboardCommandService";
+import { truncateSystemPromptForLmStudio } from "../../config/openai";
 
 interface ChatGeminiParams {
   companyId: number;
@@ -69,7 +70,59 @@ COMO USAR:
 IMPORTANTE: Use este conhecimento para responder perguntas sobre funcionalidades e uso do sistema.`;
 };
 
-// Função para detectar entidades na pergunta do usuário
+const HELP_ARTICLE_STOPWORDS = new Set([
+  "que",
+  "uma",
+  "para",
+  "como",
+  "sobre",
+  "pelo",
+  "pela",
+  "pelos",
+  "pelas",
+  "quando",
+  "onde",
+  "qual",
+  "quais",
+  "isso",
+  "esse",
+  "essa",
+  "este",
+  "esta",
+  "estão",
+  "estao",
+  "pode",
+  "por",
+  "dos",
+  "das",
+  "nos",
+  "nas",
+  "aos",
+  "com",
+  "foi",
+  "são",
+  "sao",
+  "tem",
+  "ser",
+  "the",
+  "and"
+]);
+
+const normalizeForMatch = (s: string): string =>
+  s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+
+const tokenizeQuestionForSearch = (question: string): string[] => {
+  const norm = normalizeForMatch(question);
+  const parts = norm.split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !HELP_ARTICLE_STOPWORDS.has(w));
+  return [...new Set(parts)].slice(0, 14);
+};
+
+const sanitizeLikeFragment = (s: string): string => s.replace(/[%_]/g, "");
+
+// Função para detectar entidades na pergunta do usuário (sem carregar todos users/contacts)
 const detectEntitiesInQuestion = async (
   question: string,
   companyId: number
@@ -88,64 +141,77 @@ const detectEntitiesInQuestion = async (
     period = "month";
   }
 
-  // Buscar todos os usuários da empresa
-  const users = await User.findAll({
-    where: { companyId },
-    attributes: ["id", "name"],
-    raw: true
-  }) as Array<{ id: number; name: string }>;
+  const tokens = tokenizeQuestionForSearch(question).filter(t => t.length >= 3);
+  const likeTokens = tokens.filter(t => t.length >= 4).slice(0, 6);
+  const fallbackTokens = likeTokens.length === 0 ? tokens.slice(0, 4) : likeTokens;
 
-  // Buscar contatos mencionados
-  const contacts = await Contact.findAll({
-    where: { companyId },
-    attributes: ["id", "name", "number"],
-    raw: true
-  }) as Array<{ id: number; name: string; number: string }>;
-
-  // Detectar nomes de atendentes na pergunta
   const matchedUsers: Array<{ id: number; name: string }> = [];
   const attendantNames: string[] = [];
-
-  for (const user of users) {
-    const userName = user.name.toLowerCase();
-    const nameParts = userName.split(" ");
-
-    // Verificar nome completo ou partes do nome
-    if (questionLower.includes(userName)) {
-      matchedUsers.push(user);
-      attendantNames.push(user.name);
-    } else {
-      // Verificar primeiro nome ou sobrenome (mínimo 3 caracteres)
-      for (const part of nameParts) {
-        if (part.length >= 3 && questionLower.includes(part)) {
-          matchedUsers.push(user);
-          attendantNames.push(user.name);
-          break;
-        }
-      }
-    }
-  }
-
-  // Detectar nomes de contatos na pergunta
   const matchedContacts: Array<{ id: number; name: string; number: string }> = [];
   const contactNames: string[] = [];
 
-  for (const contact of contacts) {
-    if (!contact.name) continue;
-    const contactName = contact.name.toLowerCase();
-    const nameParts = contactName.split(" ");
+  if (fallbackTokens.length === 0) {
+    return {
+      attendantNames,
+      contactNames,
+      period,
+      matchedUsers,
+      matchedContacts
+    };
+  }
 
-    if (questionLower.includes(contactName)) {
+  const orUser = fallbackTokens.map(t => ({
+    name: { [Op.like]: `%${sanitizeLikeFragment(t)}%` }
+  }));
+
+  const users = await User.findAll({
+    where: { companyId, [Op.or]: orUser },
+    attributes: ["id", "name"],
+    limit: 35,
+    raw: true
+  }) as Array<{ id: number; name: string }>;
+
+  const seenUser = new Set<number>();
+  for (const user of users) {
+    if (seenUser.has(user.id)) continue;
+    const userNameLower = user.name.toLowerCase();
+    const parts = userNameLower.split(/\s+/).filter(Boolean);
+    const hit =
+      questionLower.includes(userNameLower) ||
+      parts.some(p => p.length >= 4 && questionLower.includes(p));
+    if (hit) {
+      seenUser.add(user.id);
+      matchedUsers.push(user);
+      attendantNames.push(user.name);
+    }
+  }
+
+  const orContact = fallbackTokens.map(t => ({
+    name: { [Op.like]: `%${sanitizeLikeFragment(t)}%` }
+  }));
+
+  const contacts = await Contact.findAll({
+    where: {
+      companyId,
+      [Op.or]: orContact
+    },
+    attributes: ["id", "name", "number"],
+    limit: 35,
+    raw: true
+  }) as Array<{ id: number; name: string; number: string }>;
+
+  const seenContact = new Set<number>();
+  for (const contact of contacts) {
+    if (!contact.name || seenContact.has(contact.id)) continue;
+    const contactNameLower = contact.name.toLowerCase();
+    const parts = contactNameLower.split(/\s+/).filter(Boolean);
+    const hit =
+      questionLower.includes(contactNameLower) ||
+      parts.some(p => p.length >= 4 && questionLower.includes(p));
+    if (hit) {
+      seenContact.add(contact.id);
       matchedContacts.push(contact);
       contactNames.push(contact.name);
-    } else {
-      for (const part of nameParts) {
-        if (part.length >= 3 && questionLower.includes(part)) {
-          matchedContacts.push(contact);
-          contactNames.push(contact.name);
-          break;
-        }
-      }
     }
   }
 
@@ -223,51 +289,115 @@ const fetchTicketsWithMessages = async (
     limit
   });
 
-  // Buscar mensagens para cada ticket
-  const ticketsWithMessages = await Promise.all(
-    tickets.map(async (ticket: any) => {
-      const messages = await Message.findAll({
-        where: {
-          ticketId: ticket.id,
-          companyId,
-          createdAt: {
-            [Op.gte]: start,
-            [Op.lte]: end
-          }
-        },
-        order: [["createdAt", "ASC"]],
-        limit: 50,
-        raw: true
-      });
+  const ticketIds = tickets.map((t: any) => t.id);
+  const messagesByTicket = new Map<number, any[]>();
+  ticketIds.forEach(id => messagesByTicket.set(id, []));
 
-      return {
-        id: ticket.id,
-        status: ticket.status,
-        contact: {
-          id: ticket.contact?.id,
-          name: ticket.contact?.name || "Desconhecido",
-          number: ticket.contact?.number || ""
-        },
-        attendant: {
-          id: ticket.user?.id,
-          name: ticket.user?.name || "Sem atendente"
-        },
-        queue: ticket.queue?.name || "Sem fila",
-        createdAt: ticket.createdAt,
-        updatedAt: ticket.updatedAt,
-        messagesCount: messages.length,
-        messages: messages.map((msg: any) => ({
-          id: msg.id,
-          body: (msg.body || "").slice(0, 500),
-          fromMe: msg.fromMe,
-          createdAt: msg.createdAt,
-          sender: msg.fromMe ? "ATENDENTE" : "CLIENTE"
-        }))
-      };
-    })
-  );
+  if (ticketIds.length > 0) {
+    const allMessages = await Message.findAll({
+      where: {
+        ticketId: { [Op.in]: ticketIds },
+        companyId,
+        createdAt: {
+          [Op.gte]: start,
+          [Op.lte]: end
+        }
+      },
+      order: [["createdAt", "ASC"]],
+      limit: 12000,
+      raw: true
+    });
 
-  return ticketsWithMessages;
+    for (const msg of allMessages) {
+      const tid = msg.ticketId as number;
+      const arr = messagesByTicket.get(tid);
+      if (!arr) continue;
+      arr.push(msg);
+    }
+    for (const tid of ticketIds) {
+      const arr = messagesByTicket.get(tid);
+      if (!arr?.length) continue;
+      arr.sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      if (arr.length > 50) {
+        arr.splice(50);
+      }
+    }
+  }
+
+  return tickets.map((ticket: any) => {
+    const messages = messagesByTicket.get(ticket.id) || [];
+    return {
+      id: ticket.id,
+      status: ticket.status,
+      contact: {
+        id: ticket.contact?.id,
+        name: ticket.contact?.name || "Desconhecido",
+        number: ticket.contact?.number || ""
+      },
+      attendant: {
+        id: ticket.user?.id,
+        name: ticket.user?.name || "Sem atendente"
+      },
+      queue: ticket.queue?.name || "Sem fila",
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      messagesCount: messages.length,
+      messages: messages.map((msg: any) => ({
+        id: msg.id,
+        body: (msg.body || "").slice(0, 500),
+        fromMe: msg.fromMe,
+        createdAt: msg.createdAt,
+        sender: msg.fromMe ? "ATENDENTE" : "CLIENTE"
+      }))
+    };
+  });
+};
+
+/** Tickets recentes sem carregar mensagens (modo compacto). */
+const fetchRecentWeekTicketsMetadataOnly = async (
+  companyId: number,
+  period: DetectedEntities["period"],
+  limit: number = 100
+): Promise<any[]> => {
+  const { start, end } = getPeriodDates(period);
+
+  const whereClause: any = {
+    companyId,
+    [Op.or]: [
+      { createdAt: { [Op.gte]: start, [Op.lte]: end } },
+      { updatedAt: { [Op.gte]: start, [Op.lte]: end } }
+    ]
+  };
+
+  const tickets = await Ticket.findAll({
+    where: whereClause,
+    include: [
+      { model: Contact, attributes: ["id", "name", "number"] },
+      { model: User, attributes: ["id", "name"] },
+      { model: Queue, attributes: ["id", "name"] }
+    ],
+    order: [["updatedAt", "DESC"]],
+    limit
+  });
+
+  return tickets.map((ticket: any) => ({
+    id: ticket.id,
+    status: ticket.status,
+    contact: {
+      id: ticket.contact?.id,
+      name: ticket.contact?.name || "Desconhecido",
+      number: ticket.contact?.number || ""
+    },
+    attendant: {
+      id: ticket.user?.id,
+      name: ticket.user?.name || "Sem atendente"
+    },
+    queue: ticket.queue?.name || "Sem fila",
+    createdAt: ticket.createdAt,
+    updatedAt: ticket.updatedAt,
+    messagesCount: 0,
+    messages: [] as any[]
+  }));
 };
 
 // Função para buscar dados específicos de um atendente
@@ -323,137 +453,139 @@ Total de atendimentos: ${tickets.length}
   return output;
 };
 
-// Função para buscar dados completos da empresa
-const fetchCompanyData = async (companyId: number, period: DetectedEntities["period"] = "week") => {
+type CompanyAggregatePayload = {
+  company: string;
+  stats: {
+    total: { tickets: number; messages: number; contacts: number };
+    ticketsByStatus: { open: number; pending: number; closed: number };
+    period: { ticketsToday: number; ticketsWeek: number; messagesToday: number };
+  };
+  users: Array<{ id: number; name: string; profile: string }>;
+  userTicketStats: Array<{
+    userId: number;
+    userName: string;
+    ticketsPeriod: number;
+    ticketsToday: number;
+  }>;
+  queues: Array<{ id: number; name: string }>;
+  queueStats: Array<{ queueId: number; queueName: string; ticketsCount: number }>;
+  tags: Array<{ id: number; name: string }>;
+  whatsapps: Array<{ id: number; name: string; status: string; isDefault: boolean }>;
+};
+
+const companyAggregateCache = new Map<string, { expires: number; data: CompanyAggregatePayload }>();
+
+const fetchCompanyStatsAggregate = async (
+  companyId: number,
+  period: DetectedEntities["period"] = "week"
+): Promise<CompanyAggregatePayload> => {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const { start: periodStart } = getPeriodDates(period);
   const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  // Dados da empresa
   const company = await Company.findByPk(companyId);
 
-  // Contagens gerais
   const totalTickets = await Ticket.count({ where: { companyId } });
   const totalMessages = await Message.count({ where: { companyId } });
   const totalContacts = await Contact.count({ where: { companyId } });
 
-  // Tickets por status
   const ticketsOpen = await Ticket.count({ where: { companyId, status: "open" } });
   const ticketsPending = await Ticket.count({ where: { companyId, status: "pending" } });
   const ticketsClosed = await Ticket.count({ where: { companyId, status: "closed" } });
 
-  // Tickets hoje
   const ticketsToday = await Ticket.count({
     where: { companyId, createdAt: { [Op.gte]: today } }
   });
 
-  // Tickets últimos 7 dias
   const ticketsWeek = await Ticket.count({
     where: { companyId, createdAt: { [Op.gte]: last7Days } }
   });
 
-  // Mensagens hoje
   const messagesToday = await Message.count({
     where: { companyId, createdAt: { [Op.gte]: today } }
   });
 
-  // Buscar atendentes (usuários)
   const users = await User.findAll({
     where: { companyId },
     attributes: ["id", "name", "email", "profile"],
     raw: true
   });
 
-  // Tickets por atendente (período)
   const ticketsByUser = await Ticket.findAll({
     where: {
       companyId,
       userId: { [Op.ne]: null },
       createdAt: { [Op.gte]: periodStart }
     },
-    attributes: [
-      "userId",
-      [fn("COUNT", col("id")), "total"]
-    ],
+    attributes: ["userId", [fn("COUNT", col("id")), "total"]],
     group: ["userId"],
     raw: true
   }) as any[];
 
-  // Tickets HOJE por atendente
   const ticketsTodayByUser = await Ticket.findAll({
     where: {
       companyId,
       userId: { [Op.ne]: null },
       createdAt: { [Op.gte]: today }
     },
-    attributes: [
-      "userId",
-      [fn("COUNT", col("id")), "total"]
-    ],
+    attributes: ["userId", [fn("COUNT", col("id")), "total"]],
     group: ["userId"],
     raw: true
   }) as any[];
 
-  // Mapear tickets por usuário
-  const userTicketStats = users.map((user: any) => {
-    const periodStat = ticketsByUser.find((s: any) => s.userId === user.id);
-    const todayStat = ticketsTodayByUser.find((s: any) => s.userId === user.id);
-    return {
-      userId: user.id,
-      userName: user.name,
-      ticketsPeriod: periodStat ? parseInt(periodStat.total, 10) : 0,
-      ticketsToday: todayStat ? parseInt(todayStat.total, 10) : 0
-    };
-  }).sort((a, b) => b.ticketsPeriod - a.ticketsPeriod);
+  const userTicketStats = users
+    .map((user: any) => {
+      const periodStat = ticketsByUser.find((s: any) => s.userId === user.id);
+      const todayStat = ticketsTodayByUser.find((s: any) => s.userId === user.id);
+      return {
+        userId: user.id,
+        userName: user.name,
+        ticketsPeriod: periodStat ? parseInt(periodStat.total, 10) : 0,
+        ticketsToday: todayStat ? parseInt(todayStat.total, 10) : 0
+      };
+    })
+    .sort((a, b) => b.ticketsPeriod - a.ticketsPeriod);
 
-  // Buscar filas
   const queues = await Queue.findAll({
     where: { companyId },
     attributes: ["id", "name", "color"],
     raw: true
   });
 
-  // Tickets por fila
   const ticketsByQueue = await Ticket.findAll({
     where: {
       companyId,
       queueId: { [Op.ne]: null },
       createdAt: { [Op.gte]: periodStart }
     },
-    attributes: [
-      "queueId",
-      [fn("COUNT", col("id")), "total"]
-    ],
+    attributes: ["queueId", [fn("COUNT", col("id")), "total"]],
     group: ["queueId"],
     raw: true
   }) as any[];
 
-  const queueStats = ticketsByQueue.map((stat: any) => {
-    const queue = queues.find((q: any) => q.id === stat.queueId);
-    return {
-      queueId: stat.queueId,
-      queueName: queue?.name || "Sem fila",
-      ticketsCount: parseInt(stat.total, 10)
-    };
-  }).sort((a, b) => b.ticketsCount - a.ticketsCount);
+  const queueStats = ticketsByQueue
+    .map((stat: any) => {
+      const queue = queues.find((q: any) => q.id === stat.queueId);
+      return {
+        queueId: stat.queueId,
+        queueName: queue?.name || "Sem fila",
+        ticketsCount: parseInt(stat.total, 10)
+      };
+    })
+    .sort((a, b) => b.ticketsCount - a.ticketsCount);
 
-  // Buscar tags
   const tags = await Tag.findAll({
     where: { companyId },
     attributes: ["id", "name", "color"],
     raw: true
   });
 
-  // Conexões WhatsApp
   const whatsapps = await Whatsapp.findAll({
     where: { companyId },
     attributes: ["id", "name", "status", "isDefault"],
     raw: true
   });
-
-  // Buscar tickets da semana com detalhes básicos e mensagens
-  const weekTickets = await fetchTicketsWithMessages(companyId, "week", undefined, undefined, 100);
 
   return {
     company: company?.name || "Empresa",
@@ -484,9 +616,134 @@ const fetchCompanyData = async (companyId: number, period: DetectedEntities["per
       name: w.name,
       status: w.status,
       isDefault: w.isDefault
-    })),
+    }))
+  };
+};
+
+const getCachedCompanyStatsAggregate = async (
+  companyId: number,
+  period: DetectedEntities["period"],
+  ttlSeconds: number
+): Promise<CompanyAggregatePayload> => {
+  if (ttlSeconds <= 0) {
+    return fetchCompanyStatsAggregate(companyId, period);
+  }
+  const key = `${companyId}:${period}`;
+  const now = Date.now();
+  const hit = companyAggregateCache.get(key);
+  if (hit && hit.expires > now) {
+    return hit.data;
+  }
+  const data = await fetchCompanyStatsAggregate(companyId, period);
+  companyAggregateCache.set(key, { expires: now + ttlSeconds * 1000, data });
+  return data;
+};
+
+/** Agrega estatísticas + tickets da semana (com ou sem corpo das mensagens). */
+const fetchCompanyData = async (
+  companyId: number,
+  period: DetectedEntities["period"] = "week",
+  options: { includeWeekMessageBodies: boolean; statsCacheTtlSeconds: number }
+) => {
+  const statsPart = await getCachedCompanyStatsAggregate(companyId, period, options.statsCacheTtlSeconds);
+  const weekTickets = options.includeWeekMessageBodies
+    ? await fetchTicketsWithMessages(companyId, "week", undefined, undefined, 100)
+    : await fetchRecentWeekTicketsMetadataOnly(companyId, "week", 100);
+
+  return {
+    ...statsPart,
     weekTickets
   };
+};
+
+const needsDetailedConversationContext = (message: string): boolean => {
+  const lower = message.toLowerCase();
+  if (/#\s*\d+/.test(message)) {
+    return true;
+  }
+  const keys = [
+    "mensagem",
+    "mensagens",
+    "conversa",
+    "conversas",
+    "falou",
+    "disseram",
+    "disse",
+    "texto da",
+    "ultima mensagem",
+    "última mensagem",
+    "historico",
+    "histórico",
+    "transcri",
+    "detalhe da",
+    "trecho",
+    "copiar mensagem",
+    "print da conversa",
+    "o que foi dito",
+    "o que disse",
+    "conteúdo do ticket",
+    "conteudo do ticket"
+  ];
+  return keys.some(k => lower.includes(k));
+};
+
+const selectHelpArticlesForChat = async (
+  companyId: number,
+  message: string,
+  maxArticles: number
+): Promise<
+  Array<{
+    id: number;
+    title: string;
+    content: string;
+    summary?: string;
+    keywords?: string;
+    category?: string;
+  }>
+> => {
+  const tokens = tokenizeQuestionForSearch(message);
+  const candidates = await HelpArticle.findAll({
+    where: {
+      isActive: true,
+      createdByCompanyId: companyId
+    },
+    order: [["order", "ASC"], ["createdAt", "DESC"]],
+    limit: 80
+  });
+
+  const scoreArticle = (a: HelpArticle): number => {
+    const hay = normalizeForMatch(
+      `${a.title || ""} ${a.summary || ""} ${a.keywords || ""} ${(a.content || "").slice(0, 1200)}`
+    );
+    if (tokens.length === 0) {
+      return 0;
+    }
+    let score = 0;
+    for (const t of tokens) {
+      if (hay.includes(t)) {
+        score += 1;
+      }
+    }
+    return score;
+  };
+
+  const scored = candidates
+    .map(article => ({ article, score: scoreArticle(article) }))
+    .sort((a, b) => b.score - a.score || a.article.id - b.article.id);
+
+  const pick =
+    scored.length > 0 && scored.every(x => x.score === 0)
+      ? candidates.slice(0, maxArticles)
+      : scored.slice(0, maxArticles).map(x => x.article);
+
+  return pick.map(article => ({
+    id: article.id,
+    title: article.title,
+    content: article.content,
+    summary: article.summary,
+    keywords: article.keywords,
+    category: article.category
+  }));
 };
 
 // Função para detectar se a mensagem é um comando de agendamento/tarefa
@@ -708,28 +965,16 @@ const ChatGeminiService = async ({
     }
   }
 
+  const { getChatConfig } = await import("./ChatConfigService");
+  const chatConfig = await getChatConfig(companyId);
+
   // Selecionar provider usando configuração automática
   const provider = await AIProviderSelector.getProvider(companyId, "chat");
 
-  // Buscar artigos se não foram fornecidos
+  // Artigos: seleção por relevância (evita injetar dezenas de textos longos)
   let articlesToUse = articles;
   if (!articlesToUse || articlesToUse.length === 0) {
-    const allArticles = await HelpArticle.findAll({
-      where: {
-        isActive: true,
-        createdByCompanyId: companyId
-      },
-      order: [["order", "ASC"], ["createdAt", "DESC"]],
-      limit: 100 // Limitar a 100 artigos para não exceder tokens
-    });
-    articlesToUse = allArticles.map(article => ({
-      id: article.id,
-      title: article.title,
-      content: article.content,
-      summary: article.summary,
-      keywords: article.keywords,
-      category: article.category
-    }));
+    articlesToUse = await selectHelpArticlesForChat(companyId, message, chatConfig.maxArticles);
   }
 
   // Detectar entidades na pergunta do usuário
@@ -740,12 +985,25 @@ const ChatGeminiService = async ({
     periodo: entities.period
   });
 
-  // Buscar dados completos da empresa
-  const companyData = await fetchCompanyData(companyId, entities.period);
+  const isDetailed =
+    chatConfig.contextMode === "detailed" ||
+    (chatConfig.contextMode === "auto" &&
+      (needsDetailedConversationContext(message) ||
+        entities.matchedUsers.length > 0 ||
+        entities.matchedContacts.length > 0));
 
-  // Preparar dados específicos se detectou atendente ou contato na pergunta
+  console.log(`📐 Modo de contexto IA: ${chatConfig.contextMode} → detalhado=${isDetailed}`);
+
+  // Buscar dados da empresa (tickets da semana com mensagens só em modo detalhado)
+  const companyData = await fetchCompanyData(companyId, entities.period, {
+    includeWeekMessageBodies: isDetailed,
+    statsCacheTtlSeconds: chatConfig.statsCacheTtlSeconds
+  });
+
+  // Preparar dados específicos (mensagens de atendente/contato) só em modo detalhado
   let specificData = "";
 
+  if (isDetailed) {
   // Buscar dados específicos dos atendentes mencionados
   for (const user of entities.matchedUsers) {
     specificData += await fetchUserSpecificData(companyId, user.id, user.name, entities.period);
@@ -794,49 +1052,52 @@ Total: ${contactTickets.length} tickets
       }
     }
   }
+  }
 
   // Gerar lista de tickets da semana para o contexto (aumentado limite)
   const weekTicketsList = companyData.weekTickets.slice(0, 50).map((t: any) =>
     `#${t.id} | ${t.status} | ${t.contact.name} | ${formatDateTime(t.updatedAt)}`
   ).join(' | ');
 
-  // Gerar seção com mensagens dos tickets mais recentes (otimizado para economizar tokens mas manter contexto)
-  const recentTicketsWithMessages = companyData.weekTickets
-    .filter((t: any) => t.messages && Array.isArray(t.messages) && t.messages.length > 0)
-    .slice(0, 20) // Aumentado de 10 para 20 tickets
-    .map((ticket: any) => {
-      let ticketMessages = `\n▶ TICKET #${ticket.id} | ${ticket.status} | ${ticket.contact?.name || "Desconhecido"}\n`;
+  const maxMsgSlice = isDetailed ? 500 : 200;
+  const recentTicketsWithMessages = isDetailed
+    ? companyData.weekTickets
+        .filter((t: any) => t.messages && Array.isArray(t.messages) && t.messages.length > 0)
+        .slice(0, 20)
+        .map((ticket: any) => {
+          let ticketMessages = `\n▶ TICKET #${ticket.id} | ${ticket.status} | ${ticket.contact?.name || "Desconhecido"}\n`;
 
-      // Limitar a 20 mensagens por ticket (aumentado de 6)
-      const messagesToShow = ticket.messages.slice(-20);
-      for (const msg of messagesToShow) {
-        const sender = msg.fromMe ? "ATENDENTE" : "CLIENTE";
-        const time = formatDateTime(msg.createdAt);
-        const body = (msg.body || "").replace(/\n/g, " ").slice(0, 500); // Aumentado de 150 para 500
-        if (body.trim()) {
-          ticketMessages += `   [${time}] ${sender}: ${body}\n`;
-        }
-      }
+          const messagesToShow = ticket.messages.slice(-20);
+          for (const msg of messagesToShow) {
+            const sender = msg.fromMe ? "ATENDENTE" : "CLIENTE";
+            const time = formatDateTime(msg.createdAt);
+            const body = (msg.body || "").replace(/\n/g, " ").slice(0, maxMsgSlice);
+            if (body.trim()) {
+              ticketMessages += `   [${time}] ${sender}: ${body}\n`;
+            }
+          }
 
-      if (ticket.messages.length > 20) {
-        ticketMessages += `   ... +${ticket.messages.length - 20} msgs\n`;
-      }
+          if (ticket.messages.length > 20) {
+            ticketMessages += `   ... +${ticket.messages.length - 20} msgs\n`;
+          }
 
-      return ticketMessages;
-    })
-    .join('\n');
+          return ticketMessages;
+        })
+        .join("\n")
+    : "";
 
   // Carregar manual de utilização do sistema
   const systemManual = getSystemManual();
 
-  // Formatar artigos para incluir no contexto
+  const maxArticleBodyLen = isDetailed ? 1200 : 450;
   let articlesContext = "";
   if (articlesToUse && articlesToUse.length > 0) {
-    articlesContext = `\n\n📚 ARTIGOS DE AJUDA DISPONÍVEIS (${articlesToUse.length} artigos):
+    articlesContext = `\n\n📚 ARTIGOS DE AJUDA (${articlesToUse.length} selecionados):
 ═══════════════════════════════════════════════════════════════════
-${articlesToUse.map((article, index) => {
+${articlesToUse.map(article => {
       const content = article.content || article.summary || "";
-      const truncatedContent = content.length > 2000 ? content.substring(0, 2000) + "..." : content;
+      const truncatedContent =
+        content.length > maxArticleBodyLen ? content.substring(0, maxArticleBodyLen) + "..." : content;
       return `\n[ARTIGO #${article.id}] ${article.title}${article.category ? ` (Categoria: ${article.category})` : ""}${article.keywords ? `\nPalavras-chave: ${article.keywords}` : ""}${article.summary ? `\nResumo: ${article.summary}` : ""}\nConteúdo: ${truncatedContent}`;
     }).join("\n\n─────────────────────────────────────────────────────────────────────")}
 ═══════════════════════════════════════════════════════════════════`;
@@ -854,7 +1115,11 @@ ${systemManual}
 
 📋 TICKETS RECENTES (${companyData.weekTickets.length}): ${weekTicketsList || 'Nenhum'}
 
-💬 MENSAGENS RECENTES: ${recentTicketsWithMessages || 'Nenhuma'}
+💬 MENSAGENS RECENTES: ${
+    isDetailed
+      ? recentTicketsWithMessages || "Nenhuma"
+      : "(Resumo: sem trechos de conversa neste modo. Peça detalhes das mensagens, cite um ticket #número ou mencione atendente/contato para carregar o histórico.)"
+  }
 
 ${specificData}${articlesContext}
 
@@ -870,6 +1135,8 @@ INSTRUÇÕES IMPORTANTES:
 - ⚠️ ATENÇÃO: Quando o usuário pedir para CRIAR TAREFA ou LEMBRAR DE ALGO, você NÃO deve tentar criar manualmente. O sistema processará automaticamente ANTES de você responder. Apenas responda normalmente após o processamento.
 - Se o usuário perguntar algo que não está nos dados ou artigos, informe educadamente que não encontrou a informação.`;
 
+  const systemContextForLlm = truncateSystemPromptForLmStudio(systemContext);
+
   try {
     console.log(`📤 Enviando mensagem para ${provider.name}...`);
     console.log(`📊 Contexto: ${companyData.stats.total.tickets} tickets, ${companyData.users.length} usuários`);
@@ -877,38 +1144,30 @@ INSTRUÇÕES IMPORTANTES:
       console.log(`👤 Atendentes detectados: ${entities.matchedUsers.map(u => u.name).join(", ")}`);
     }
 
-    // Buscar configurações do chat IA
-    const { getChatConfig } = await import("./ChatConfigService");
-    const chatConfig = await getChatConfig(companyId);
-
     // Limitar histórico de mensagens conforme configuração
     const limitedHistory = conversationHistory.slice(-chatConfig.maxHistoryMessages);
 
-    // Construir histórico de conversa no formato da interface
+    // Construir histórico no formato compatível com LM Studio / servidores locais:
+    // evitar mensagem "assistant" logo após "system" sem um "user" intermediário.
     const chatMessages: ChatMessage[] = [];
 
-    // Sempre adicionar contexto do sistema na primeira mensagem
+    const firstTurnHint =
+      "\n\nInstrução de abertura: na primeira resposta ao usuário, apresente-se como Compuchat de forma breve, " +
+      "mencione que você tem acesso aos dados do sistema e ao manual, e convide a perguntar (tickets, métricas, uso do sistema).";
+
+    const refreshHint =
+      "\n\nO contexto de dados acima foi atualizado neste turno; use as informações mais recentes ao responder.";
+
     if (limitedHistory.length === 0) {
       chatMessages.push({
         role: "system",
-        content: systemContext
-      });
-      chatMessages.push({
-        role: "assistant",
-        content: "Olá! Sou o Compuchat, seu assistente inteligente. Tenho acesso completo aos dados do sistema e ao manual de utilização.\n\nPosso ajudar você com:\n✅ Dúvidas sobre como usar o sistema\n✅ Informações sobre atendimentos e conversas\n✅ Estatísticas e métricas em tempo real\n✅ Explicações sobre funcionalidades\n✅ Orientações sobre tickets, filas, contatos, campanhas e muito mais\n\nO que você gostaria de saber?"
+        content: systemContextForLlm + firstTurnHint
       });
     } else {
-      // Adicionar contexto atualizado mesmo com histórico
       chatMessages.push({
         role: "system",
-        content: systemContext
+        content: systemContextForLlm + refreshHint
       });
-      chatMessages.push({
-        role: "assistant",
-        content: "Dados atualizados. Continuando..."
-      });
-
-      // Adicionar histórico de conversa limitado
       for (const hist of limitedHistory) {
         chatMessages.push({
           role: hist.role === "user" ? "user" : "assistant",
@@ -917,7 +1176,6 @@ INSTRUÇÕES IMPORTANTES:
       }
     }
 
-    // Adicionar mensagem atual do usuário
     chatMessages.push({
       role: "user",
       content: message

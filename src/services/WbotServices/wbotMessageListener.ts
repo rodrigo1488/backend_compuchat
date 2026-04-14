@@ -49,7 +49,15 @@ import Prompt from "../../models/Prompt";
 import { cacheLayer } from "../../libs/cache";
 import { provider } from "./providers";
 import { debounce } from "../../helpers/Debounce";
-import { ChatCompletionRequestMessage, Configuration, OpenAIApi } from "openai";
+import { ChatCompletionRequestMessage, OpenAIApi } from "openai";
+import {
+  createOpenAIClient,
+  getTranscriptionOpenAIClient,
+  getLmStudioDefaultModel,
+  getLmStudioContextWindowTokens,
+  getChatCompletionAssistantText,
+  isAiBackendConfigured
+} from "../../config/openai";
 import { isBrazilianNumber, getCountryCode, formatBlockedNumberLog } from "../../helpers/ValidateBrazilianNumber";
 import ffmpeg from "fluent-ffmpeg";
 import {
@@ -64,7 +72,6 @@ import ShowQueueIntegrationService from "../QueueIntegrationServices/ShowQueueIn
 import { FlowBuilderModel } from "../../models/FlowBuilder";
 import { FlowCampaignModel } from "../../models/FlowCampaign";
 import { IOpenAi } from "../../@types/openai";
-import { handleGemini } from "../IntegrationsServices/GeminiService";
 import ShowPromptService from "../PromptServices/ShowPromptService";
 import generateContextSummary from "../AiServices/GenerateContextSummaryService";
 import GetTicketWbot from "../../helpers/GetTicketWbot";
@@ -93,11 +100,6 @@ type Session = WASocket & {
   id?: number;
   store?: Store;
 };
-
-interface SessionOpenAi extends OpenAIApi {
-  id?: number;
-}
-const sessionsOpenAi: SessionOpenAi[] = [];
 
 interface ImessageUpsert {
   messages: proto.IWebMessageInfo[];
@@ -1019,89 +1021,6 @@ export const keepOnlySpecifiedChars = (str: string) => {
   return str.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚâêîôûÂÊÎÔÛãõÃÕçÇ!?.,;:\s]/g, "");
 };
 
-const handleGeminiInListener = async (
-  msg: proto.IWebMessageInfo,
-  wbot: Session,
-  ticket: Ticket,
-  contact: Contact,
-  mediaSent: Message | undefined,
-  ticketTraking: TicketTraking = null,
-  geminiSettings = null
-): Promise<void> => {
-  // REGRA PARA DESABILITAR O BOT PARA ALGUM CONTATO
-  if (contact.disableBot) {
-    return;
-  }
-
-  const bodyMessage = getBodyMessage(msg);
-
-  if (!bodyMessage) return;
-
-  let prompt = null;
-
-  // Se geminiSettings foi passado (de flowbuilder), usar ele
-  if (geminiSettings) {
-    prompt = geminiSettings;
-  } else {
-    // Buscar prompt do WhatsApp
-    let { prompt: whatsappPrompt } = await ShowWhatsAppService(wbot.id, ticket.companyId);
-    if (whatsappPrompt && whatsappPrompt.provider === "gemini") {
-      prompt = whatsappPrompt;
-    }
-
-    // Se não encontrou no WhatsApp, buscar da fila
-    if (!prompt && !isNil(ticket?.queue?.prompt) && ticket.queue.prompt.provider === "gemini") {
-      prompt = ticket.queue.prompt;
-    }
-
-    // Se não encontrou na fila, buscar do ticket
-    if (!prompt && ticket.promptId) {
-      try {
-        const ticketPrompt = await ShowPromptService({
-          promptId: ticket.promptId,
-          companyId: ticket.companyId
-        });
-        if (ticketPrompt && ticketPrompt.provider === "gemini") {
-          prompt = ticketPrompt;
-        }
-      } catch (err) {
-        // Prompt não encontrado, continuar
-      }
-    }
-  }
-
-  if (!prompt) return;
-
-  if (msg.messageStubType) return;
-
-  // Converter prompt para formato IGemini
-  const geminiSettingsData = {
-    name: prompt.name,
-    prompt: prompt.prompt,
-    voice: prompt.voice || "texto",
-    voiceKey: prompt.voiceKey || "",
-    voiceRegion: prompt.voiceRegion || "",
-    maxTokens: prompt.maxTokens,
-    temperature: prompt.temperature,
-    queueId: prompt.queueId,
-    maxMessages: prompt.maxMessages,
-    canSendInternalMessages: prompt.canSendInternalMessages || false,
-    canTransferToAgent: prompt.canTransferToAgent || false,
-    transferQueueId: prompt.transferQueueId || null,
-    permitirCriarAgendamentos: prompt.permitirCriarAgendamentos || false
-  };
-
-  await handleGemini(
-    geminiSettingsData,
-    msg,
-    wbot,
-    ticket,
-    contact,
-    mediaSent,
-    ticketTraking
-  );
-};
-
 /**
  * Envia mensagem automática de transferência para o cliente
  */
@@ -1350,12 +1269,17 @@ const handleOpenAi = async (
     return;
   }
 
-  // Verificar se o provider é OpenAI (ou não especificado, default para OpenAI)
-  if (prompt.provider && prompt.provider !== "openai" && prompt.provider !== "gemini") {
-    logger.warn(`⚠️ handleOpenAi: Provider desconhecido '${prompt.provider}', usando OpenAI como padrão`);
+  if (prompt.provider && prompt.provider !== "openai") {
+    logger.warn(`⚠️ handleOpenAi: Provider legado '${prompt.provider}', usando LM Studio (OpenAI-compat)`);
   }
 
-  logger.info(`✅ handleOpenAi: Iniciando bot - Ticket: ${ticket.id}, Prompt: ${prompt.name || 'N/A'}, Provider: ${prompt.provider || 'openai'}`);
+  if (!isAiBackendConfigured()) {
+    logger.error("LM Studio não configurado: defina LM_STUDIO_BASE_URL no ambiente do backend.");
+    openAiProcessingLocks.delete(lockKey);
+    return;
+  }
+
+  logger.info(`✅ handleOpenAi: Iniciando bot - Ticket: ${ticket.id}, Prompt: ${prompt.name || 'N/A'}`);
 
   if (msg.messageStubType) return;
 
@@ -1477,31 +1401,13 @@ const handleOpenAi = async (
     "public"
   );
 
-  let openai: SessionOpenAi;
-  const openAiIndex = sessionsOpenAi.findIndex(s => s.id === wbot.id);
-
-  if (openAiIndex === -1) {
-    // Buscar API key das Settings em vez do prompt
-    const openaiSetting = await Setting.findOne({
-      where: {
-        key: "openaiApiKey",
-        companyId: ticket.companyId
-      }
-    });
-
-    if (!openaiSetting?.value) {
-      logger.error(`API Key do OpenAI não configurada para empresa ${ticket.companyId}`);
-      return;
-    }
-
-    const configuration = new Configuration({
-      apiKey: openaiSetting.value
-    });
-    openai = new OpenAIApi(configuration);
-    openai.id = wbot.id;
-    sessionsOpenAi.push(openai);
-  } else {
-    openai = sessionsOpenAi[openAiIndex];
+  let openai: OpenAIApi;
+  try {
+    openai = createOpenAIClient();
+  } catch (err: any) {
+    logger.error(`Cliente LM Studio indisponível: ${err.message}`);
+    openAiProcessingLocks.delete(lockKey);
+    return;
   }
 
   // Limitar histórico para não consumir todos os tokens
@@ -1575,14 +1481,21 @@ const handleOpenAi = async (
     // Adicionar mensagem atual do usuário
     messagesOpenAi.push({ role: "user", content: bodyMessage! });
 
+    const ctxWindow = getLmStudioContextWindowTokens();
+    const estPromptTokens = Math.ceil(JSON.stringify(messagesOpenAi).length / 3.2);
+    const headroom = 128;
+    const safeMax = Math.max(64, ctxWindow - estPromptTokens - headroom);
+    const minCompletion = 512;
+    const max_tokens = Math.min(Math.max(prompt.maxTokens, minCompletion), safeMax);
+
     const chat = await openai.createChatCompletion({
-      model: prompt.model,
+      model: prompt.model || getLmStudioDefaultModel(),
       messages: messagesOpenAi,
-      max_tokens: prompt.maxTokens,
+      max_tokens: max_tokens,
       temperature: prompt.temperature
     });
 
-    let response = chat.data.choices[0].message?.content;
+    let response = getChatCompletionAssistantText(chat.data);
 
     // Detectar e processar mensagens internas
     const internalMessages: string[] = [];
@@ -1923,7 +1836,18 @@ const handleOpenAi = async (
   } else if (msg.message?.audioMessage) {
     const mediaUrl = mediaSent!.mediaUrl!.split("/").pop();
     const file = fs.createReadStream(`${publicFolder}/${mediaUrl}`) as any;
-    const transcription = await openai.createTranscription(file, "whisper-1");
+    const txRes = await getTranscriptionOpenAIClient().createTranscription(
+      file,
+      "whisper-1",
+      undefined,
+      "text",
+      undefined,
+      undefined
+    );
+    const transcriptionText =
+      typeof txRes === "string"
+        ? txRes
+        : (txRes as any)?.text ?? (txRes as any)?.data?.text ?? "";
 
     messagesOpenAi = [];
     messagesOpenAi.push({ role: "system", content: promptSystem });
@@ -1943,18 +1867,25 @@ const handleOpenAi = async (
         }
       }
     }
-    messagesOpenAi.push({ role: "user", content: transcription.data.text });
+    messagesOpenAi.push({ role: "user", content: transcriptionText });
 
-    // Garantir que há tokens suficientes para a resposta
-    const maxTokensToUse = Math.max(prompt.maxTokens, 1024);
+    const ctxWindowAudio = getLmStudioContextWindowTokens();
+    const estPromptTokensAudio = Math.ceil(JSON.stringify(messagesOpenAi).length / 3.2);
+    const headroomAudio = 128;
+    const safeMaxAudio = Math.max(64, ctxWindowAudio - estPromptTokensAudio - headroomAudio);
+    const minCompletionAudio = 768;
+    const max_tokens_audio = Math.min(
+      Math.max(prompt.maxTokens, minCompletionAudio),
+      safeMaxAudio
+    );
 
     const chat = await openai.createChatCompletion({
-      model: prompt.model || "gpt-4o-mini", // Fallback se modelo não estiver definido
+      model: prompt.model || getLmStudioDefaultModel(),
       messages: messagesOpenAi,
-      max_tokens: maxTokensToUse,
+      max_tokens: max_tokens_audio,
       temperature: prompt.temperature
     });
-    let response = chat.data.choices[0].message?.content;
+    let response = getChatCompletionAssistantText(chat.data);
 
     // Aplicar mesma lógica de mensagens internas e transferência para áudio
     let cleanedAudioResponse = response || "";
@@ -2723,12 +2654,7 @@ const verifyQueue = async (
         // Agendar processamento com debounce de 500ms
         const processAI = async () => {
           try {
-            if (prompt.provider === "gemini") {
-              await handleGeminiInListener(msg, wbot, ticket, contact, mediaSent);
-            } else {
-              await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
-            }
-            
+            await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
             await ticket.update({
               useIntegration: true,
               promptId: queues[0]?.promptId
@@ -2903,12 +2829,7 @@ const verifyQueue = async (
           // Agendar processamento com debounce de 500ms
           const processAI = async () => {
             try {
-              if (prompt.provider === "gemini") {
-                await handleGeminiInListener(msg, wbot, ticket, contact, mediaSent);
-              } else {
-                await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
-              }
-              
+              await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
               await ticket.update({
                 useIntegration: true,
                 promptId: choosenQueue?.promptId
@@ -4323,7 +4244,7 @@ const handleMessage = async (
       const nodeSelected = flow.flow["nodes"].find(
         (node: any) => node.id === ticket.lastFlowId
       );
-      let {
+      const {
         name,
         prompt,
         voice,
@@ -4333,75 +4254,31 @@ const handleMessage = async (
         temperature,
         apiKey,
         queueId,
-        maxMessages,
-        provider
-      } = nodeSelected.data.typebotIntegration as IOpenAi & { provider?: string };
+        maxMessages
+      } = nodeSelected.data.typebotIntegration as IOpenAi;
 
-      // Verificar provider (default: openai para compatibilidade)
-      if (provider === "gemini") {
-        let geminiSettings = {
-          name,
-          prompt,
-          voice: voice || "texto",
-          voiceKey: voiceKey || "",
-          voiceRegion: voiceRegion || "",
-          maxTokens: parseInt(maxTokens),
-          temperature: parseInt(temperature),
-          queueId: parseInt(queueId),
-          maxMessages: parseInt(maxMessages)
-        };
+      const openAiSettings = {
+        name,
+        prompt,
+        voice,
+        voiceKey,
+        voiceRegion,
+        maxTokens: parseInt(maxTokens, 10),
+        temperature: parseInt(temperature, 10),
+        apiKey,
+        queueId: parseInt(queueId, 10),
+        maxMessages: parseInt(maxMessages, 10)
+      };
 
-        // Debounce: cancelar processamento anterior se nova mensagem chegar muito rapidamente
-        const debounceKey = ticket.id;
-        if (aiProcessingDebounces.has(debounceKey)) {
-          clearTimeout(aiProcessingDebounces.get(debounceKey)!);
-          aiProcessingDebounces.delete(debounceKey);
-          logger.debug(`Debounce: cancelando processamento anterior para ticket ${ticket.id}`);
-        }
-
-        // Agendar processamento com debounce de 500ms
-        const processAI = async () => {
-          try {
-            await handleGeminiInListener(
-              msg,
-              wbot,
-              ticket,
-              contact,
-              mediaSent,
-              ticketTraking,
-              geminiSettings,
-            );
-          } finally {
-            aiProcessingDebounces.delete(debounceKey);
-          }
-        };
-
-        const debounceTimeout = setTimeout(processAI, 500);
-        aiProcessingDebounces.set(debounceKey, debounceTimeout);
-      } else {
-        let openAiSettings = {
-          name,
-          prompt,
-          voice,
-          voiceKey,
-          voiceRegion,
-          maxTokens: parseInt(maxTokens),
-          temperature: parseInt(temperature),
-          apiKey,
-          queueId: parseInt(queueId),
-          maxMessages: parseInt(maxMessages)
-        };
-
-        await handleOpenAi(
-          msg,
-          wbot,
-          ticket,
-          contact,
-          mediaSent,
-          ticketTraking,
-          openAiSettings,
-        );
-      }
+      await handleOpenAi(
+        msg,
+        wbot,
+        ticket,
+        contact,
+        mediaSent,
+        ticketTraking,
+        openAiSettings
+      );
 
       return;
     }
@@ -4434,12 +4311,7 @@ const handleMessage = async (
         // Agendar processamento com debounce de 500ms
         const processAI = async () => {
           try {
-            if (prompt.provider === "gemini") {
-              await handleGeminiInListener(msg, wbot, ticket, contact, mediaSent);
-            } else {
-              // OpenAI ou qualquer outro provider (default para OpenAI)
-              await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
-            }
+            await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
           } finally {
             aiProcessingDebounces.delete(debounceKey);
           }
@@ -4552,11 +4424,7 @@ const handleMessage = async (
           companyId: ticket.companyId
         });
 
-        if (prompt.provider === "gemini") {
-          await handleGeminiInListener(msg, wbot, ticket, contact, mediaSent);
-        } else {
-          await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
-        }
+        await handleOpenAi(msg, wbot, ticket, contact, mediaSent);
       } catch (err) {
         // Se não encontrar prompt, tentar OpenAI por compatibilidade
         await handleOpenAi(msg, wbot, ticket, contact, mediaSent);

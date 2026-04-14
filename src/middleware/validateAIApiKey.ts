@@ -1,9 +1,8 @@
 import { Request, Response, NextFunction } from "express";
-import { AIProviderFactory } from "../services/AiServices/AIProviderFactory";
+import { isAiBackendConfigured } from "../config/openai";
 
 /**
- * Middleware genérico para validar se a empresa tem pelo menos uma API Key de IA configurada
- * (Gemini ou OpenAI)
+ * Garante que o backend tem LM Studio (OpenAI-compat) configurado via ambiente.
  */
 const validateAIApiKey = async (
   req: Request,
@@ -11,31 +10,26 @@ const validateAIApiKey = async (
   next: NextFunction
 ): Promise<Response | void> => {
   try {
-    const { companyId } = req.user;
-
-    if (!companyId) {
+    if (!req.user?.companyId) {
       return res.status(401).json({
         error: "ERR_UNAUTHORIZED",
         message: "Usuário não autenticado"
       });
     }
 
-    // Verificar quais providers estão disponíveis
-    const available = await AIProviderFactory.getAvailableProviders(companyId);
-
-    if (!available.gemini && !available.openai) {
+    if (!isAiBackendConfigured()) {
       return res.status(400).json({
-        error: "AI_KEY_MISSING",
-        message: "Nenhuma API Key de IA configurada. Configure pelo menos uma API Key (Gemini ou OpenAI) em Configurações → Integrações."
+        error: "AI_NOT_CONFIGURED",
+        message:
+          "Servidor de IA não configurado. O administrador deve definir LM_STUDIO_BASE_URL no ambiente do backend."
       });
     }
 
-    // Se passou na validação, continua para o próximo middleware/controller
     next();
   } catch (err: any) {
     return res.status(500).json({
       error: "ERR_VALIDATE_AI_KEY",
-      message: err.message || "Erro ao validar API Key de IA"
+      message: err.message || "Erro ao validar configuração de IA"
     });
   }
 };

@@ -8,16 +8,12 @@ import uploadAudioMemory from "../config/uploadAudioMemory";
 
 const routes = express.Router();
 
-// Rotas de teste da API key não precisam de validação (elas mesmas validam)
-routes.get("/ai/test-key", isAuth, AiSummaryController.testApiKey);
-
 // Rotas de configuração de providers
 routes.get("/ai/providers/config", isAuth, AiSummaryController.getProviderConfigurations);
 routes.post("/ai/providers/config", isAuth, AiSummaryController.setProviderConfiguration);
 
-// Rotas de configuração do chat IA
+// Rotas de configuração do chat IA (somente leitura; valores fixos no servidor)
 routes.get("/ai/chat/config", isAuth, AiSummaryController.getChatConfig);
-routes.post("/ai/chat/config", isAuth, AiSummaryController.setChatConfig);
 
 // Todas as outras rotas de IA precisam validar a API key antes de acessar (agora genérico - Gemini ou OpenAI)
 routes.post("/ai/summary/agent", isAuth, validateAIApiKey, AiSummaryController.agentSummary);

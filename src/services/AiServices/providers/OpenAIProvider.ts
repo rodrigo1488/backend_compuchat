@@ -8,9 +8,15 @@ import {
 } from "../AIProviderInterface";
 import {
   createOpenAIClient,
-  OPENAI_DEFAULT_MODEL,
+  getLmStudioDefaultModel,
+  getLmStudioContextWindowTokens,
+  getTranscriptionOpenAIClient,
+  isWhisperTranscriptionConfigured,
   OPENAI_TRANSCRIPTION_MODEL,
-  interpretOpenAIError
+  interpretOpenAIError,
+  extractOpenAICompatibleErrorMessage,
+  LM_STUDIO_TRANSCRIPTION_UNSUPPORTED_PT,
+  getChatCompletionAssistantText
 } from "../../../config/openai";
 import AppError from "../../../errors/AppError";
 import { logger } from "../../../utils/logger";
@@ -22,8 +28,8 @@ export class OpenAIProvider implements IAIProvider {
   readonly name = "openai";
   private client: ReturnType<typeof createOpenAIClient>;
 
-  constructor(apiKey: string) {
-    this.client = createOpenAIClient(apiKey);
+  constructor() {
+    this.client = createOpenAIClient();
   }
 
   /**
@@ -33,29 +39,40 @@ export class OpenAIProvider implements IAIProvider {
     prompt: string,
     options: GenerateTextOptions = {}
   ): Promise<string> {
-    const {
+    let {
       temperature = 0.5,
       maxTokens = 2048,
       topP = 0.95
     } = options;
 
+    const capOut = process.env.LM_STUDIO_MAX_OUTPUT_TOKENS?.trim();
+    if (capOut) {
+      const cap = parseInt(capOut, 10);
+      if (!Number.isNaN(cap) && cap > 0) {
+        maxTokens = Math.min(maxTokens, cap);
+      }
+    }
+
     try {
-      const model = OPENAI_DEFAULT_MODEL;
-      
+      const model = getLmStudioDefaultModel();
+      const messages = [{ role: "user" as const, content: prompt }];
+      const ctxWindow = getLmStudioContextWindowTokens();
+      const estPromptTokens = Math.ceil(JSON.stringify(messages).length / 3.2);
+      const headroom = 128;
+      const safeMaxTokens = Math.min(
+        maxTokens,
+        Math.max(64, ctxWindow - estPromptTokens - headroom)
+      );
+
       const completion = await this.client.createChatCompletion({
         model,
-        messages: [
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
+        messages,
         temperature,
-        max_tokens: maxTokens,
+        max_tokens: safeMaxTokens,
         top_p: topP
       });
 
-      const text = completion.data.choices[0]?.message?.content;
+      const text = getChatCompletionAssistantText(completion.data);
       if (!text || text.trim() === "") {
         throw new AppError("A IA não retornou resposta válida", 500);
       }
@@ -82,12 +99,20 @@ export class OpenAIProvider implements IAIProvider {
     messages: ChatMessage[],
     options: ChatOptions = {}
   ): Promise<string> {
-    const {
+    let {
       temperature = 0.5,
       maxTokens = 2048,
       topP = 0.95,
-      model = OPENAI_DEFAULT_MODEL
+      model = getLmStudioDefaultModel()
     } = options;
+
+    const capOut = process.env.LM_STUDIO_MAX_OUTPUT_TOKENS?.trim();
+    if (capOut) {
+      const cap = parseInt(capOut, 10);
+      if (!Number.isNaN(cap) && cap > 0) {
+        maxTokens = Math.min(maxTokens, cap);
+      }
+    }
 
     try {
       // Converter mensagens para o formato OpenAI
@@ -96,15 +121,23 @@ export class OpenAIProvider implements IAIProvider {
         content: msg.content
       }));
 
+      const ctxWindow = getLmStudioContextWindowTokens();
+      const estPromptTokens = Math.ceil(JSON.stringify(openAIMessages).length / 3.2);
+      const headroom = 128;
+      const safeMaxTokens = Math.min(
+        maxTokens,
+        Math.max(64, ctxWindow - estPromptTokens - headroom)
+      );
+
       const completion = await this.client.createChatCompletion({
         model,
         messages: openAIMessages,
         temperature,
-        max_tokens: maxTokens,
+        max_tokens: safeMaxTokens,
         top_p: topP
       });
 
-      const text = completion.data.choices[0]?.message?.content;
+      const text = getChatCompletionAssistantText(completion.data);
       if (!text || text.trim() === "") {
         throw new AppError("A IA não retornou resposta válida", 500);
       }
@@ -119,6 +152,10 @@ export class OpenAIProvider implements IAIProvider {
 
       return sanitized.trim();
     } catch (err: any) {
+      logger.error("❌ OpenAIProvider.chat resposta de erro", {
+        status: err?.response?.status,
+        data: err?.response?.data
+      });
       const userMessage = interpretOpenAIError(err);
       throw new AppError(`Erro ao realizar chat com OpenAI: ${userMessage}`, err?.status || 500);
     }
@@ -163,15 +200,19 @@ export class OpenAIProvider implements IAIProvider {
         ? options.prompt 
         : undefined; // Não usar prompt se for muito longo ou complexo
 
-      // Chamar API Whisper com parâmetros na ordem correta para SDK 3.3.0
+      const txClient = getTranscriptionOpenAIClient();
+      if (isWhisperTranscriptionConfigured()) {
+        logger.info("Transcrição via WHISPER_API_BASE_URL (serviço dedicado)");
+      }
+
       // createTranscription(file, model, prompt, responseFormat, temperature, language)
-      const response = await this.client.createTranscription(
-        file as any, // file
-        OPENAI_TRANSCRIPTION_MODEL, // model
-        promptToUse, // prompt (undefined se não fornecido ou muito longo)
-        "text", // responseFormat - "text" retorna string direta, não JSON
-        undefined, // temperature (não usado no Whisper, mas necessário na ordem)
-        options.language || undefined // language (opcional)
+      const response = await txClient.createTranscription(
+        file as any,
+        OPENAI_TRANSCRIPTION_MODEL,
+        promptToUse,
+        "text",
+        undefined,
+        options.language || undefined
       );
 
       // Extrair texto da resposta
@@ -206,11 +247,18 @@ export class OpenAIProvider implements IAIProvider {
       return text.trim();
     } catch (err: any) {
       const status = err?.response?.status;
+      const detail = extractOpenAICompatibleErrorMessage(err);
       if (status === 429) {
         throw new AppError("ERR_AI_QUOTA_EXCEEDED", 429);
       }
       if (status === 401) {
         throw new AppError("ERR_AI_CONFIG_MISSING", 401);
+      }
+      if (
+        status === 415 ||
+        /unsupported media type|application\/json/i.test(detail)
+      ) {
+        throw new AppError(LM_STUDIO_TRANSCRIPTION_UNSUPPORTED_PT, 415);
       }
       const userMessage = interpretOpenAIError(err);
       throw new AppError(`ERR_AI_TRANSCRIPTION_ERROR: ${userMessage}`, status || 500);

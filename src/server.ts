@@ -8,7 +8,6 @@ import Company from "./models/Company";
 import { startQueueProcess } from "./queues";
 import { TransferTicketQueue } from "./wbotTransferTicketQueue";
 import cron from "node-cron";
-import TestAllGeminiApiKeysService from "./services/AiServices/TestAllGeminiApiKeysService";
 import RenewSubscriptionService, { findCompaniesNeedingRenewal } from "./services/SubscriptionService/RenewSubscriptionService";
 import CheckRemindersService from "./services/ReminderServices/CheckRemindersService";
 import CheckAgendamentoRemindersService from "./services/AppointmentServices/CheckAgendamentoRemindersService";
@@ -53,11 +52,6 @@ const server = app.listen(process.env.PORT, async () => {
       });
   }
   
-  // Testar chaves da API do Gemini após inicialização
-  setTimeout(async () => {
-    await TestAllGeminiApiKeysService();
-  }, 5000); // Aguardar 5 segundos após o servidor iniciar
-
   // Fechar tickets travados por conexões WhatsApp desconectadas ou excluídas
   setTimeout(async () => {
     try {

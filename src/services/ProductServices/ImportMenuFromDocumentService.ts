@@ -1,19 +1,13 @@
 import fs from "fs";
 import path from "path";
-import axios from "axios";
 import { PDFDocument } from "pdf-lib";
-import Setting from "../../models/Setting";
 import AppError from "../../errors/AppError";
 import { AIProviderFactory } from "../AiServices/AIProviderFactory";
 import {
-  GEMINI_MODEL,
-  GEMINI_BASE_URL,
-  validateGeminiApiKey,
-} from "../../config/gemini";
-import {
   createOpenAIClient,
+  getLmStudioDefaultModel,
+  getChatCompletionAssistantText,
   OPENAI_VISION_MODEL,
-  validateOpenAIApiKey,
 } from "../../config/openai";
 import { logger } from "../../utils/logger";
 
@@ -226,77 +220,16 @@ function parseAndValidatePreview(rawJson: string): ImportMenuPreview {
   return { grupos: uniqueGrupos, produtos, adicionais };
 }
 
-async function extractWithGemini(
-  apiKey: string,
+async function extractWithLmStudioVision(
   fileBase64: string,
   mimeType: string
 ): Promise<string> {
-  const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent`;
-  const payload = {
-    contents: [
-      {
-        parts: [
-          { text: MENU_EXTRACTION_PROMPT },
-          {
-            inlineData: {
-              mimeType,
-              data: fileBase64,
-            },
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      topK: 40,
-      topP: 0.95,
-      maxOutputTokens: 8192,
-    },
-    safetySettings: [
-      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
-    ],
-  };
-
-  const { data } = await axios.post(`${url}?key=${apiKey}`, payload, {
-    timeout: 120000,
-  });
-
-  const candidates = data?.candidates || [];
-  if (candidates.length === 0) {
-    throw new AppError(
-      "Não foi possível extrair o cardápio. A IA não retornou resultado.",
-      400
-    );
-  }
-
-  const parts = candidates[0]?.content?.parts || [];
-  const text = parts
-    .map((p: { text?: string }) => p?.text || "")
-    .filter((t: string) => t && typeof t === "string")
-    .join("\n");
-
-  if (!text || !text.trim()) {
-    throw new AppError(
-      "Não foi possível extrair o cardápio. Tente outra imagem ou PDF.",
-      400
-    );
-  }
-  return text.trim();
-}
-
-async function extractWithOpenAI(
-  apiKey: string,
-  fileBase64: string,
-  mimeType: string
-): Promise<string> {
-  const client = createOpenAIClient(apiKey);
+  const client = createOpenAIClient();
   const dataUrl = `data:${mimeType};base64,${fileBase64}`;
+  const visionModel = OPENAI_VISION_MODEL || getLmStudioDefaultModel();
 
   const completion = await client.createChatCompletion({
-    model: OPENAI_VISION_MODEL,
+    model: visionModel,
     messages: [
       {
         role: "user",
@@ -313,8 +246,7 @@ async function extractWithOpenAI(
     temperature: 0.2,
   });
 
-  const text =
-    completion.data.choices?.[0]?.message?.content?.trim();
+  const text = getChatCompletionAssistantText(completion.data);
   if (!text) {
     throw new AppError(
       "Não foi possível extrair o cardápio. Tente outra imagem ou PDF.",
@@ -344,16 +276,12 @@ const ImportMenuFromDocumentService = async ({
   let rawResponse: string;
 
   if (isPdf) {
-    if (!providers.gemini) {
+    if (!providers.openai) {
       throw new AppError(
-        "Para importar PDF, configure a chave da API do Gemini em Configurações → Integrações.",
+        "Servidor de IA não configurado. O administrador deve definir LM_STUDIO_BASE_URL no ambiente do backend.",
         400
       );
     }
-    const geminiSetting = await Setting.findOne({
-      where: { key: "geminiApiKey", companyId },
-    });
-    const apiKey = validateGeminiApiKey(geminiSetting?.value);
 
     const pdfBuffer = Buffer.from(buffer);
     let pages: Buffer[];
@@ -382,7 +310,7 @@ const ImportMenuFromDocumentService = async ({
       const pageNum = i + 1;
       const pageBase64 = pages[i].toString("base64");
       try {
-        rawResponse = await extractWithGemini(apiKey, pageBase64, "application/pdf");
+        rawResponse = await extractWithLmStudioVision(pageBase64, "application/pdf");
         const jsonStr = extractJsonFromResponse(rawResponse);
         const pagePreview = parseAndValidatePreview(jsonStr);
         accumulated = mergePreview(accumulated, pagePreview);
@@ -411,24 +339,13 @@ const ImportMenuFromDocumentService = async ({
     }
     return accumulated;
   } else {
-    if (providers.gemini) {
-      const geminiSetting = await Setting.findOne({
-        where: { key: "geminiApiKey", companyId },
-      });
-      const apiKey = validateGeminiApiKey(geminiSetting?.value);
-      rawResponse = await extractWithGemini(apiKey, fileBase64, mimeType);
-    } else if (providers.openai) {
-      const openaiSetting = await Setting.findOne({
-        where: { key: "openaiApiKey", companyId },
-      });
-      const apiKey = validateOpenAIApiKey(openaiSetting?.value);
-      rawResponse = await extractWithOpenAI(apiKey, fileBase64, mimeType);
-    } else {
+    if (!providers.openai) {
       throw new AppError(
-        "Configure a chave da API do Gemini ou da OpenAI em Configurações → Integrações para importar do cardápio.",
+        "Servidor de IA não configurado. O administrador deve definir LM_STUDIO_BASE_URL no ambiente do backend.",
         400
       );
     }
+    rawResponse = await extractWithLmStudioVision(fileBase64, mimeType);
   }
 
   const jsonStr = extractJsonFromResponse(rawResponse);

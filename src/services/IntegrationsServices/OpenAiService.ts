@@ -13,15 +13,22 @@ import { isNil, isNull } from "lodash";
 import fs from "fs";
 import path, { join } from "path";
 
-import OpenAI, {Configuration, OpenAIApi} from "openai";
+import { OpenAIApi } from "openai";
 import Ticket from "../../models/Ticket";
 import Contact from "../../models/Contact";
 import Message from "../../models/Message";
 import TicketTraking from "../../models/TicketTraking";
 import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
 import Whatsapp from "../../models/Whatsapp";
-import Setting from "../../models/Setting";
 import { logger } from "../../utils/logger";
+import {
+  createOpenAIClient,
+  getLmStudioDefaultModel,
+  getLmStudioContextWindowTokens,
+  getChatCompletionAssistantText,
+  getTranscriptionOpenAIClient,
+  isAiBackendConfigured
+} from "../../config/openai";
 
 type Session = WASocket & {
   id?: number;
@@ -36,11 +43,6 @@ interface IMe {
   name: string;
   id: string;
 }
-
-interface SessionOpenAi extends OpenAIApi {
-  id?: number;
-}
-const sessionsOpenAi: SessionOpenAi[] = [];
 
 interface IOpenAi {
   name: string;
@@ -92,6 +94,11 @@ export const handleOpenAi = async (
 
   if (msg.messageStubType) return;
 
+  if (!isAiBackendConfigured()) {
+    logger.error("LM Studio não configurado (LM_STUDIO_BASE_URL).");
+    return;
+  }
+
   const publicFolder: string = path.resolve(
     __dirname,
     "..",
@@ -101,31 +108,12 @@ export const handleOpenAi = async (
     `company${ticket.companyId}`
   );
 
-  let openai: OpenAIApi | any;
-  const openAiIndex = sessionsOpenAi.findIndex(s => s.id === ticket.id);
-
-  if (openAiIndex === -1) {
-    // Buscar API key das Settings em vez do prompt
-    const openaiSetting = await Setting.findOne({
-      where: {
-        key: "openaiApiKey",
-        companyId: ticket.companyId
-      }
-    });
-
-    if (!openaiSetting?.value) {
-      logger.error(`API Key do OpenAI não configurada para empresa ${ticket.companyId}`);
-      return;
-    }
-
-    const configuration = new Configuration({
-      apiKey: openaiSetting.value
-    });
-    openai = new OpenAIApi(configuration);
-    openai.id = ticket.id;
-    sessionsOpenAi.push(openai);
-  } else {
-    openai = sessionsOpenAi[openAiIndex];
+  let openai: OpenAIApi;
+  try {
+    openai = createOpenAIClient();
+  } catch (err: any) {
+    logger.error(`Cliente LM Studio: ${err.message}`);
+    return;
   }
 
   const messages = await Message.findAll({
@@ -168,14 +156,21 @@ export const handleOpenAi = async (
 
     console.log(156, "OpenAiService");
 
+    const ctxWindow = getLmStudioContextWindowTokens();
+    const estPromptTokens = Math.ceil(JSON.stringify(messagesOpenAi).length / 3.2);
+    const headroom = 128;
+    const safeMax = Math.max(64, ctxWindow - estPromptTokens - headroom);
+    const minCompletion = 512;
+    const max_tokens = Math.min(Math.max(openAiSettings.maxTokens, minCompletion), safeMax);
+
     const chat = await openai.createChatCompletion({
-      model: "gpt-3.5-turbo-1106",
+      model: getLmStudioDefaultModel(),
       messages: messagesOpenAi,
-      max_tokens: openAiSettings.maxTokens,
+      max_tokens: max_tokens,
       temperature: openAiSettings.temperature
     });
 
-    let response = chat.data.choices[0].message?.content;
+    let response = getChatCompletionAssistantText(chat.data);
 
     if (response?.includes("Ação: Transferir para o setor de atendimento")) {
       console.log(166, "OpenAiService");
@@ -232,10 +227,18 @@ export const handleOpenAi = async (
     const mediaUrl = mediaSent!.mediaUrl!.split("/").pop();
     const file = fs.createReadStream(`${publicFolder}/${mediaUrl}`) as any;
 
-    const transcription = await openai.audio.transcriptions.create({
-      model: "whisper-1",
-      file: file
-    });
+    const transcription = await getTranscriptionOpenAIClient().createTranscription(
+      file,
+      "whisper-1",
+      undefined,
+      "text",
+      undefined,
+      undefined
+    );
+    const transcriptionText =
+      typeof transcription === "string"
+        ? transcription
+        : (transcription as any)?.text || "";
 
     messagesOpenAi = [];
     messagesOpenAi.push({ role: "system", content: promptSystem });
@@ -258,14 +261,22 @@ export const handleOpenAi = async (
         }
       }
     }
-    messagesOpenAi.push({ role: "user", content: transcription.text });
-    const chat = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo-1106",
+    messagesOpenAi.push({ role: "user", content: transcriptionText });
+
+    const ctxWindowA = getLmStudioContextWindowTokens();
+    const estPromptTokensA = Math.ceil(JSON.stringify(messagesOpenAi).length / 3.2);
+    const headroomA = 128;
+    const safeMaxA = Math.max(64, ctxWindowA - estPromptTokensA - headroomA);
+    const minCompletionA = 768;
+    const max_tokens_a = Math.min(Math.max(openAiSettings.maxTokens, minCompletionA), safeMaxA);
+
+    const chat = await openai.createChatCompletion({
+      model: getLmStudioDefaultModel(),
       messages: messagesOpenAi,
-      max_tokens: openAiSettings.maxTokens,
+      max_tokens: max_tokens_a,
       temperature: openAiSettings.temperature
     });
-    let response = chat.choices[0].message?.content;
+    let response = getChatCompletionAssistantText(chat.data);
 
     if (response?.includes("Ação: Transferir para o setor de atendimento")) {
       await transferQueue(openAiSettings.queueId, ticket, contact);

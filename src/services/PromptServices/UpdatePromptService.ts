@@ -2,9 +2,7 @@ import * as Yup from "yup";
 import AppError from "../../errors/AppError";
 import Prompt from "../../models/Prompt";
 import ShowPromptService from "./ShowPromptService";
-import Setting from "../../models/Setting";
-import { validateGeminiApiKey } from "../../config/gemini";
-import { validateOpenAIApiKey } from "../../config/openai";
+import { getLmStudioDefaultModel, isAiBackendConfigured } from "../../config/openai";
 
 interface PromptData {
     id?: number;
@@ -45,7 +43,8 @@ const UpdatePromptService = async ({
 }: Request): Promise<Prompt | undefined> => {
     const promptTable = await ShowPromptService({ promptId: promptId, companyId });
 
-    const provider = promptData.provider || promptTable.provider || "openai";
+    const rawProv = promptData.provider || promptTable.provider || "openai";
+    const provider = rawProv === "gemini" ? "openai" : rawProv;
 
     // Validação baseada no provider (queueId agora é opcional)
     const promptSchema = Yup.object().shape({
@@ -65,37 +64,14 @@ const UpdatePromptService = async ({
         throw new AppError(`${JSON.stringify(err, undefined, 2)}`);
     }
 
-    // Validar que a API key está nas Settings (tanto para Gemini quanto OpenAI)
-    if (provider === "gemini") {
-        const geminiSetting = await Setting.findOne({
-            where: {
-                key: "geminiApiKey",
-                companyId
-            }
-        });
-
-        try {
-            validateGeminiApiKey(geminiSetting?.value);
-        } catch (err: any) {
-            throw new AppError("Para usar Gemini, configure a API Key do Gemini em Configurações → Integrações → Chave da API do Gemini", 400);
-        }
-    } else if (provider === "openai") {
-        const openaiSetting = await Setting.findOne({
-            where: {
-                key: "openaiApiKey",
-                companyId
-            }
-        });
-
-        try {
-            validateOpenAIApiKey(openaiSetting?.value);
-        } catch (err: any) {
-            throw new AppError("Para usar OpenAI, configure a API Key do OpenAI em Configurações → Integrações → Chave da API do OpenAI", 400);
-        }
+    if (!isAiBackendConfigured()) {
+        throw new AppError(
+            "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
+            400
+        );
     }
 
-    // Garantir que provider tenha valor e modelo tenha valor default se não fornecido
-    const finalModel = model || (provider === "gemini" ? "gemini-2.5-flash" : "gpt-4o-mini");
+    const finalModel = model || getLmStudioDefaultModel();
 
     const updateData: any = {
         name,
@@ -108,7 +84,7 @@ const UpdatePromptService = async ({
         queueId,
         maxMessages,
         model: finalModel,
-        provider,
+        provider: "openai",
         canSendInternalMessages: canSendInternalMessages !== undefined ? canSendInternalMessages : false,
         canTransferToAgent: canTransferToAgent !== undefined ? canTransferToAgent : false,
         canChangeTag: canChangeTag !== undefined ? canChangeTag : false,

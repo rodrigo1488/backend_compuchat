@@ -7,6 +7,7 @@ import Contact from "../../models/Contact";
 import { logger } from "../../utils/logger";
 import * as Sentry from "@sentry/node";
 import TicketTraking from "../../models/TicketTraking";
+import transcribeAndPersistAudioMessage from "../AiServices/TranscribeAndPersistAudioService";
 
 export interface MessageData {
   id: string;
@@ -21,6 +22,9 @@ export interface MessageData {
   queueId?: number;
   isInternal?: boolean;
   isForwarded?: boolean;
+  transcription?: string | null;
+  transcriptionStatus?: string | null;
+  transcriptionError?: string | null;
 }
 interface Request {
   messageData: MessageData;
@@ -90,7 +94,16 @@ const CreateMessageService = async ({
             model: Message,
             as: "quotedMsg",
             required: false,
-            attributes: ["id", "body", "fromMe", "mediaType"],
+            attributes: [
+              "id",
+              "body",
+              "fromMe",
+              "mediaType",
+              "mediaUrl",
+              "transcription",
+              "transcriptionStatus",
+              "transcriptionError"
+            ],
             include: [{ model: Contact, as: "contact", required: false, attributes: ["id", "name"] }]
           }
         ]
@@ -148,6 +161,25 @@ const CreateMessageService = async ({
             ticket: ticketPayload,
             contact: message.ticket.contact
           });
+
+        if (payload.mediaType === "audio") {
+          const audioMessageId = String(payload.id);
+          const audioCompanyId = companyId;
+          setTimeout(() => {
+            transcribeAndPersistAudioMessage({
+              messageId: audioMessageId,
+              companyId: audioCompanyId,
+              force: false
+            }).catch((e: any) => {
+              logger.error({
+                msg: "CreateMessageService: auto-transcrição de áudio falhou",
+                messageId: audioMessageId,
+                companyId: audioCompanyId,
+                error: e?.message || e
+              });
+            });
+          }, 500);
+        }
       }
 
       return message;

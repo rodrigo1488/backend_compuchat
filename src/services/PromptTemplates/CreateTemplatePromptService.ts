@@ -2,9 +2,7 @@ import * as Yup from "yup";
 import AppError from "../../errors/AppError";
 import Prompt from "../../models/Prompt";
 import ShowPromptService from "../PromptServices/ShowPromptService";
-import Setting from "../../models/Setting";
-import { validateGeminiApiKey } from "../../config/gemini";
-import { validateOpenAIApiKey } from "../../config/openai";
+import { getLmStudioDefaultModel, isAiBackendConfigured } from "../../config/openai";
 import { AGENT_TEMPLATES, processTemplate, AgentType, TemplateVariables } from "./TemplateDefinitions";
 import Company from "../../models/Company";
 
@@ -43,8 +41,6 @@ const CreateTemplatePromptService = async (
   }
 
   const template = AGENT_TEMPLATES[promptData.tipoAgente];
-  const provider = promptData.provider || "openai";
-
   // Buscar nome da empresa
   const company = await Company.findByPk(companyIdNumber);
   const companyName = company?.name || "";
@@ -58,37 +54,14 @@ const CreateTemplatePromptService = async (
 
   const processedPrompt = processTemplate(template, variables, companyName);
 
-  // Validar provider e API key
-  if (provider === "gemini") {
-    const geminiSetting = await Setting.findOne({
-      where: {
-        key: "geminiApiKey",
-        companyId: companyIdNumber
-      }
-    });
-
-    try {
-      validateGeminiApiKey(geminiSetting?.value);
-    } catch (err: any) {
-      throw new AppError("Para usar Gemini, configure a API Key do Gemini em Configurações → Integrações → Chave da API do Gemini", 400);
-    }
-  } else if (provider === "openai") {
-    const openaiSetting = await Setting.findOne({
-      where: {
-        key: "openaiApiKey",
-        companyId: companyIdNumber
-      }
-    });
-
-    try {
-      validateOpenAIApiKey(openaiSetting?.value);
-    } catch (err: any) {
-      throw new AppError("Para usar OpenAI, configure a API Key do OpenAI em Configurações → Integrações → Chave da API do OpenAI", 400);
-    }
+  if (!isAiBackendConfigured()) {
+    throw new AppError(
+      "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
+      400
+    );
   }
 
-  // Definir modelo padrão
-  const finalModel = promptData.model || (provider === "gemini" ? "gemini-2.5-flash" : "gpt-3.5-turbo-1106");
+  const finalModel = promptData.model || getLmStudioDefaultModel();
 
   // Criar prompt a partir do template
   const promptToCreate: any = {
@@ -102,7 +75,7 @@ const CreateTemplatePromptService = async (
     completionTokens: 0,
     totalTokens: 0,
     model: finalModel,
-    provider: provider,
+    provider: "openai",
     companyId: companyIdNumber,
     apiKey: "", // Sempre string vazia - será buscada das Settings
     tipoAgente: promptData.tipoAgente,

@@ -4,7 +4,7 @@ import Message from "../models/Message";
 import AppError from "../errors/AppError";
 import { logger } from "../utils/logger";
 
-// Throttle de log para 429: evita encher o console quando a API do Gemini está no limite
+// Throttle de log para 429: evita encher o console quando a API de IA está no limite
 const RATE_LIMIT_LOG_INTERVAL_MS = 60000; // 1 minuto
 let lastRateLimitLogTime = 0;
 
@@ -56,7 +56,7 @@ export const translateMessage = async (
       const now = Date.now();
       if (now - lastRateLimitLogTime >= RATE_LIMIT_LOG_INTERVAL_MS) {
         lastRateLimitLogTime = now;
-        logger.warn("Tradução: limite da API do Gemini (429). As requisições serão retentadas com backoff.");
+        logger.warn("Tradução: limite da API de IA (429). As requisições serão retentadas com backoff.");
       }
     } else {
       logger.error("Erro ao traduzir mensagem:", err);
@@ -131,7 +131,7 @@ export const translateMessagesBatch = async (
       const now = Date.now();
       if (now - lastRateLimitLogTime >= RATE_LIMIT_LOG_INTERVAL_MS) {
         lastRateLimitLogTime = now;
-        logger.warn("Tradução em batch: limite da API do Gemini (429).");
+        logger.warn("Tradução em batch: limite da API de IA (429).");
       }
     } else {
       logger.error("Erro ao traduzir mensagens em batch:", err);
@@ -184,7 +184,7 @@ export const translateText = async (
       const now = Date.now();
       if (now - lastRateLimitLogTime >= RATE_LIMIT_LOG_INTERVAL_MS) {
         lastRateLimitLogTime = now;
-        logger.warn("Tradução de texto: limite da API do Gemini (429).");
+        logger.warn("Tradução de texto: limite da API de IA (429).");
       }
     } else {
       logger.error("Erro ao traduzir texto:", err);

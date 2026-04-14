@@ -46,14 +46,20 @@ export const generateCampaignInitialMessage = async (
   } catch (err: any) {
     console.error("Erro ao gerar mensagem inicial de campanha:", err);
     
-    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
-      return res.status(400).json({ 
-        error: "AI_KEY_MISSING",
-        message: err.message || "API Key de IA não configurada. Configure em Configurações → Integrações"
+    if (
+      err.message?.includes("LM_STUDIO") ||
+      err.message?.includes("Servidor de IA não configurado") ||
+      err.message?.includes("API Key") ||
+      err.message?.includes("GEMINI_KEY") ||
+      err.message?.includes("OPENAI")
+    ) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message || "IA não configurada no servidor"
       });
     }
-    
-    return res.status(err.statusCode || 500).json({ 
+
+    return res.status(err.statusCode || 500).json({
       error: "ERR_GENERATE_CAMPAIGN_MESSAGE",
       message: err.message || "Erro ao gerar mensagem de campanha"
     });
@@ -110,14 +116,20 @@ export const generateCampaignVariations = async (
   } catch (err: any) {
     console.error("Erro ao gerar variações de campanha:", err);
     
-    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
-      return res.status(400).json({ 
-        error: "AI_KEY_MISSING",
-        message: err.message || "API Key de IA não configurada. Configure em Configurações → Integrações"
+    if (
+      err.message?.includes("LM_STUDIO") ||
+      err.message?.includes("Servidor de IA não configurado") ||
+      err.message?.includes("API Key") ||
+      err.message?.includes("GEMINI_KEY") ||
+      err.message?.includes("OPENAI")
+    ) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message || "IA não configurada no servidor"
       });
     }
-    
-    return res.status(err.statusCode || 500).json({ 
+
+    return res.status(err.statusCode || 500).json({
       error: "ERR_GENERATE_CAMPAIGN_VARIATIONS",
       message: err.message || "Erro ao gerar variações de campanha"
     });

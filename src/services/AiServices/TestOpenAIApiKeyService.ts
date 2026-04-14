@@ -1,5 +1,4 @@
-import Setting from "../../models/Setting";
-import { validateOpenAIApiKey, testOpenAIApiKey } from "../../config/openai";
+import { isAiBackendConfigured, testLmStudioConnection } from "../../config/openai";
 
 interface TestOpenAIApiKeyParams {
   companyId: number;
@@ -10,54 +9,34 @@ interface TestOpenAIApiKeyResponse {
   message: string;
 }
 
+/**
+ * Testa conectividade com o LM Studio (OpenAI-compat) configurado no ambiente.
+ * companyId é ignorado.
+ */
 const TestOpenAIApiKeyService = async ({
-  companyId
+  companyId: _companyId
 }: TestOpenAIApiKeyParams): Promise<TestOpenAIApiKeyResponse> => {
-  const openaiSetting = await Setting.findOne({
-    where: {
-      key: "openaiApiKey",
-      companyId
-    }
-  });
-
-  let apiKey: string;
-  try {
-    apiKey = validateOpenAIApiKey(openaiSetting?.value);
-  } catch (err: any) {
+  if (!isAiBackendConfigured()) {
     return {
       valid: false,
-      message: err.message || "Chave da API do OpenAI não configurada."
+      message:
+        "LM_STUDIO_BASE_URL não definido no ambiente do servidor. Peça ao administrador para configurar."
     };
   }
 
-  try {
-    console.log(`🧪 Testando chave OpenAI...`);
-
-    const isValid = await testOpenAIApiKey(apiKey);
-
-    if (!isValid) {
-      return {
-        valid: false,
-        message: "Chave da API do OpenAI inválida ou não está funcionando. Verifique a configuração."
-      };
-    }
-
-    console.log(`✅ Chave OpenAI válida e funcionando`);
-
-    return {
-      valid: true,
-      message: "Chave da API do OpenAI válida e funcionando."
-    };
-  } catch (err: any) {
-    console.error("❌ Erro ao testar OpenAI API Key:", {
-      message: err.message
-    });
-    
+  const ok = await testLmStudioConnection();
+  if (!ok) {
     return {
       valid: false,
-      message: `Erro ao testar conexão com a API do OpenAI: ${err.message || "Erro desconhecido"}`
+      message:
+        "Não foi possível contatar o servidor de IA (LM Studio). Verifique se está em execução e se o modelo está carregado."
     };
   }
+
+  return {
+    valid: true,
+    message: "Servidor de IA (LM Studio) respondeu com sucesso."
+  };
 };
 
 export default TestOpenAIApiKeyService;

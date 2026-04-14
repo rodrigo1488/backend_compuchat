@@ -1,4 +1,4 @@
-import { Op, fn, where, col, Filterable, Includeable, literal, Order } from "sequelize";
+import { Op, fn, where, col, Filterable, Includeable } from "sequelize";
 import { startOfDay, endOfDay, parseISO } from "date-fns";
 
 import Ticket from "../../models/Ticket";
@@ -308,27 +308,13 @@ const ListTicketsService = async ({
     companyId
   };
 
-  // Fechados: ordenar pelo momento do fechamento (TicketTraking.finishedAt), não por updatedAt
-  // genérico — senão qualquer sinc/mensagem antiga “sobe” o ticket na lista.
-  const dialect = process.env.DB_DIALECT || "mysql";
-  const closedSortExpr =
-    dialect === "postgres"
-      ? `(SELECT COALESCE(MAX(tt."finishedAt"), "Ticket"."updatedAt") FROM "TicketTraking" AS tt WHERE tt."ticketId" = "Ticket"."id" AND tt."companyId" = "Ticket"."companyId")`
-      : `(SELECT COALESCE(MAX(tt.finishedAt), \`Ticket\`.\`updatedAt\`) FROM \`TicketTraking\` AS tt WHERE tt.ticketId = \`Ticket\`.\`id\` AND tt.companyId = \`Ticket\`.\`companyId\`)`;
-
-  const order = (
-    status === "closed"
-      ? [[literal(closedSortExpr), "DESC"], ["id", "DESC"]]
-      : [["updatedAt", "DESC"]]
-  ) as Order;
-
   const { count, rows: tickets } = await Ticket.findAndCountAll({
     where: whereCondition,
     include: includeCondition,
     distinct: true,
     limit,
     offset,
-    order,
+    order: [["updatedAt", "DESC"]],
     subQuery: false
   });
 

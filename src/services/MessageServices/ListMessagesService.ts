@@ -72,7 +72,18 @@ const ListMessagesService = async ({
       model: Message,
       as: "quotedMsg",
       required: false,
-      attributes: ["id", "body", "mediaType", "mediaUrl", "fromMe", "isDeleted", "createdAt"], // Limitar atributos
+      attributes: [
+        "id",
+        "body",
+        "mediaType",
+        "mediaUrl",
+        "fromMe",
+        "isDeleted",
+        "createdAt",
+        "transcription",
+        "transcriptionStatus",
+        "transcriptionError"
+      ],
       include: [{
         model: Contact,
         as: "contact",

@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { analyzeChatContext, summarizeUnreadAudios, improveMessage, generateTicketInfo } from "../services/AiServices/ChatAIService";
-import transcribeAudio from "../services/AiServices/TranscribeAudioService";
+import transcribeAndPersistAudioMessage from "../services/AiServices/TranscribeAndPersistAudioService";
 import AppError from "../errors/AppError";
 
 export const analyze = async (
@@ -26,19 +26,28 @@ export const analyze = async (
   } catch (err: any) {
     console.error("Erro ao analisar chat:", err);
     
-    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
-      return res.status(400).json({ 
-        error: "AI_KEY_MISSING",
-        message: err.message || "API Key de IA não configurada"
+    if (
+      err.message?.includes("LM_STUDIO") ||
+      err.message?.includes("Servidor de IA não configurado")
+    ) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message
       });
     }
-    
+    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message || "IA não configurada no servidor"
+      });
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode || 500).json({
         error: err.message || "Erro ao analisar chat"
       });
     }
-    
+
     return res.status(500).json({
       error: "ERR_CHAT_AI_ANALYZE",
       message: err.message || "Erro ao analisar chat com IA"
@@ -67,13 +76,22 @@ export const audioSummary = async (
   } catch (err: any) {
     console.error("Erro ao resumir áudios:", err);
     
-    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
-      return res.status(400).json({ 
-        error: "AI_KEY_MISSING",
-        message: err.message || "API Key de IA não configurada"
+    if (
+      err.message?.includes("LM_STUDIO") ||
+      err.message?.includes("Servidor de IA não configurado")
+    ) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message
       });
     }
-    
+    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message || "IA não configurada no servidor"
+      });
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode || 500).json({
         error: err.message || "Erro ao resumir áudios"
@@ -114,13 +132,22 @@ export const improve = async (
     console.error("[ChatAIController] Erro ao melhorar mensagem:", err);
     console.error("[ChatAIController] Stack trace:", err.stack);
     
-    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
-      return res.status(400).json({ 
-        error: "AI_KEY_MISSING",
-        message: err.message || "API Key de IA não configurada"
+    if (
+      err.message?.includes("LM_STUDIO") ||
+      err.message?.includes("Servidor de IA não configurado")
+    ) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message
       });
     }
-    
+    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message || "IA não configurada no servidor"
+      });
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode || 500).json({
         error: err.message || "Erro ao melhorar mensagem"
@@ -146,9 +173,14 @@ export const transcribe = async (
       return res.status(400).json({ error: "messageId é obrigatório" });
     }
 
-    const result = await transcribeAudio({
+    const force =
+      Boolean((req.body as { force?: boolean })?.force) ||
+      String((req.query as { force?: string })?.force || "") === "1";
+
+    const result = await transcribeAndPersistAudioMessage({
       messageId,
-      companyId
+      companyId,
+      force
     });
 
     return res.status(200).json(result);
@@ -200,13 +232,22 @@ export const generateTicket = async (
     console.error("[ChatAIController] Erro ao gerar informações do ticket:", err);
     console.error("[ChatAIController] Stack trace:", err.stack);
     
-    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
-      return res.status(400).json({ 
-        error: "AI_KEY_MISSING",
-        message: err.message || "API Key de IA não configurada"
+    if (
+      err.message?.includes("LM_STUDIO") ||
+      err.message?.includes("Servidor de IA não configurado")
+    ) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message
       });
     }
-    
+    if (err.message?.includes("API Key") || err.message?.includes("GEMINI_KEY") || err.message?.includes("OPENAI")) {
+      return res.status(400).json({
+        error: "AI_NOT_CONFIGURED",
+        message: err.message || "IA não configurada no servidor"
+      });
+    }
+
     if (err instanceof AppError) {
       return res.status(err.statusCode || 500).json({
         error: err.message || "Erro ao gerar informações do ticket"

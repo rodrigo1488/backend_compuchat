@@ -1,5 +1,8 @@
-import { Configuration, OpenAIApi } from "openai";
-import Setting from "../../models/Setting";
+import {
+  createOpenAIClient,
+  getLmStudioDefaultModel,
+  isAiBackendConfigured
+} from "../../config/openai";
 import { logger } from "../../utils/logger";
 
 export interface OpenAITokenInfo {
@@ -12,110 +15,64 @@ export interface OpenAITokenInfo {
 }
 
 /**
- * Verifica informações sobre tokens/quota do OpenAI
- * Usa a API de usage do OpenAI para verificar informações de quota
+ * Verifica se o servidor LM Studio (OpenAI-compat) responde.
+ * companyId é ignorado — a IA é global no ambiente.
  */
 const CheckOpenAITokensService = async (
-  companyId: number
+  _companyId: number
 ): Promise<OpenAITokenInfo> => {
   try {
-    // Buscar API key do OpenAI das Settings da empresa
-    const openaiSetting = await Setting.findOne({
-      where: {
-        key: "openaiApiKey",
-        companyId
-      }
-    });
-
-    if (!openaiSetting?.value) {
+    if (!isAiBackendConfigured()) {
       return {
         available: false,
-        error: "API Key do OpenAI não configurada"
+        error: "LM_STUDIO_BASE_URL não definido no servidor"
       };
     }
 
     try {
-      const configuration = new Configuration({
-        apiKey: openaiSetting.value
+      const openai = createOpenAIClient();
+      const completion = await openai.createChatCompletion({
+        model: getLmStudioDefaultModel(),
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1
       });
-      const openai = new OpenAIApi(configuration);
 
-      // Fazer uma chamada de teste para verificar se a API está funcionando
-      // A API do OpenAI não fornece endpoint direto para verificar quota,
-      // então fazemos uma chamada de teste mínima
-      try {
-        const completion = await openai.createChatCompletion({
-          model: "gpt-3.5-turbo",
-          messages: [{ role: "user", content: "test" }],
-          max_tokens: 1
-        });
+      const usage = completion.data.usage;
+      const promptTokens = usage?.prompt_tokens || 0;
+      const completionTokens = usage?.completion_tokens || 0;
+      const totalTokens =
+        usage?.total_tokens || promptTokens + completionTokens;
 
-        // Se chegou aqui, a API está funcionando
-        // Extrair informações de tokens da resposta
-        const usage = completion.data.usage;
-        const promptTokens = usage?.prompt_tokens || 0;
-        const completionTokens = usage?.completion_tokens || 0;
-        const totalTokens = usage?.total_tokens || (promptTokens + completionTokens);
-
-        // A API do OpenAI não fornece quota total diretamente via API pública
-        // Mas podemos mostrar os tokens usados na última chamada
-        return {
-          available: true,
-          tokensUsed: totalTokens,
-          tokensRemaining: undefined, // Não disponível via API pública
-          tokensTotal: undefined // Não disponível via API pública
-        };
-      } catch (error: any) {
-        if (error.response?.status === 429) {
-          const errorType = error.response?.data?.error?.type;
-          if (errorType === "insufficient_quota") {
-            return {
-              available: false,
-              quotaExceeded: true,
-              error: "Quota insuficiente"
-            };
-          }
-          if (errorType === "rate_limit_exceeded") {
-            return {
-              available: false,
-              quotaExceeded: false,
-              error: "Limite de taxa excedido"
-            };
-          }
-          return {
-            available: false,
-            quotaExceeded: true,
-            error: "Limite de uso atingido"
-          };
-        }
-        if (error.response?.status === 401) {
-          return {
-            available: false,
-            error: "API Key inválida"
-          };
-        }
-        if (error.response?.status === 403) {
-          return {
-            available: false,
-            quotaExceeded: true,
-            error: "Acesso negado - verifique sua quota"
-          };
-        }
-
-        // Outros erros
+      return {
+        available: true,
+        tokensUsed: totalTokens,
+        tokensRemaining: undefined,
+        tokensTotal: undefined
+      };
+    } catch (error: any) {
+      if (error.response?.status === 429) {
         return {
           available: false,
-          error: error.response?.data?.error?.message || error.message || "Erro ao verificar quota do OpenAI"
+          quotaExceeded: false,
+          error: "Limite de requisições no servidor de IA"
         };
       }
-    } catch (error: any) {
+      if (error.response?.status === 401) {
+        return {
+          available: false,
+          error: "Acesso negado ao servidor de IA"
+        };
+      }
       return {
         available: false,
-        error: error.message || "Erro ao configurar cliente OpenAI"
+        error:
+          error.response?.data?.error?.message ||
+          error.message ||
+          "Erro ao contatar servidor de IA"
       };
     }
   } catch (error: any) {
-    logger.error(`Erro ao verificar tokens do OpenAI para empresa ${companyId}:`, error);
+    logger.error("Erro ao verificar servidor de IA (LM Studio):", error);
     return {
       available: false,
       error: error.message || "Erro desconhecido"

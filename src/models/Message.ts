@@ -127,6 +127,15 @@ class Message extends Model<Message> {
   @Default(false)
   @Column
   isInternal: boolean;
+
+  @Column(DataType.TEXT)
+  transcription?: string | null;
+
+  @Column(DataType.STRING)
+  transcriptionStatus?: string | null;
+
+  @Column(DataType.STRING(512))
+  transcriptionError?: string | null;
 }
 
 export default Message;

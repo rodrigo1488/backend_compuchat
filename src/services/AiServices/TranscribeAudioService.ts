@@ -1,4 +1,5 @@
-import fs from "fs";
+import { promises as fsp } from "fs";
+import { constants as fsConstants } from "fs";
 import path from "path";
 import AppError from "../../errors/AppError";
 import Message from "../../models/Message";
@@ -17,13 +18,14 @@ interface TranscribeAudioResponse {
 
 const publicFolder = path.resolve(__dirname, "..", "..", "..", "public");
 
-/**
- * Converte arquivo de áudio para base64
- */
-const audioToBase64 = (filePath: string): string => {
-  const fileBuffer = fs.readFileSync(filePath);
-  return fileBuffer.toString("base64");
-};
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fsp.access(filePath, fsConstants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Detecta o tipo MIME do arquivo de áudio baseado na extensão
@@ -45,10 +47,10 @@ const getAudioMimeType = (filePath: string): string => {
 /**
  * Valida o tamanho do arquivo (máximo 100MB)
  */
-const validateFileSize = (filePath: string): void => {
-  const stats = fs.statSync(filePath);
+const validateFileSize = async (filePath: string): Promise<void> => {
+  const stats = await fsp.stat(filePath);
   const fileSizeInMB = stats.size / (1024 * 1024);
-  
+
   if (fileSizeInMB > 100) {
     throw new AppError(
       `Arquivo de áudio muito grande (${fileSizeInMB.toFixed(2)}MB). O tamanho máximo é 100MB.`,
@@ -58,16 +60,15 @@ const validateFileSize = (filePath: string): void => {
 };
 
 /**
- * Transcreve mensagem de áudio usando Gemini API
+ * Transcreve mensagem de áudio via provider configurado (LM Studio / OpenAI-compat quando suportado)
  */
 const transcribeAudio = async ({
   messageId,
   companyId
 }: TranscribeAudioParams): Promise<TranscribeAudioResponse> => {
   let providerName = "IA";
-  
+
   try {
-    // Buscar mensagem
     const message = await Message.findOne({
       where: {
         id: messageId,
@@ -81,54 +82,39 @@ const transcribeAudio = async ({
       throw new AppError("Mensagem de áudio não encontrada ou não pertence a esta empresa.", 404);
     }
 
-    // Selecionar provider usando configuração automática
     const provider = await AIProviderSelector.getProvider(companyId, "transcription");
     providerName = provider.name;
-    
-    // Obter caminho do arquivo de áudio
-    // O mediaUrl retorna a URL completa, mas precisamos do nome do arquivo
+
     const mediaUrlValue = message.getDataValue("mediaUrl");
     if (!mediaUrlValue) {
       throw new AppError("Arquivo de áudio não encontrado para esta mensagem.", 404);
     }
 
-    // Extrair nome do arquivo da URL
     const fileName = mediaUrlValue.includes("/public/")
       ? mediaUrlValue.split("/public/")[1]
       : mediaUrlValue.split("/").pop() || mediaUrlValue;
 
     const audioFilePath = path.join(publicFolder, fileName);
 
-    // Verificar se arquivo existe
-    if (!fs.existsSync(audioFilePath)) {
+    if (!(await pathExists(audioFilePath))) {
       logger.error(`Arquivo de áudio não encontrado: ${audioFilePath}`);
       throw new AppError("Arquivo de áudio não encontrado no servidor.", 404);
     }
 
-    // Validar tamanho do arquivo
-    validateFileSize(audioFilePath);
+    await validateFileSize(audioFilePath);
 
-    // Obter tipo MIME do áudio
     const mimeType = getAudioMimeType(audioFilePath);
 
-    // Ler arquivo de áudio
     logger.info(`Lendo arquivo de áudio para transcrição: ${audioFilePath}`);
-    const audioBuffer = fs.readFileSync(audioFilePath);
+    const audioBuffer = await fsp.readFile(audioFilePath);
 
-    // Chamar provider para transcrever
-    logger.info(`Enviando áudio para transcrição usando ${providerName} (tamanho: ${(audioBuffer.length / 1024).toFixed(2)}KB)`);
-    
-    // Prompt simplificado e direto para evitar que o modelo gaste tokens desnecessariamente
-    // O prompt do Whisper deve ser curto e direto - apenas contexto sobre o que esperar no áudio
-    const transcription = await provider.transcribeAudio(
-      audioBuffer,
-      mimeType,
-      {
-        // Prompt mínimo - apenas para contexto, não para instruções complexas
-        // Whisper funciona melhor com prompts curtos que descrevem o contexto do áudio
-        prompt: undefined // Remover prompt para evitar problemas - Whisper funciona melhor sem prompt complexo
-      }
+    logger.info(
+      `Enviando áudio para transcrição usando ${providerName} (tamanho: ${(audioBuffer.length / 1024).toFixed(2)}KB)`
     );
+
+    const transcription = await provider.transcribeAudio(audioBuffer, mimeType, {
+      prompt: undefined
+    });
 
     if (!transcription || transcription.trim() === "") {
       logger.error(`Transcrição vazia retornada pelo ${providerName}`);
@@ -164,4 +150,3 @@ const transcribeAudio = async ({
 };
 
 export default transcribeAudio;
-

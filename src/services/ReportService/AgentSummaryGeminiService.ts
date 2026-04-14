@@ -5,6 +5,7 @@ import Message from "../../models/Message";
 import Contact from "../../models/Contact";
 import User from "../../models/User";
 import { AIProviderSelector } from "../AiServices/AIProviderSelector";
+import { getLmStudioContextWindowTokens } from "../../config/openai";
 
 interface AgentSummaryParams {
   companyId: number;
@@ -31,13 +32,21 @@ const AgentSummaryGeminiService = async ({
   agentId,
   dateStart,
   dateEnd,
-  maxMessages = 100 // Reduzido de 200 para 100 para economizar tokens
+  maxMessages: maxMessagesParam = 100
 }: AgentSummaryParams): Promise<AgentSummaryResponse> => {
   // Selecionar provider usando configuração automática
   const provider = await AIProviderSelector.getProvider(companyId, "summaries");
 
   // Determinar se é resumo de atendente específico ou geral
   const isGeneralSummary = !agentId;
+  const ctxWindow = getLmStudioContextWindowTokens();
+  /** Evita prompt maior que n_ctx do LM Studio (ex.: 4096) */
+  const maxMessages =
+    ctxWindow <= 4096
+      ? Math.min(maxMessagesParam, isGeneralSummary ? 32 : 48)
+      : ctxWindow <= 8192
+        ? Math.min(maxMessagesParam, 72)
+        : maxMessagesParam;
   let agentName = "Todos os Atendentes";
   
   if (agentId) {
@@ -192,26 +201,38 @@ REGRAS: Seja específico (cite tickets e nomes), objetivo, construtivo. Use form
 
 `;
 
-  // Limitar o tamanho do prompt para evitar exceder limites da API (reduzido para economizar tokens)
-  const maxPromptLength = 20000; // Reduzido de 30000 para 20000
-  let finalConversationsText = conversationsText;
-  if (conversationsText.length > maxPromptLength) {
-    finalConversationsText = conversationsText.slice(0, maxPromptLength) + "\n\n[... conteúdo truncado ...]";
-  }
-
   const conversationsLabel = isGeneralSummary 
     ? `CONVERSAS DA EMPRESA (até ${maxMessages} mensagens de ${tickets.length} tickets)` 
     : `CONVERSAS DO ATENDENTE ${agentName} (até ${maxMessages} mensagens)`;
-  
-  const finalPrompt = `${systemPrompt}\n\n${conversationsLabel}:\n\n${finalConversationsText}`;
+
+  let finalPrompt = `${systemPrompt}\n\n${conversationsLabel}:\n\n${conversationsText}`;
+
+  /**
+   * Garante que o texto cabe na janela do LM Studio: tokens(prompt) + max_tokens <= n_ctx.
+   * Heurística conservadora para PT (~2.2 chars/token no pior caso em JSON).
+   */
+  const outTokenBudget = Math.min(
+    2048,
+    Math.max(384, Math.floor(ctxWindow * 0.38))
+  );
+  const templateOverhead = 96;
+  const maxPromptChars = Math.max(
+    1500,
+    Math.floor((ctxWindow - outTokenBudget - templateOverhead) * 2.2)
+  );
+  if (finalPrompt.length > maxPromptChars) {
+    finalPrompt =
+      finalPrompt.slice(0, maxPromptChars - 120) +
+      "\n\n[... conteúdo truncado para caber no contexto do modelo. Reduza o período de datas ou aumente o Context Length no LM Studio (ex.: 8192) ...]";
+  }
 
   try {
     console.log(`📤 Enviando requisição para ${provider.name}...`);
 
-    // Usar o provider selecionado para gerar o resumo
+    // max_tokens efetivo ainda é limitado em OpenAIProvider.generateText; aqui evitamos pedir 4096 em modelo 4k
     const text = await provider.generateText(finalPrompt, {
       temperature: 0.4,
-      maxTokens: 4096,
+      maxTokens: outTokenBudget,
       topP: 0.95
     });
 

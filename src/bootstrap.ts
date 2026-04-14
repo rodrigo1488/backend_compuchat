@@ -1,8 +1,25 @@
+import path from "path";
 import dotenv from "dotenv";
+import { logger } from "./utils/logger";
+import {
+  getWhisperApiBasePath,
+  isWhisperTranscriptionConfigured
+} from "./config/openai";
 
-dotenv.config({
-  path: process.env.NODE_ENV === "test" ? ".env.test" : ".env"
-});
+const envFile = process.env.NODE_ENV === "test" ? ".env.test" : ".env";
+const envPath = path.resolve(__dirname, "..", envFile);
+dotenv.config({ path: envPath });
+
+if (isWhisperTranscriptionConfigured()) {
+  logger.info(
+    { whisperBaseUrl: getWhisperApiBasePath() },
+    "Transcrição de áudio: usando WHISPER_API_BASE_URL (serviço dedicado)"
+  );
+} else {
+  logger.warn(
+    "Transcrição de áudio: WHISPER_API_BASE_URL não definida ou vazia — requisições vão para LM_STUDIO_BASE_URL (normalmente 415). Defina WHISPER_API_BASE_URL no .env do backend."
+  );
+}
 
 const shouldSuppressLibsignalNoise = (args: unknown[]): boolean => {
   const text = args

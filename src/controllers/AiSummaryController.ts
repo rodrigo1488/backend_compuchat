@@ -1,8 +1,6 @@
 import { Request, Response } from "express";
 import AgentSummaryGeminiService from "../services/ReportService/AgentSummaryGeminiService";
 import ChatGeminiService from "../services/AiServices/ChatGeminiService";
-import TestGeminiApiKeyService from "../services/AiServices/TestGeminiApiKeyService";
-import TestOpenAIApiKeyService from "../services/AiServices/TestOpenAIApiKeyService";
 import { AIProviderSelector } from "../services/AiServices/AIProviderSelector";
 import DashboardCommandService from "../services/AiServices/DashboardCommandService";
 
@@ -36,12 +34,12 @@ export const agentSummary = async (
   } catch (err: any) {
     console.error("Erro ao gerar resumo IA:", err);
     
-    if (err.message === "GEMINI_KEY_MISSING") {
-      return res.status(400).json({ error: "GEMINI_KEY_MISSING" });
+    if (err.message === "GEMINI_KEY_MISSING" || err.message === "AI_NOT_CONFIGURED") {
+      return res.status(400).json({ error: "AI_NOT_CONFIGURED" });
     }
-    
-    return res.status(500).json({ 
-      error: "ERR_GEMINI_SUMMARY",
+
+    return res.status(500).json({
+      error: "ERR_AI_SUMMARY",
       message: err.message || "Erro ao gerar resumo com IA"
     });
   }
@@ -71,12 +69,12 @@ export const chat = async (
   } catch (err: any) {
     console.error("Erro no chat IA:", err);
     
-    if (err.message === "GEMINI_KEY_MISSING") {
-      return res.status(400).json({ error: "GEMINI_KEY_MISSING" });
+    if (err.message === "GEMINI_KEY_MISSING" || err.message === "AI_NOT_CONFIGURED") {
+      return res.status(400).json({ error: "AI_NOT_CONFIGURED" });
     }
-    
-    return res.status(500).json({ 
-      error: "ERR_GEMINI_CHAT",
+
+    return res.status(500).json({
+      error: "ERR_AI_CHAT",
       message: err.message || "Erro ao processar mensagem com IA"
     });
   }
@@ -105,8 +103,8 @@ export const dashboardCommand = async (
   } catch (err: any) {
     console.error("Erro ao executar comando IA do dashboard:", err);
 
-    if (err.message === "GEMINI_KEY_MISSING") {
-      return res.status(400).json({ error: "GEMINI_KEY_MISSING" });
+    if (err.message === "GEMINI_KEY_MISSING" || err.message === "AI_NOT_CONFIGURED") {
+      return res.status(400).json({ error: "AI_NOT_CONFIGURED" });
     }
 
     return res.status(500).json({
@@ -166,42 +164,17 @@ export const chatWithAudio = async (
   } catch (err: any) {
     console.error("Erro no chat com áudio:", err);
     
-    if (err.message === "GEMINI_KEY_MISSING" || err.message?.includes("API Key")) {
-      return res.status(400).json({ error: "GEMINI_KEY_MISSING" });
+    if (
+      err.message === "GEMINI_KEY_MISSING" ||
+      err.message === "AI_NOT_CONFIGURED" ||
+      err.message?.includes("API Key")
+    ) {
+      return res.status(400).json({ error: "AI_NOT_CONFIGURED" });
     }
     
     return res.status(500).json({ 
       error: "ERR_AI_CHAT_AUDIO",
       message: err.message || "Erro ao processar áudio com IA"
-    });
-  }
-};
-
-export const testApiKey = async (
-  req: Request,
-  res: Response
-): Promise<Response> => {
-  try {
-    const { companyId } = req.user;
-    const { provider } = req.query; // provider pode ser "gemini" ou "openai"
-
-    let result;
-    if (provider === "openai") {
-      result = await TestOpenAIApiKeyService({ companyId });
-    } else {
-      // Default para Gemini para manter compatibilidade
-      result = await TestGeminiApiKeyService({ companyId });
-    }
-
-    if (result.valid) {
-      return res.status(200).json(result);
-    } else {
-      return res.status(400).json(result);
-    }
-  } catch (err: any) {
-    return res.status(500).json({ 
-      valid: false,
-      message: err.message || "Erro ao testar chave da API"
     });
   }
 };
@@ -252,45 +225,17 @@ export const setProviderConfiguration = async (
     }
 
     if (!["gemini", "openai"].includes(provider)) {
-      return res.status(400).json({ 
-        error: "provider inválido (deve ser 'gemini' ou 'openai')" 
-      });
-    }
-
-    const Setting = require("../models/Setting").default;
-    const settingKeys: Record<string, string> = {
-      summaries: "aiProviderSummaries",
-      chat: "aiProviderChat",
-      messageImprovement: "aiProviderMessageImprovement",
-      transcription: "aiProviderTranscription",
-      campaigns: "aiProviderCampaigns"
-    };
-
-    const settingKey = settingKeys[functionType];
-    
-    // Verificar se a configuração já existe
-    let setting = await Setting.findOne({
-      where: {
-        key: settingKey,
-        companyId
-      }
-    });
-
-    if (setting) {
-      await setting.update({ value: provider });
-    } else {
-      setting = await Setting.create({
-        key: settingKey,
-        value: provider,
-        companyId
+      return res.status(400).json({
+        error: "provider inválido"
       });
     }
 
     return res.status(200).json({
       success: true,
       functionType,
-      provider,
-      message: `Provider ${provider} configurado para ${functionType}`
+      provider: "openai",
+      message:
+        "A IA é servida pelo LM Studio no servidor; a escolha por função foi descontinuada."
     });
   } catch (err: any) {
     console.error("Erro ao configurar provider:", err);
@@ -310,47 +255,14 @@ export const getChatConfig = async (
 ): Promise<Response> => {
   try {
     const { companyId } = req.user;
-    const { getChatConfig } = await import("../services/AiServices/ChatConfigService");
-    const config = await getChatConfig(companyId);
+    const { getChatConfig: loadChatConfig } = await import("../services/AiServices/ChatConfigService");
+    const config = await loadChatConfig(companyId);
     return res.status(200).json(config);
   } catch (err: any) {
     console.error("Erro ao obter configurações do chat:", err);
     return res.status(500).json({ 
       error: "ERR_GET_CHAT_CONFIG",
       message: err.message || "Erro ao obter configurações do chat"
-    });
-  }
-};
-
-/**
- * Salva configurações do chat IA
- */
-export const setChatConfig = async (
-  req: Request,
-  res: Response
-): Promise<Response> => {
-  try {
-    const { companyId } = req.user;
-    const { temperature, maxHistoryMessages, maxTokens, topP } = req.body;
-    const { saveChatConfig } = await import("../services/AiServices/ChatConfigService");
-    
-    const config = await saveChatConfig(companyId, {
-      temperature,
-      maxHistoryMessages,
-      maxTokens,
-      topP
-    });
-
-    return res.status(200).json({
-      success: true,
-      config,
-      message: "Configurações do chat salvas com sucesso"
-    });
-  } catch (err: any) {
-    console.error("Erro ao salvar configurações do chat:", err);
-    return res.status(400).json({ 
-      error: "ERR_SET_CHAT_CONFIG",
-      message: err.message || "Erro ao salvar configurações do chat"
     });
   }
 };

@@ -1,122 +1,36 @@
-import Setting from "../../models/Setting";
 import { IAIProvider } from "./AIProviderInterface";
 import { OpenAIProvider } from "./providers/OpenAIProvider";
-import { GeminiProvider } from "./providers/GeminiProvider";
-import { validateGeminiApiKey } from "../../config/gemini";
-import { validateOpenAIApiKey } from "../../config/openai";
+import { isAiBackendConfigured } from "../../config/openai";
 import AppError from "../../errors/AppError";
 
 /**
- * Factory para criar instâncias de providers de IA
+ * Factory para o cliente OpenAI-compatível (LM Studio), configurado globalmente via ambiente.
  */
 export class AIProviderFactory {
   /**
-   * Cria uma instância do provider especificado
+   * Cria instância do provider (LM Studio). companyId é ignorado — mantido só por compatibilidade de chamadas.
    */
-  static createProvider(
-    providerName: "gemini" | "openai",
-    apiKey: string
-  ): IAIProvider {
-    switch (providerName) {
-      case "gemini":
-        return new GeminiProvider(apiKey);
-      case "openai":
-        return new OpenAIProvider(apiKey);
-      default:
-        throw new AppError(`Provider não suportado: ${providerName}`, 400);
-    }
-  }
-
-  /**
-   * Cria uma instância do provider Gemini a partir das Settings da empresa
-   */
-  static async createGeminiProvider(companyId: number): Promise<GeminiProvider> {
-    const geminiSetting = await Setting.findOne({
-      where: {
-        key: "geminiApiKey",
-        companyId
-      }
-    });
-
-    try {
-      const apiKey = validateGeminiApiKey(geminiSetting?.value);
-      return new GeminiProvider(apiKey);
-    } catch (err: any) {
+  static async createOpenAIProvider(_companyId?: number): Promise<OpenAIProvider> {
+    if (!isAiBackendConfigured()) {
       throw new AppError(
-        "A API Key do Gemini não está configurada. Configure em Configurações → Integrações → Chave da API do Gemini.",
+        "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
         400
       );
     }
+    return new OpenAIProvider();
   }
 
   /**
-   * Cria uma instância do provider OpenAI a partir das Settings da empresa
+   * Disponibilidade de IA: apenas LM Studio (openai-compat). gemini permanece false para compatibilidade de tipos legados.
    */
-  static async createOpenAIProvider(companyId: number): Promise<OpenAIProvider> {
-    const openaiSetting = await Setting.findOne({
-      where: {
-        key: "openaiApiKey",
-        companyId
-      }
-    });
-
-    try {
-      const apiKey = validateOpenAIApiKey(openaiSetting?.value);
-      return new OpenAIProvider(apiKey);
-    } catch (err: any) {
-      throw new AppError(
-        "A API Key do OpenAI não está configurada. Configure em Configurações → Integrações → Chave da API do OpenAI.",
-        400
-      );
-    }
-  }
-
-  /**
-   * Verifica quais providers estão configurados para a empresa
-   */
-  static async getAvailableProviders(companyId: number): Promise<{
+  static async getAvailableProviders(_companyId?: number): Promise<{
     gemini: boolean;
     openai: boolean;
   }> {
-    const [geminiSetting, openaiSetting] = await Promise.all([
-      Setting.findOne({
-        where: {
-          key: "geminiApiKey",
-          companyId
-        }
-      }),
-      Setting.findOne({
-        where: {
-          key: "openaiApiKey",
-          companyId
-        }
-      })
-    ]);
-
-    let geminiAvailable = false;
-    let openaiAvailable = false;
-
-    try {
-      if (geminiSetting?.value) {
-        validateGeminiApiKey(geminiSetting.value);
-        geminiAvailable = true;
-      }
-    } catch {
-      // Gemini não disponível
-    }
-
-    try {
-      if (openaiSetting?.value) {
-        validateOpenAIApiKey(openaiSetting.value);
-        openaiAvailable = true;
-      }
-    } catch {
-      // OpenAI não disponível
-    }
-
+    const ok = isAiBackendConfigured();
     return {
-      gemini: geminiAvailable,
-      openai: openaiAvailable
+      gemini: false,
+      openai: ok
     };
   }
 }

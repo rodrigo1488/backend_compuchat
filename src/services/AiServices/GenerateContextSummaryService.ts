@@ -13,7 +13,8 @@ import { AIProviderSelector } from "./AIProviderSelector";
 interface GenerateContextSummaryParams {
   ticketId: number;
   companyId: number;
-  provider?: "gemini" | "openai"; // Opcional, se não fornecido usa configuração automática
+  /** @deprecated Ignorado — sempre LM Studio (OpenAI-compat) */
+  provider?: "openai";
   maxMessages?: number;
 }
 
@@ -90,17 +91,12 @@ INSTRUÇÕES: Identifique status da conversa, pontos principais, próximos passo
 
     // Selecionar provider automaticamente usando a configuração da funcionalidade
     // Se provider foi especificado explicitamente, criar diretamente, senão usar selector
-    let selectedProvider;
-    if (provider) {
-      const AIProviderFactory = require("./AIProviderFactory").AIProviderFactory;
-      if (provider === "gemini") {
-        selectedProvider = await AIProviderFactory.createGeminiProvider(companyId);
-      } else {
-        selectedProvider = await AIProviderFactory.createOpenAIProvider(companyId);
-      }
-    } else {
-      selectedProvider = await AIProviderSelector.getProvider(companyId, "summaries");
-    }
+    const { AIProviderFactory } = require("./AIProviderFactory") as {
+      AIProviderFactory: typeof import("./AIProviderFactory").AIProviderFactory;
+    };
+    const selectedProvider = provider
+      ? await AIProviderFactory.createOpenAIProvider(companyId)
+      : await AIProviderSelector.getProvider(companyId, "summaries");
 
     // Gerar resumo usando o provider selecionado
     const summary = await selectedProvider.generateText(systemPrompt, {

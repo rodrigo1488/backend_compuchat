@@ -7,8 +7,17 @@ import Whatsapp from "../../models/Whatsapp";
 import User from "../../models/User";
 import Queue from "../../models/Queue";
 import Task from "../../models/Task";
-import CheckGeminiTokensService, { GeminiTokenInfo } from "../AiServices/CheckGeminiTokensService";
 import CheckOpenAITokensService, { OpenAITokenInfo } from "../AiServices/CheckOpenAITokensService";
+
+/** Mantido na resposta da API para compatibilidade com o dashboard legado. */
+export interface GeminiTokenInfo {
+  available: boolean;
+  tokensUsed?: number;
+  tokensRemaining?: number;
+  tokensTotal?: number;
+  quotaExceeded?: boolean;
+  error?: string;
+}
 import { logger } from "../../utils/logger";
 
 export interface ExtendedDashboardData {
@@ -261,15 +270,10 @@ const DashboardExtendedService = async (
     error: "Não verificado"
   };
 
-  try {
-    geminiTokens = await CheckGeminiTokensService(companyId);
-  } catch (error: any) {
-    logger.error(`Erro ao verificar tokens do Gemini no dashboard:`, error);
-    geminiTokens = {
-      available: false,
-      error: error.message || "Erro ao verificar"
-    };
-  }
+  geminiTokens = {
+    available: false,
+    error: "Não aplicável — a IA usa LM Studio no servidor (OpenAI-compat)."
+  };
 
   try {
     openAITokens = await CheckOpenAITokensService(companyId);

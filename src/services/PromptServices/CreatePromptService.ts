@@ -2,9 +2,7 @@ import * as Yup from "yup";
 import AppError from "../../errors/AppError";
 import Prompt from "../../models/Prompt";
 import ShowPromptService from "./ShowPromptService";
-import Setting from "../../models/Setting";
-import { validateGeminiApiKey } from "../../config/gemini";
-import { validateOpenAIApiKey } from "../../config/openai";
+import { getLmStudioDefaultModel, isAiBackendConfigured } from "../../config/openai";
 
 interface PromptData {
     name: string;
@@ -40,7 +38,9 @@ const CreatePromptService = async (promptData: PromptData): Promise<Prompt> => {
     }
 
     // Desestruturar dados do prompt
-    const { name, prompt, queueId, maxMessages, provider = "openai" } = promptData;
+    const { name, prompt, queueId, maxMessages, provider: rawProvider = "openai" } = promptData;
+    const provider =
+      rawProvider === "gemini" ? "openai" : rawProvider || "openai";
 
     // Garantir que queueId e maxMessages sejam números (queueId agora é opcional)
     const queueIdNumber = queueId ? (typeof queueId === "string" ? parseInt(queueId, 10) : queueId) : null;
@@ -71,42 +71,14 @@ const CreatePromptService = async (promptData: PromptData): Promise<Prompt> => {
         throw new AppError(`Erro de validação: ${err.message || JSON.stringify(err, undefined, 2)}`, 400);
     }
 
-    // Validar que a API key está nas Settings (tanto para Gemini quanto OpenAI)
-    if (provider === "gemini") {
-        const geminiSetting = await Setting.findOne({
-            where: {
-                key: "geminiApiKey",
-                companyId: companyIdNumber
-            }
-        });
-
-        try {
-            validateGeminiApiKey(geminiSetting?.value);
-        } catch (err: any) {
-            throw new AppError("Para usar Gemini, configure a API Key do Gemini em Configurações → Integrações → Chave da API do Gemini", 400);
-        }
-    } else if (provider === "openai") {
-        const openaiSetting = await Setting.findOne({
-            where: {
-                key: "openaiApiKey",
-                companyId: companyIdNumber
-            }
-        });
-
-        try {
-            validateOpenAIApiKey(openaiSetting?.value);
-        } catch (err: any) {
-            throw new AppError("Para usar OpenAI, configure a API Key do OpenAI em Configurações → Integrações → Chave da API do OpenAI", 400);
-        }
+    if (!isAiBackendConfigured()) {
+        throw new AppError(
+            "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
+            400
+        );
     }
 
-    // Garantir que provider tenha valor default
-    if (!promptData.provider) {
-        promptData.provider = "openai";
-    }
-
-    // Garantir que o modelo seja definido corretamente
-    const finalModel = promptData.model || (provider === "gemini" ? "gemini-2.5-flash" : "gpt-3.5-turbo-1106");
+    const finalModel = promptData.model || getLmStudioDefaultModel();
 
     // Criar objeto de dados para salvar, sempre com apiKey como string vazia
     const promptToCreate: any = {
@@ -120,7 +92,7 @@ const CreatePromptService = async (promptData: PromptData): Promise<Prompt> => {
         completionTokens: promptData.completionTokens || 0,
         totalTokens: promptData.totalTokens || 0,
         model: finalModel,
-        provider: provider,
+        provider: "openai",
         companyId: companyIdNumber,
         apiKey: "", // Sempre string vazia - será buscada das Settings
         canSendInternalMessages: promptData.canSendInternalMessages || false,

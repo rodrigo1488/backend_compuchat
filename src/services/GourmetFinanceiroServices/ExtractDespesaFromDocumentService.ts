@@ -1,9 +1,11 @@
-import axios from "axios";
-import Setting from "../../models/Setting";
 import AppError from "../../errors/AppError";
 import { AIProviderFactory } from "../AiServices/AIProviderFactory";
-import { GEMINI_BASE_URL, GEMINI_MODEL, validateGeminiApiKey } from "../../config/gemini";
-import { createOpenAIClient, OPENAI_VISION_MODEL, validateOpenAIApiKey } from "../../config/openai";
+import {
+  createOpenAIClient,
+  getLmStudioDefaultModel,
+  getChatCompletionAssistantText,
+  OPENAI_VISION_MODEL
+} from "../../config/openai";
 
 const DESPESA_EXTRACTION_PROMPT = `Analise a imagem (foto/scan) de um documento de despesa (boleto, nota fiscal, recibo, fatura) e extraia as informações.
 
@@ -65,7 +67,6 @@ function parseAndValidate(rawJson: string): ExtractedDespesa {
 
   let dataVencimento = typeof parsed.dataVencimento === "string" ? parsed.dataVencimento.trim() : "";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dataVencimento)) {
-    // tentar converter DD/MM/AAAA
     const m = dataVencimento.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     if (m) dataVencimento = `${m[3]}-${m[2]}-${m[1]}`;
   }
@@ -82,44 +83,16 @@ function parseAndValidate(rawJson: string): ExtractedDespesa {
   };
 }
 
-async function extractWithGemini(apiKey: string, fileBase64: string, mimeType: string): Promise<string> {
-  const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent`;
-  const payload = {
-    contents: [
-      {
-        parts: [
-          { text: DESPESA_EXTRACTION_PROMPT },
-          { inlineData: { mimeType, data: fileBase64 } },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      topK: 40,
-      topP: 0.95,
-      maxOutputTokens: 2048,
-    },
-  };
-
-  const { data } = await axios.post(`${url}?key=${apiKey}`, payload, { timeout: 60000 });
-  const candidates = data?.candidates || [];
-  const parts = candidates?.[0]?.content?.parts || [];
-  const text = parts
-    .map((p: any) => p?.text || "")
-    .filter((t: any) => typeof t === "string" && t.trim())
-    .join("\n")
-    .trim();
-
-  if (!text) throw new AppError("Não foi possível extrair a despesa. Tente outra imagem.", 400);
-  return text;
-}
-
-async function extractWithOpenAI(apiKey: string, fileBase64: string, mimeType: string): Promise<string> {
-  const client = createOpenAIClient(apiKey);
+async function extractWithLmStudioVision(
+  fileBase64: string,
+  mimeType: string
+): Promise<string> {
+  const client = createOpenAIClient();
   const dataUrl = `data:${mimeType};base64,${fileBase64}`;
+  const visionModel = OPENAI_VISION_MODEL || getLmStudioDefaultModel();
 
   const completion = await client.createChatCompletion({
-    model: OPENAI_VISION_MODEL,
+    model: visionModel,
     messages: [
       {
         role: "user",
@@ -133,7 +106,7 @@ async function extractWithOpenAI(apiKey: string, fileBase64: string, mimeType: s
     temperature: 0.2,
   });
 
-  const text = completion.data.choices?.[0]?.message?.content?.trim();
+  const text = getChatCompletionAssistantText(completion.data);
   if (!text) throw new AppError("Não foi possível extrair a despesa. Tente outra imagem.", 400);
   return text;
 }
@@ -146,22 +119,14 @@ export default async function ExtractDespesaFromDocumentService(params: {
   const { companyId, fileBase64, mimeType } = params;
 
   const providers = await AIProviderFactory.getAvailableProviders(companyId);
-  let rawResponse: string;
-
-  if (providers.gemini) {
-    const geminiSetting = await Setting.findOne({ where: { key: "geminiApiKey", companyId } });
-    const apiKey = validateGeminiApiKey(geminiSetting?.value);
-    rawResponse = await extractWithGemini(apiKey, fileBase64, mimeType);
-  } else if (providers.openai) {
-    const openaiSetting = await Setting.findOne({ where: { key: "openaiApiKey", companyId } });
-    const apiKey = validateOpenAIApiKey(openaiSetting?.value);
-    rawResponse = await extractWithOpenAI(apiKey, fileBase64, mimeType);
-  } else {
+  if (!providers.openai) {
     throw new AppError(
-      "Configure a chave da API do Gemini ou da OpenAI em Configurações → Integrações para extrair a despesa pela IA.",
+      "Servidor de IA não configurado. O administrador deve definir LM_STUDIO_BASE_URL no ambiente do backend.",
       400
     );
   }
+
+  const rawResponse = await extractWithLmStudioVision(fileBase64, mimeType);
 
   const jsonStr = extractJsonFromResponse(rawResponse);
   try {
@@ -170,4 +135,3 @@ export default async function ExtractDespesaFromDocumentService(params: {
     throw new AppError("Não foi possível extrair os dados da despesa. Tente uma imagem mais nítida.", 400);
   }
 }
-
