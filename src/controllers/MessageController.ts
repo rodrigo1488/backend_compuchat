@@ -96,7 +96,9 @@ export const search = async (req: Request, res: Response): Promise<Response> => 
 
 export const store = async (req: Request, res: Response): Promise<Response> => {
   const { ticketId } = req.params;
-  const { body, quotedMsg, mentions, isInternal }: MessageData & { isInternal?: boolean } = req.body;
+  const { body, quotedMsg, mentions, isInternal }: MessageData & {
+    isInternal?: boolean | string;
+  } = req.body;
   const medias = req.files as Express.Multer.File[];
   const { companyId } = req.user;
 
