@@ -14,6 +14,7 @@ import fs from "fs";
 import path, { join } from "path";
 
 import { OpenAIApi } from "openai";
+import { Op } from "sequelize";
 import Ticket from "../../models/Ticket";
 import Contact from "../../models/Contact";
 import Message from "../../models/Message";
@@ -116,8 +117,13 @@ export const handleOpenAi = async (
     return;
   }
 
+  const whereMessages: any = { ticketId: ticket.id };
+  if (ticket.sessionStartedAt) {
+    whereMessages.createdAt = { [Op.gte]: ticket.sessionStartedAt };
+  }
+
   const messages = await Message.findAll({
-    where: { ticketId: ticket.id },
+    where: whereMessages,
     order: [["createdAt", "ASC"]],
     limit: openAiSettings.maxMessages
   });

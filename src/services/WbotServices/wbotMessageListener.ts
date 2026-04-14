@@ -3,6 +3,7 @@ import { promisify } from "util";
 import { writeFile } from "fs";
 import * as Sentry from "@sentry/node";
 import { isNil, head } from "lodash";
+import { Op } from "sequelize";
 import { extension as mimeExtension } from "mime-types";
 
 import {
@@ -73,7 +74,10 @@ import { FlowBuilderModel } from "../../models/FlowBuilder";
 import { FlowCampaignModel } from "../../models/FlowCampaign";
 import { IOpenAi } from "../../@types/openai";
 import ShowPromptService from "../PromptServices/ShowPromptService";
-import generateContextSummary from "../AiServices/GenerateContextSummaryService";
+import {
+  processPromptAiReplyActions,
+  buildPromptActionFormattingInstructions
+} from "../AiServices/PromptReplyActionExecutor";
 import GetTicketWbot from "../../helpers/GetTicketWbot";
 import { getChatJid as getChatJidFromHelper } from "../../helpers/chatJid";
 import { isValidPhoneNumber as isValidPhoneNumberBase } from "../../helpers/validatePhoneNumber";
@@ -82,9 +86,7 @@ import ListSettingsServiceOne from "../SettingServices/ListSettingsServiceOne";
 import ShowUserService from "../UserServices/ShowUserService";
 import ListQueuesService from "../QueueService/ListQueuesService";
 import Tag from "../../models/Tag";
-import SyncTags from "../TagServices/SyncTagsService";
 import ExecuteAppointmentFunction from "../AppointmentAIService/ExecuteAppointmentFunction";
-import ParseAppointmentCommand from "../AppointmentAIService/ParseAppointmentCommand";
 import DashboardCommandService from "../AiServices/DashboardCommandService";
 
 import { IConnections, INodes } from "../WebhookService/DispatchWebHookService";
@@ -1414,8 +1416,13 @@ const handleOpenAi = async (
   // Pegar apenas as últimas mensagens relevantes (máximo 10 para economizar tokens)
   const maxHistoryMessages = Math.min(prompt.maxMessages, 10);
 
+  const whereMessages: any = { ticketId: ticket.id };
+  if (ticket.sessionStartedAt) {
+    whereMessages.createdAt = { [Op.gte]: ticket.sessionStartedAt };
+  }
+
   const messages = await Message.findAll({
-    where: { ticketId: ticket.id },
+    where: whereMessages,
     order: [["createdAt", "DESC"]],
     limit: maxHistoryMessages
   });
@@ -1434,22 +1441,10 @@ const handleOpenAi = async (
 
   // Prompt do sistema otimizado e mais completo (igual ao Gemini)
   const contactName = sanitizeName(contact.name || "Amigo(a)");
-  let promptSystem = `Você é um assistente de atendimento. O nome do CLIENTE que você está atendendo é: ${contactName}. Use este nome ao se dirigir ao cliente nas suas respostas.\n${prompt.prompt}\n\nFILAS DISPONÍVEIS PARA TRANSFERÊNCIA:\n${queuesList}\n\nIMPORTANTE: Seja direto e objetivo. Para transferir, use o formato: 'Ação: Transferir para o setor de atendimento [Fila: Nome da Fila]' ou apenas 'Ação: Transferir para o setor de atendimento' para usar a fila padrão. Sua resposta deve usar no máximo ${prompt.maxTokens} tokens e cuide para não truncar o final.`;
-
-  // Adicionar instruções sobre tags se habilitado
-  if (prompt.canChangeTag && tagsList) {
-    promptSystem += `\n\nTAGS DISPONÍVEIS PARA ALTERAÇÃO:\n${tagsList}\n\nPara alterar a tag/estágio do ticket, use o formato: 'Ação: Alterar tag [Tag: Nome da Tag]'`;
-  }
-
-  // Adicionar instruções sobre mensagens internas se habilitado
-  if (prompt.canSendInternalMessages) {
-    promptSystem += `\n\nANOTAÇÕES INTERNAS: Use [INTERNA]texto[/INTERNA] ANTES ou DEPOIS da resposta ao cliente. Sempre forneça resposta ao cliente.`;
-  }
-
-  // Adicionar instruções sobre agendamentos se habilitado
-  if (prompt.permitirCriarAgendamentos) {
-    promptSystem += `\n\nAGENDAMENTOS: Use [AGENDAR]{"action":"criar|verificar|listar","profissional":"Nome","data":"YYYY-MM-DD","horarioInicio":"HH:mm","horarioFim":"HH:mm"(opcional),"titulo":"Título","descricao":"Desc"(opcional)}[/AGENDAR]. Execute comandos IMEDIATAMENTE sem dizer "vou verificar". Verifique disponibilidade antes de criar. Remova tags [AGENDAR] da resposta final.`;
-  }
+  const promptSystem =
+    `Você é um assistente de atendimento. O nome do CLIENTE que você está atendendo é: ${contactName}. Use este nome ao se dirigir ao cliente nas suas respostas.\n${prompt.prompt}` +
+    buildPromptActionFormattingInstructions(prompt, queuesList, tagsList) +
+    `\n\nSua resposta deve usar no máximo ${prompt.maxTokens} tokens e cuide para não truncar o final.`;
 
 
   let messagesOpenAi: ChatCompletionRequestMessage[] = [];
@@ -1497,306 +1492,22 @@ const handleOpenAi = async (
 
     let response = getChatCompletionAssistantText(chat.data);
 
-    // Detectar e processar mensagens internas
-    const internalMessages: string[] = [];
-    let cleanedResponse = response || "";
+    const sendWhatsAppToCustomer = async (text: string): Promise<void> => {
+      const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, { text });
+      await verifyMessage(sentMessage!, ticket, contact);
+    };
 
-    if (prompt.canSendInternalMessages) {
-      // Regex unificado que captura [INTERNA]...[/INTERNA] de forma não-gulosa
-      // Usa uma única passagem para evitar duplicação
-      const internalMessageRegex = /\[INTERNA\](.*?)\[\/INTERNA\]/gs;
-      const processedMatches = new Set<string>(); // Para evitar duplicação
-
-      let match;
-      // Processar todas as mensagens internas com fechamento explícito
-      while ((match = internalMessageRegex.exec(response || "")) !== null) {
-        const fullMatch = match[0]; // [INTERNA]...[/INTERNA]
-        const internalContent = match[1].trim();
-
-        // Evitar processar a mesma mensagem duas vezes
-        if (internalContent && !processedMatches.has(fullMatch)) {
-          processedMatches.add(fullMatch);
-          internalMessages.push(internalContent);
-          // Remover o marcador completo da resposta
-          cleanedResponse = cleanedResponse.replace(fullMatch, "").trim();
-        }
-      }
-
-      // Limpar qualquer [INTERNA] restante sem fechamento (caso a IA tenha esquecido de fechar)
-      // Isso garante que nenhum marcador [INTERNA] seja enviado ao cliente
-      const openInternalRegex = /\[INTERNA\][^\[]*?(?=\[INTERNA\]|$)/gs;
-      while ((match = openInternalRegex.exec(cleanedResponse)) !== null) {
-        const fullMatch = match[0];
-        const internalContent = match[0].replace(/\[INTERNA\]/g, "").trim();
-
-        // Só processar se não foi já processado e não contém [/INTERNA]
-        if (internalContent && !fullMatch.includes("[/INTERNA]") && !processedMatches.has(fullMatch)) {
-          processedMatches.add(fullMatch);
-          internalMessages.push(internalContent);
-          cleanedResponse = cleanedResponse.replace(fullMatch, "").trim();
-        }
-      }
-
-      // Limpeza final: remover qualquer ocorrência restante de [INTERNA] ou [/INTERNA]
-      cleanedResponse = cleanedResponse
-        .replace(/\[INTERNA\][^\[]*?/g, "") // Remove qualquer [INTERNA] restante
-        .replace(/\[\/INTERNA\]/g, "") // Remove qualquer [/INTERNA] solto
-        .replace(/\n\s*\n\s*\n/g, "\n\n") // Limpa quebras de linha múltiplas
-        .trim();
-
-      // Enviar mensagens internas (apenas uma vez cada)
-      const uniqueInternalMessages = [...new Set(internalMessages)]; // Garantir unicidade
-      for (const internalContent of uniqueInternalMessages) {
-        if (internalContent.trim()) {
-          try {
-            const messageData: MessageData = {
-              id: `${ticket.id}-${Date.now()}-${Math.random()}`,
-              body: internalContent.trim(),
-              ticketId: ticket.id,
-              contactId: ticket.contactId,
-              fromMe: true,
-              read: true,
-              isInternal: true,
-              mediaType: "conversation"
-            };
-            await CreateMessageService({ messageData, companyId: ticket.companyId });
-            logger.info(`✅ Mensagem interna enviada: ${internalContent.substring(0, 50)}...`);
-          } catch (err: any) {
-            logger.error(`❌ Erro ao enviar mensagem interna: ${err.message}`);
-          }
-        }
-      }
-
-      // Log para debug
-      if (internalMessages.length > 0) {
-        logger.info(`📝 Processadas ${uniqueInternalMessages.length} mensagem(ns) interna(s). Resposta limpa: ${cleanedResponse.substring(0, 100)}...`);
-      }
-    }
-
-    // Processar comandos de agendamento se habilitado
-    if (prompt.permitirCriarAgendamentos && response) {
-      const appointmentCommandRegex = /\[AGENDAR\](.*?)\[\/AGENDAR\]/gs;
-      const appointmentCommands: string[] = [];
-      let match;
-
-      while ((match = appointmentCommandRegex.exec(response)) !== null) {
-        const commandContent = match[1].trim();
-        if (commandContent) {
-          appointmentCommands.push(commandContent);
-        }
-      }
-
-      if (appointmentCommands.length > 0) {
-        // Remover frases que indicam que vai verificar depois (já que vamos executar agora)
-        const phrasesToRemove = [
-          /vou verificar[^.]*/gi,
-          /vou checar[^.]*/gi,
-          /um momento[^.]*/gi,
-          /aguarde[^.]*/gi,
-          /por favor[^.]*/gi,
-          /desculpe pela (demora|confusão)[^.]*/gi,
-          /desculpe[^.]*/gi
-        ];
-        
-        for (const phraseRegex of phrasesToRemove) {
-          cleanedResponse = cleanedResponse.replace(phraseRegex, "").trim();
-        }
-        
-        // Processar todos os comandos
-        for (const command of appointmentCommands) {
-          try {
-            const result = await ParseAppointmentCommand({
-              command: `[AGENDAR]${command}[/AGENDAR]`,
-              companyId: ticket.companyId,
-              contactId: contact.id,
-              ticketId: ticket.id,
-              allowCreate: prompt.permitirCriarAgendamentos
-            });
-
-            if (result.success) {
-              // Adicionar mensagem de sucesso à resposta
-              if (result.message) {
-                cleanedResponse = cleanedResponse.replace(
-                  /\[AGENDAR\].*?\[\/AGENDAR\]/gs,
-                  result.message
-                );
-              }
-              logger.info(`✅ Comando de agendamento processado: ${result.message}`);
-            } else {
-              // Adicionar mensagem de erro à resposta
-              const errorMsg = result.message || result.error || "Erro ao processar agendamento";
-              cleanedResponse = cleanedResponse.replace(
-                /\[AGENDAR\].*?\[\/AGENDAR\]/gs,
-                errorMsg
-              );
-              logger.error(`❌ Erro ao processar comando de agendamento: ${result.error}`);
-            }
-          } catch (err: any) {
-            logger.error(`❌ Erro ao processar comando de agendamento: ${err.message}`);
-            cleanedResponse = cleanedResponse.replace(
-              /\[AGENDAR\].*?\[\/AGENDAR\]/gs,
-              "Erro ao processar comando de agendamento. Tente novamente."
-            );
-          }
-        }
-        
-        // Limpar múltiplas quebras de linha e espaços extras
-        cleanedResponse = cleanedResponse
-          .replace(/\n\s*\n\s*\n/g, "\n\n")
-          .replace(/^\s+|\s+$/g, "")
-          .trim();
-      }
-    }
-
-    // Verificar se precisa alterar tag
-    if (prompt.canChangeTag && response?.includes("Ação: Alterar tag")) {
-      // Tentar extrair o nome da tag especificada pela IA
-      const tagMatch = response.match(/\[Tag:\s*([^\]]+)\]/i);
-      if (tagMatch && tagMatch[1]) {
-        const specifiedTagName = tagMatch[1].trim();
-
-        // Buscar tag pelo nome (case-insensitive)
-        const matchedTag = availableTags.find(
-          t => t.name.toLowerCase() === specifiedTagName.toLowerCase()
-        );
-
-        if (matchedTag) {
-          try {
-            // Sincronizar tag do ticket
-            await SyncTags({ tags: [matchedTag], ticketId: ticket.id });
-            logger.info(`Tag alterada para "${matchedTag.name}" no ticket ${ticket.id}`);
-          } catch (err: any) {
-            logger.error(`Erro ao alterar tag: ${err.message}`);
-          }
-        } else {
-          logger.warn(`Tag especificada pela IA não encontrada: "${specifiedTagName}"`);
-        }
-      }
-
-      // Remover ação de alteração de tag da resposta
-      cleanedResponse = cleanedResponse
-        .replace(/Ação: Alterar tag\s*\[Tag:[^\]]+\]/gi, "")
-        .replace("Ação: Alterar tag", "")
-        .trim();
-    }
-
-    // Verificar se precisa transferir para fila
-    if (response?.includes("Ação: Transferir para o setor de atendimento")) {
-      // Se canTransferToAgent não estiver habilitado, apenas enviar mensagem
-      if (!prompt.canTransferToAgent) {
-        const company = await Company.findByPk(ticket.companyId);
-        const language = company?.language || "pt";
-        const wbot = await GetTicketWbot(ticket);
-
-        const waitMessage = {
-          pt: "Aguarde que algum de nossos atendentes já irá lhe atender.",
-          en: "Please wait, one of our attendants will assist you shortly.",
-          es: "Por favor espere, uno de nuestros atendentes le atenderá en breve."
-        };
-
-        const messageText = waitMessage[language as keyof typeof waitMessage] || waitMessage.pt;
-        const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, {
-          text: messageText
-        });
-        await verifyMessage(sentMessage!, ticket, contact);
-
-        cleanedResponse = cleanedResponse
-          .replace(/Ação: Transferir para o setor de atendimento\s*\[Fila:[^\]]+\]/gi, "")
-          .replace("Ação: Transferir para o setor de atendimento", "")
-          .trim();
-      } else {
-        // Determinar fila de destino (usar padrão do Gemini)
-        let targetQueueId: number | null = null;
-        let targetQueueName: string | null = null;
-
-        // Tentar extrair o nome da fila especificada pela IA
-        const queueMatch = response.match(/\[Fila:\s*([^\]]+)\]/i);
-        if (queueMatch && queueMatch[1]) {
-          const specifiedQueueName = queueMatch[1].trim();
-
-          // Buscar fila pelo nome (case-insensitive)
-          const matchedQueue = availableQueues.find(
-            q => q.name.toLowerCase() === specifiedQueueName.toLowerCase()
-          );
-
-          if (matchedQueue) {
-            targetQueueId = matchedQueue.id;
-            targetQueueName = matchedQueue.name;
-            logger.info(`IA especificou fila: "${specifiedQueueName}" -> ID: ${targetQueueId}`);
-          } else {
-            logger.warn(`Fila especificada pela IA não encontrada: "${specifiedQueueName}". Usando fila padrão.`);
-          }
-        }
-
-        // Se não encontrou fila especificada, usar a fila padrão configurada
-        if (!targetQueueId) {
-          targetQueueId = prompt.transferQueueId || prompt.queueId || null;
-          const defaultQueue = availableQueues.find(q => q.id === targetQueueId);
-          targetQueueName = defaultQueue?.name || null;
-          if (targetQueueId) {
-            logger.info(`Usando fila padrão configurada: ID ${targetQueueId}`);
-          }
-        }
-
-        if (targetQueueId) {
-          try {
-            // Gerar resumo do contexto antes de transferir
-            const summary = await generateContextSummary({
-              ticketId: ticket.id,
-              companyId: ticket.companyId,
-              provider: "openai",
-              maxMessages: prompt.maxMessages
-            });
-
-            // Enviar resumo como mensagem interna
-            const summaryMessageData: MessageData = {
-              id: `${ticket.id}-${Date.now()}-summary`,
-              body: `📋 RESUMO DO CONTEXTO (antes da transferência):\n\n${summary}`,
-              ticketId: ticket.id,
-              contactId: ticket.contactId,
-              fromMe: true,
-              read: true,
-              isInternal: true,
-              mediaType: "conversation"
-            };
-            await CreateMessageService({ messageData: summaryMessageData, companyId: ticket.companyId });
-            logger.info(`Resumo do contexto gerado antes da transferência do ticket ${ticket.id}`);
-          } catch (err: any) {
-            logger.error(`Erro ao gerar resumo antes da transferência: ${err.message}`);
-            // Continua com a transferência mesmo se o resumo falhar
-          }
-
-          // Transferir para a fila
-          // NOTA: UpdateTicketService já envia a mensagem automática de transferência, não precisa chamar sendTransferMessage novamente
-          await transferQueue(targetQueueId, ticket, contact);
-          logger.info(`Ticket ${ticket.id} transferido para fila ${targetQueueId} (${targetQueueName})`);
-        } else {
-          logger.error(`Nenhuma fila disponível para transferência do ticket ${ticket.id}`);
-        }
-
-        // Remover ação e especificação de fila da resposta
-        cleanedResponse = cleanedResponse
-          .replace(/Ação: Transferir para o setor de atendimento\s*\[Fila:[^\]]+\]/gi, "")
-          .replace("Ação: Transferir para o setor de atendimento", "")
-          .trim();
-      }
-    }
-
-    // Validação final: garantir que nenhum marcador [INTERNA] seja enviado ao cliente
-    if (cleanedResponse.includes("[INTERNA]") || cleanedResponse.includes("[/INTERNA]")) {
-      logger.error(`⚠️ ATENÇÃO: Marcadores [INTERNA] ainda presentes na resposta! Removendo...`);
-      cleanedResponse = cleanedResponse
-        .replace(/\[INTERNA\][^\[]*?/g, "")
-        .replace(/\[\/INTERNA\]/g, "")
-        .trim();
-    }
-
-    // Enviar resposta (sem mensagens internas)
-    // Se a resposta limpa estiver vazia mas havia mensagens internas, enviar mensagem padrão
-    if (!cleanedResponse.trim() && internalMessages.length > 0) {
-      logger.warn(`Resposta limpa vazia após remover mensagens internas. Enviando mensagem padrão.`);
-      cleanedResponse = "Entendi sua solicitação. Estou verificando e em breve retorno com mais informações.";
-    }
+    const { cleanedResponse } = await processPromptAiReplyActions({
+      response: response || "",
+      prompt,
+      ticket,
+      contact,
+      availableQueues,
+      availableTags,
+      execute: true,
+      channel: "whatsapp",
+      sendWhatsAppToCustomer
+    });
 
     if (cleanedResponse.trim()) {
       // Verificar se mensagem duplicada antes de enviar
@@ -1887,215 +1598,23 @@ const handleOpenAi = async (
     });
     let response = getChatCompletionAssistantText(chat.data);
 
-    // Aplicar mesma lógica de mensagens internas e transferência para áudio
-    let cleanedAudioResponse = response || "";
-    const audioInternalMessages: string[] = [];
+    const sendWhatsAppAudio = async (text: string): Promise<void> => {
+      const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, { text });
+      await verifyMessage(sentMessage!, ticket, contact);
+    };
 
-    if (prompt.canSendInternalMessages && response) {
-      // Regex unificado que captura [INTERNA]...[/INTERNA] de forma não-gulosa
-      const internalMessageRegex = /\[INTERNA\](.*?)\[\/INTERNA\]/gs;
-      const processedMatches = new Set<string>(); // Para evitar duplicação
+    const { cleanedResponse: cleanedAudioResponse } = await processPromptAiReplyActions({
+      response: response || "",
+      prompt,
+      ticket,
+      contact,
+      availableQueues,
+      availableTags,
+      execute: true,
+      channel: "whatsapp",
+      sendWhatsAppToCustomer: sendWhatsAppAudio
+    });
 
-      let match;
-      // Processar todas as mensagens internas com fechamento explícito
-      while ((match = internalMessageRegex.exec(response)) !== null) {
-        const fullMatch = match[0]; // [INTERNA]...[/INTERNA]
-        const internalContent = match[1].trim();
-
-        // Evitar processar a mesma mensagem duas vezes
-        if (internalContent && !processedMatches.has(fullMatch)) {
-          processedMatches.add(fullMatch);
-          audioInternalMessages.push(internalContent);
-          // Remover o marcador completo da resposta
-          cleanedAudioResponse = cleanedAudioResponse.replace(fullMatch, "").trim();
-        }
-      }
-
-      // Limpar qualquer [INTERNA] restante sem fechamento
-      const openInternalRegex = /\[INTERNA\][^\[]*?(?=\[INTERNA\]|$)/gs;
-      while ((match = openInternalRegex.exec(cleanedAudioResponse)) !== null) {
-        const fullMatch = match[0];
-        const internalContent = match[0].replace(/\[INTERNA\]/g, "").trim();
-
-        if (internalContent && !fullMatch.includes("[/INTERNA]") && !processedMatches.has(fullMatch)) {
-          processedMatches.add(fullMatch);
-          audioInternalMessages.push(internalContent);
-          cleanedAudioResponse = cleanedAudioResponse.replace(fullMatch, "").trim();
-        }
-      }
-
-      // Limpeza final
-      cleanedAudioResponse = cleanedAudioResponse
-        .replace(/\[INTERNA\][^\[]*?/g, "")
-        .replace(/\[\/INTERNA\]/g, "")
-        .replace(/\n\s*\n\s*\n/g, "\n\n")
-        .trim();
-
-      // Enviar mensagens internas (apenas uma vez cada)
-      const uniqueAudioInternalMessages = [...new Set(audioInternalMessages)];
-      for (const internalContent of uniqueAudioInternalMessages) {
-        if (internalContent.trim()) {
-          try {
-            const messageData: MessageData = {
-              id: `${ticket.id}-${Date.now()}-${Math.random()}`,
-              body: internalContent.trim(),
-              ticketId: ticket.id,
-              contactId: ticket.contactId,
-              fromMe: true,
-              read: true,
-              isInternal: true,
-              mediaType: "conversation"
-            };
-            await CreateMessageService({ messageData, companyId: ticket.companyId });
-            logger.info(`✅ Mensagem interna (áudio) enviada: ${internalContent.substring(0, 50)}...`);
-          } catch (err: any) {
-            logger.error(`❌ Erro ao enviar mensagem interna (áudio): ${err.message}`);
-          }
-        }
-      }
-    }
-
-    // Verificar se precisa alterar tag (áudio)
-    if (prompt.canChangeTag && response?.includes("Ação: Alterar tag")) {
-      // Tentar extrair o nome da tag especificada pela IA
-      const tagMatch = response.match(/\[Tag:\s*([^\]]+)\]/i);
-      if (tagMatch && tagMatch[1]) {
-        const specifiedTagName = tagMatch[1].trim();
-
-        // Buscar tag pelo nome (case-insensitive)
-        const matchedTag = availableTags.find(
-          t => t.name.toLowerCase() === specifiedTagName.toLowerCase()
-        );
-
-        if (matchedTag) {
-          try {
-            // Sincronizar tag do ticket
-            await SyncTags({ tags: [matchedTag], ticketId: ticket.id });
-            logger.info(`Tag alterada para "${matchedTag.name}" no ticket ${ticket.id} (áudio)`);
-          } catch (err: any) {
-            logger.error(`Erro ao alterar tag (áudio): ${err.message}`);
-          }
-        } else {
-          logger.warn(`Tag especificada pela IA não encontrada (áudio): "${specifiedTagName}"`);
-        }
-      }
-
-      // Remover ação de alteração de tag da resposta
-      cleanedAudioResponse = cleanedAudioResponse
-        .replace(/Ação: Alterar tag\s*\[Tag:[^\]]+\]/gi, "")
-        .replace("Ação: Alterar tag", "")
-        .trim();
-    }
-
-    if (response?.includes("Ação: Transferir para o setor de atendimento")) {
-      // Se canTransferToAgent não estiver habilitado, apenas enviar mensagem
-      if (!prompt.canTransferToAgent) {
-        const company = await Company.findByPk(ticket.companyId);
-        const language = company?.language || "pt";
-        const wbot = await GetTicketWbot(ticket);
-
-        const waitMessage = {
-          pt: "Aguarde que algum de nossos atendentes já irá lhe atender.",
-          en: "Please wait, one of our attendants will assist you shortly.",
-          es: "Por favor espere, uno de nuestros atendentes le atenderá en breve."
-        };
-
-        const messageText = waitMessage[language as keyof typeof waitMessage] || waitMessage.pt;
-        const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, {
-          text: messageText
-        });
-        await verifyMessage(sentMessage!, ticket, contact);
-
-        cleanedAudioResponse = cleanedAudioResponse
-          .replace(/Ação: Transferir para o setor de atendimento\s*\[Fila:[^\]]+\]/gi, "")
-          .replace("Ação: Transferir para o setor de atendimento", "")
-          .trim();
-      } else {
-        // Determinar fila de destino (usar padrão do Gemini)
-        let targetQueueId: number | null = null;
-        let targetQueueName: string | null = null;
-
-        // Tentar extrair o nome da fila especificada pela IA
-        const queueMatch = response.match(/\[Fila:\s*([^\]]+)\]/i);
-        if (queueMatch && queueMatch[1]) {
-          const specifiedQueueName = queueMatch[1].trim();
-
-          // Buscar fila pelo nome (case-insensitive)
-          const matchedQueue = availableQueues.find(
-            q => q.name.toLowerCase() === specifiedQueueName.toLowerCase()
-          );
-
-          if (matchedQueue) {
-            targetQueueId = matchedQueue.id;
-            targetQueueName = matchedQueue.name;
-            logger.info(`IA especificou fila (áudio): "${specifiedQueueName}" -> ID: ${targetQueueId}`);
-          } else {
-            logger.warn(`Fila especificada pela IA não encontrada (áudio): "${specifiedQueueName}". Usando fila padrão.`);
-          }
-        }
-
-        // Se não encontrou fila especificada, usar a fila padrão configurada
-        if (!targetQueueId) {
-          targetQueueId = prompt.transferQueueId || prompt.queueId || null;
-          const defaultQueue = availableQueues.find(q => q.id === targetQueueId);
-          targetQueueName = defaultQueue?.name || null;
-          if (targetQueueId) {
-            logger.info(`Usando fila padrão configurada (áudio): ID ${targetQueueId}`);
-          }
-        }
-
-        if (targetQueueId) {
-          try {
-            const summary = await generateContextSummary({
-              ticketId: ticket.id,
-              companyId: ticket.companyId,
-              provider: "openai",
-              maxMessages: prompt.maxMessages
-            });
-
-            const summaryMessageData: MessageData = {
-              id: `${ticket.id}-${Date.now()}-summary`,
-              body: `📋 RESUMO DO CONTEXTO (antes da transferência):\n\n${summary}`,
-              ticketId: ticket.id,
-              contactId: ticket.contactId,
-              fromMe: true,
-              read: true,
-              isInternal: true,
-              mediaType: "conversation"
-            };
-            await CreateMessageService({ messageData: summaryMessageData, companyId: ticket.companyId });
-            logger.info(`Resumo do contexto gerado antes da transferência do ticket ${ticket.id} (áudio)`);
-          } catch (err: any) {
-            logger.error(`Erro ao gerar resumo antes da transferência (áudio): ${err.message}`);
-            // Continua com a transferência mesmo se o resumo falhar
-          }
-
-          // Transferir para a fila
-          // NOTA: UpdateTicketService já envia a mensagem automática de transferência, não precisa chamar sendTransferMessage novamente
-          await transferQueue(targetQueueId, ticket, contact);
-          logger.info(`Ticket ${ticket.id} transferido para fila ${targetQueueId} (${targetQueueName}) (áudio)`);
-        } else {
-          logger.error(`Nenhuma fila disponível para transferência do ticket ${ticket.id} (áudio)`);
-        }
-
-        // Remover ação e especificação de fila da resposta
-        cleanedAudioResponse = cleanedAudioResponse
-          .replace(/Ação: Transferir para o setor de atendimento\s*\[Fila:[^\]]+\]/gi, "")
-          .replace("Ação: Transferir para o setor de atendimento", "")
-          .trim();
-      }
-    }
-
-    // Validação final para áudio: garantir que nenhum marcador [INTERNA] seja enviado ao cliente
-    if (cleanedAudioResponse.includes("[INTERNA]") || cleanedAudioResponse.includes("[/INTERNA]")) {
-      logger.error(`⚠️ ATENÇÃO: Marcadores [INTERNA] ainda presentes na resposta de áudio! Removendo...`);
-      cleanedAudioResponse = cleanedAudioResponse
-        .replace(/\[INTERNA\][^\[]*?/g, "")
-        .replace(/\[\/INTERNA\]/g, "")
-        .trim();
-    }
-
-    // Enviar resposta de áudio (sem mensagens internas)
     if (cleanedAudioResponse.trim()) {
       // Verificar se mensagem duplicada antes de enviar (áudio)
       const recentMessage = await Message.findOne({

@@ -94,7 +94,11 @@ const UpdateTicketService = async ({
     const oldUserId = ticket.user?.id;
     const oldQueueId = ticket.queueId;
 
-    if (oldStatus === "closed" || (whatsappId !== null && whatsappId !== undefined && Number(whatsappId) !== ticket.whatsappId)) {
+    const shouldResetSessionStart =
+      oldStatus === "closed" ||
+      (whatsappId !== null && whatsappId !== undefined && Number(whatsappId) !== ticket.whatsappId);
+
+    if (shouldResetSessionStart) {
       // let otherTicket = await Ticket.findOne({
       //   where: {
       //     contactId: ticket.contactId,
@@ -351,7 +355,8 @@ const UpdateTicketService = async ({
       userId,
       whatsappId: whatsappId !== null ? whatsappId : undefined,
       chatbot,
-      queueOptionId
+      queueOptionId,
+      sessionStartedAt: shouldResetSessionStart ? new Date() : ticket.sessionStartedAt
     });
 
     await ticket.reload();

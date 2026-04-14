@@ -5,8 +5,17 @@ import Ticket from "../../models/Ticket";
 import Contact from "../../models/Contact";
 import User from "../../models/User";
 import Queue from "../../models/Queue";
+import Tag from "../../models/Tag";
+import Whatsapp from "../../models/Whatsapp";
 import ShowTicketService from "../TicketServices/ShowTicketService";
+import ShowPromptService from "../PromptServices/ShowPromptService";
+import ListQueuesService from "../QueueService/ListQueuesService";
 import { AIProviderSelector } from "./AIProviderSelector";
+import {
+  processPromptAiReplyActions,
+  buildPromptActionFormattingInstructions,
+  PendingAction
+} from "./PromptReplyActionExecutor";
 
 interface AnalyzeChatParams {
   ticketId: number;
@@ -45,7 +54,47 @@ interface ImproveMessageParams {
 interface ImproveMessageResponse {
   improvedText: string;
   originalText?: string;
+  /** Texto bruto da IA (com marcadores) para POST /chat-ai/apply-reply-actions quando houver ações. */
+  modelReplyForActions?: string;
+  pendingActions?: PendingAction[];
 }
+
+export interface ApplyChatReplyActionsParams {
+  ticketId: number;
+  companyId: number;
+  userId: number;
+  modelReply: string;
+}
+
+export interface ApplyChatReplyActionsResult {
+  success: boolean;
+  cleanedText: string;
+  pendingActions: PendingAction[];
+}
+
+const resolvePromptForChatAI = async (ticket: Ticket, companyId: number): Promise<any | null> => {
+  if (ticket.promptId) {
+    try {
+      const p = await ShowPromptService({ promptId: ticket.promptId, companyId });
+      if (p) return p;
+    } catch {
+      /* ignore */
+    }
+  }
+  const q = ticket.queue as any;
+  if (q?.prompt) {
+    return q.prompt;
+  }
+  const wa = await Whatsapp.findByPk(ticket.whatsappId, { attributes: ["id", "promptId"] });
+  if (wa?.promptId) {
+    try {
+      return await ShowPromptService({ promptId: wa.promptId, companyId });
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+};
 
 // Função para formatar data/hora
 const formatDateTime = (date: Date | string): string => {
@@ -64,14 +113,20 @@ const formatDateTime = (date: Date | string): string => {
 // Buscar últimas 20 mensagens do ticket
 const fetchLastMessages = async (
   ticketId: number,
-  companyId: number
+  companyId: number,
+  sessionStartedAt?: Date
 ): Promise<any[]> => {
+  const whereMessages: any = {
+    ticketId,
+    companyId,
+    isDeleted: false
+  };
+  if (sessionStartedAt) {
+    whereMessages.createdAt = { [Op.gte]: sessionStartedAt };
+  }
+
   const messages = await Message.findAll({
-    where: {
-      ticketId,
-      companyId,
-      isDeleted: false
-    },
+    where: whereMessages,
     include: [
       "contact"
     ],
@@ -117,7 +172,7 @@ export const analyzeChatContext = async ({
   });
 
   // Buscar últimas 20 mensagens
-  const messages = await fetchLastMessages(ticketId, companyId);
+  const messages = await fetchLastMessages(ticketId, companyId, ticket.sessionStartedAt);
 
   if (messages.length === 0) {
     throw new AppError("ERR_NO_MESSAGES_FOUND", 404);
@@ -348,7 +403,6 @@ export const improveMessage = async ({
   companyId,
   draftText = ""
 }: ImproveMessageParams): Promise<ImproveMessageResponse> => {
-  // Selecionar provider usando configuração automática
   const provider = await AIProviderSelector.getProvider(companyId, "messageImprovement");
 
   const ticket = await ShowTicketService(ticketId, companyId);
@@ -356,40 +410,45 @@ export const improveMessage = async ({
     throw new AppError("ERR_NO_TICKET_FOUND", 404);
   }
 
-  // Buscar informações do ticket
-  const ticketData = await Ticket.findByPk(ticketId, {
-    include: [
-      { model: Contact, attributes: ["id", "name", "number"] },
-      { model: User, attributes: ["id", "name"] },
-      { model: Queue, attributes: ["id", "name"] }
-    ]
-  });
+  const promptForActions = await resolvePromptForChatAI(ticket, companyId);
+  const availableQueues = await ListQueuesService({ companyId });
+  const queuesList = availableQueues.map(q => `- ${q.name} (ID: ${q.id})`).join("\n");
+  const tagsForPrompt =
+    promptForActions?.canChangeTag === true
+      ? await Tag.findAll({ where: { companyId } })
+      : [];
+  const tagsList = tagsForPrompt.map(t => `- ${t.name} (ID: ${t.id})`).join("\n");
+  const actionInstructions = promptForActions
+    ? buildPromptActionFormattingInstructions(promptForActions, queuesList, tagsList)
+    : "";
 
-  if (!ticketData) {
-    throw new AppError("ERR_NO_TICKET_FOUND", 404);
-  }
+  const messages = await fetchLastMessages(ticketId, companyId, ticket.sessionStartedAt);
 
-  // Buscar últimas 20 mensagens para contexto
-  const messages = await fetchLastMessages(ticketId, companyId);
+  const messagesContext =
+    messages.length > 0
+      ? messages
+          .map((msg) => {
+            return `[${msg.createdAt}] ${msg.sender} (${msg.contactName}): ${msg.body || "[Mídia]"}`;
+          })
+          .join("\n")
+      : "Nenhuma mensagem anterior na conversa.";
 
-  // Construir contexto das mensagens
-  const messagesContext = messages.length > 0
-    ? messages.map((msg, index) => {
-      return `[${msg.createdAt}] ${msg.sender} (${msg.contactName}): ${msg.body || "[Mídia]"}`;
-    }).join("\n")
-    : "Nenhuma mensagem anterior na conversa.";
+  const contactName = ticket.contact?.name || "Desconhecido";
+  const actionHint = actionInstructions
+    ? `\n\nSe o prompt da empresa permitir, pode incluir no MESMO texto que será enviado ao cliente: notas internas [INTERNA]...[/INTERNA], transferência de fila, alteração de tag ou blocos [AGENDAR]...[/AGENDAR], conforme as instruções abaixo.${actionInstructions}`
+    : "";
 
-  // Construir prompt baseado se há rascunho ou não
   let systemPrompt = `Você é o Compuchat, um assistente de IA especializado em melhorar mensagens de atendimento ao cliente.
 
 CONTEXTO DO TICKET:
-- Status: ${ticketData.status}
-- Contato: ${ticketData.contact?.name || "Desconhecido"}
-- Atendente: ${ticketData.user?.name || "Sem atendente"}
-- Fila: ${ticketData.queue?.name || "Sem fila"}
+- Status: ${ticket.status}
+- Contato: ${contactName}
+- Atendente: ${(ticket as any).user?.name || "Sem atendente"}
+- Fila: ${(ticket as any).queue?.name || "Sem fila"}
 
-ÚLTIMAS 20 MENSAGENS DA CONVERSA:
+ÚLTIMAS MENSAGENS DA CONVERSA:
 ${messagesContext}
+${actionHint}
 
 ${draftText.trim()
       ? `RASCUNHO DA MENSAGEM DO ATENDENTE:
@@ -402,19 +461,19 @@ INSTRUÇÕES:
 - Mantenha a intenção e o significado original
 - Se necessário, adicione informações relevantes do contexto da conversa
 - Mantenha a mensagem clara, objetiva e apropriada para atendimento ao cliente
-- Use o nome do cliente quando apropriado: ${ticketData.contact?.name || "o cliente"}
+- Use o nome do cliente quando apropriado: ${contactName}
 - Seja respeitoso e prestativo
 
-IMPORTANTE: Retorne APENAS o texto melhorado, sem explicações ou comentários adicionais.`
+IMPORTANTE: Retorne APENAS o texto melhorado (e marcadores de ação, se aplicável), sem explicações ou comentários adicionais.`
       : `INSTRUÇÕES:
 - Com base no contexto da conversa acima, sugira uma resposta completa e apropriada
 - A resposta deve ser profissional, empática e adequada ao contexto
 - Considere o status do ticket e o histórico da conversa
-- Use o nome do cliente quando apropriado: ${ticketData.contact?.name || "o cliente"}
+- Use o nome do cliente quando apropriado: ${contactName}
 - Seja respeitoso, prestativo e direto
 - A resposta deve ajudar a resolver a situação do cliente de forma eficiente
 
-IMPORTANTE: Retorne APENAS o texto da resposta sugerida, sem explicações ou comentários adicionais.`}`;
+IMPORTANTE: Retorne APENAS o texto da resposta sugerida (e marcadores de ação, se aplicável), sem explicações ou comentários adicionais.`}`;
 
   try {
     console.log(`📤 Enviando requisição para ${provider.name} - Melhorar mensagem...`);
@@ -425,15 +484,40 @@ IMPORTANTE: Retorne APENAS o texto da resposta sugerida, sem explicações ou co
 
     console.log(`✅ Texto melhorado gerado com sucesso usando ${provider.name} (${textResponse.length} caracteres)`);
 
-    const cleanedText = textResponse
+    const normalizedLlm = textResponse
       .replace(/```[\s\S]*?```/g, "")
       .replace(/`([^`]+)`/g, "$1")
       .replace(/^\s*["']|["']\s*$/g, "")
       .trim();
 
+    let improvedText = normalizedLlm || draftText.trim() || "Desculpe, não foi possível melhorar a mensagem.";
+    let modelReplyForActions: string | undefined;
+    let pendingActions: PendingAction[] = [];
+
+    if (promptForActions && ticket.contact) {
+      const availableTags = await Tag.findAll({ where: { companyId } });
+      const dry = await processPromptAiReplyActions({
+        response: normalizedLlm,
+        prompt: promptForActions,
+        ticket,
+        contact: ticket.contact as Contact,
+        availableQueues,
+        availableTags,
+        execute: false,
+        channel: "agent_panel"
+      });
+      improvedText = dry.cleanedResponse.trim() || improvedText;
+      pendingActions = dry.pendingActions;
+      if (pendingActions.length > 0) {
+        modelReplyForActions = normalizedLlm;
+      }
+    }
+
     return {
-      improvedText: cleanedText || (draftText.trim() || "Desculpe, não foi possível melhorar a mensagem."),
-      originalText: draftText.trim() || undefined
+      improvedText,
+      originalText: draftText.trim() || undefined,
+      modelReplyForActions,
+      pendingActions: pendingActions.length ? pendingActions : undefined
     };
   } catch (err: any) {
     console.error(`❌ Erro ao melhorar mensagem com ${provider.name}:`, {
@@ -446,6 +530,47 @@ IMPORTANTE: Retorne APENAS o texto da resposta sugerida, sem explicações ou co
 
     throw new AppError(`Erro ao melhorar mensagem: ${err.message || "Erro desconhecido"}`, 500);
   }
+};
+
+export const applyChatModelReplyActions = async ({
+  ticketId,
+  companyId,
+  userId: _userId,
+  modelReply
+}: ApplyChatReplyActionsParams): Promise<ApplyChatReplyActionsResult> => {
+  if (!modelReply || !String(modelReply).trim()) {
+    throw new AppError("modelReply é obrigatório", 400);
+  }
+
+  const ticket = await ShowTicketService(ticketId, companyId);
+  const prompt = await resolvePromptForChatAI(ticket, companyId);
+  if (!prompt) {
+    throw new AppError("Prompt não encontrado para executar ações neste ticket.", 400);
+  }
+  const contact = ticket.contact as Contact;
+  if (!contact) {
+    throw new AppError("Contato não encontrado no ticket.", 400);
+  }
+
+  const availableQueues = await ListQueuesService({ companyId });
+  const availableTags = await Tag.findAll({ where: { companyId } });
+
+  const { cleanedResponse, pendingActions } = await processPromptAiReplyActions({
+    response: modelReply,
+    prompt,
+    ticket,
+    contact,
+    availableQueues,
+    availableTags,
+    execute: true,
+    channel: "agent_panel"
+  });
+
+  return {
+    success: true,
+    cleanedText: cleanedResponse,
+    pendingActions
+  };
 };
 
 interface GenerateTicketInfoParams {
@@ -486,7 +611,7 @@ export const generateTicketInfo = async ({
   }
 
   // Buscar últimas 20 mensagens para contexto
-  const messages = await fetchLastMessages(ticketId, companyId);
+  const messages = await fetchLastMessages(ticketId, companyId, ticket.sessionStartedAt);
 
   // Construir contexto das mensagens
   const messagesContext = messages.length > 0
