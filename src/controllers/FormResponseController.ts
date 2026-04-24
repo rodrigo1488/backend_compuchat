@@ -8,6 +8,7 @@ import FormResponse from "../models/FormResponse";
 import ResponseAnswer from "../models/ResponseAnswer";
 import ProcessFormResponseService from "../services/FormServices/ProcessFormResponseService";
 import UpdateOrderStatusService from "../services/OrderServices/UpdateOrderStatusService";
+import { ReprintLastPrintJobForFormResponse } from "../services/PrintJobService/ReprintPrintJobService";
 import AppError from "../errors/AppError";
 import { verifyOrderToken } from "../helpers/MesaLinkSign";
 
@@ -707,5 +708,28 @@ export const getAnalytics = async (
     responseCount,
     responsesByDate,
     fieldAnalytics,
+  });
+};
+
+export const reprintPrint = async (req: Request, res: Response): Promise<Response> => {
+  const { companyId } = req.user;
+  const formId = Number(req.params.formId);
+  const responseId = Number(req.params.id);
+
+  const { job, dispatched } = await ReprintLastPrintJobForFormResponse({
+    companyId,
+    formId,
+    formResponseId: responseId
+  });
+
+  return res.status(201).json({
+    id: job.id,
+    status: job.status,
+    deviceId: job.deviceId,
+    formResponseId: job.formResponseId,
+    dispatched,
+    message: dispatched
+      ? "Reimpressão enviada para o agente de impressão."
+      : "Reimpressão registrada e ficará na fila até o agente conectar à impressora."
   });
 };
