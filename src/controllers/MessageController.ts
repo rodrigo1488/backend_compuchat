@@ -343,6 +343,72 @@ export const sendMessageByPhone = async (req: Request, res: Response): Promise<R
   }
 };
 
+/** Envia arquivo (ex.: PDF do recibo) para um número via WhatsApp padrão da empresa (fila SendMessage). */
+export const sendMediaByPhone = async (req: Request, res: Response): Promise<Response> => {
+  const { companyId } = req.user;
+  const file = req.file as Express.Multer.File | undefined;
+
+  if (!file?.path) {
+    throw new AppError("Arquivo é obrigatório", 400);
+  }
+
+  const numberRaw = req.body?.number;
+  const caption = typeof req.body?.body === "string" ? req.body.body : "Recibo";
+
+  if (!numberRaw || typeof numberRaw !== "string") {
+    throw new AppError("O número é obrigatório", 400);
+  }
+
+  const defaultWhatsapp =
+    (await Whatsapp.findOne({
+      where: { isDefault: true, companyId, status: "CONNECTED" }
+    })) ||
+    (await Whatsapp.findOne({
+      where: { companyId, status: "CONNECTED" }
+    }));
+
+  if (!defaultWhatsapp) {
+    throw new AppError("Nenhuma conexão WhatsApp disponível", 400);
+  }
+
+  const queues = req.app.get("queues") as
+    | { messageQueue?: { add: (name: string, data: unknown, opts?: unknown) => Promise<unknown> } }
+    | undefined;
+  if (!queues?.messageQueue) {
+    throw new AppError("Fila de mensagens indisponível", 503);
+  }
+
+  try {
+    const CheckValidNumber = await CheckContactNumber(numberRaw, companyId);
+    const number = CheckValidNumber.jid.replace(/\D/g, "");
+
+    await queues.messageQueue.add(
+      "SendMessage",
+      {
+        whatsappId: defaultWhatsapp.id,
+        data: {
+          number,
+          body: caption || "Recibo",
+          mediaPath: file.path,
+          fileName: file.originalname || "recibo.pdf"
+        }
+      },
+      { removeOnComplete: true, attempts: 3 }
+    );
+
+    return res.status(200).send({ mensagem: "Mensagem enviada" });
+  } catch (err: any) {
+    if (err instanceof AppError) throw err;
+    if (!err || Object.keys(err).length === 0) {
+      throw new AppError(
+        "Não foi possível enviar a mensagem, tente novamente em alguns instantes",
+        500
+      );
+    }
+    throw new AppError(err.message || "Erro ao enviar mídia", 400);
+  }
+};
+
 export const send = async (req: Request, res: Response): Promise<Response> => {
   const { whatsappId } = req.params as unknown as { whatsappId: number };
   const messageData: MessageData = req.body;

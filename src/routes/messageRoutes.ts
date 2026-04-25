@@ -19,5 +19,11 @@ messageRoutes.post("/messages/:messageId/react", isAuth, MessageController.react
 messageRoutes.post("/messages/:messageId/forward", isAuth, MessageController.forward);
 messageRoutes.post("/api/messages/send", tokenAuth, upload.array("medias"), MessageController.send);
 messageRoutes.post("/messages/send-by-phone", isAuth, MessageController.sendMessageByPhone);
+messageRoutes.post(
+  "/messages/send-media-by-phone",
+  isAuth,
+  upload.single("file"),
+  MessageController.sendMediaByPhone
+);
 
 export default messageRoutes;
