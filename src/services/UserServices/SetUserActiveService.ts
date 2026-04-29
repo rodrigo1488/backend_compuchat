@@ -1,7 +1,10 @@
-import { Op } from "sequelize";
+import { Op, Transaction } from "sequelize";
 
 import User from "../../models/User";
+import Chat from "../../models/Chat";
+import ChatUser from "../../models/ChatUser";
 import AppError from "../../errors/AppError";
+import database from "../../database";
 
 interface Request {
   userId: string | number;
@@ -43,11 +46,62 @@ const SetUserActiveService = async ({
       }
     }
 
-    await user.update({
-      active: false,
-      tokenVersion: user.tokenVersion + 1,
-      online: false,
-    });
+    const transaction: Transaction = await database.transaction();
+
+    try {
+      await user.update(
+        {
+          active: false,
+          tokenVersion: user.tokenVersion + 1,
+          online: false,
+        },
+        { transaction }
+      );
+
+      const relatedChatUsers = await ChatUser.findAll({
+        where: { userId: user.id },
+        attributes: ["chatId"],
+        transaction,
+      });
+
+      const relatedChatIds = relatedChatUsers.map(chatUser => chatUser.chatId);
+
+      if (relatedChatIds.length > 0) {
+        const individualChats = await Chat.findAll({
+          where: {
+            id: { [Op.in]: relatedChatIds },
+            companyId,
+            isGroup: false,
+          },
+          attributes: ["id"],
+          transaction,
+        });
+
+        const individualChatIds = individualChats.map(chat => chat.id);
+
+        if (individualChatIds.length > 0) {
+          await Chat.destroy({
+            where: {
+              id: { [Op.in]: individualChatIds },
+            },
+            transaction,
+          });
+        }
+
+        await ChatUser.destroy({
+          where: {
+            userId: user.id,
+            chatId: { [Op.in]: relatedChatIds },
+          },
+          transaction,
+        });
+      }
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
   } else {
     await user.update({ active: true });
   }

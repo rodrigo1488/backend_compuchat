@@ -21,9 +21,15 @@ const CreateService = async (data: Data): Promise<Chat> => {
   });
 
   if (Array.isArray(users) && users.length > 0) {
-    await ChatUser.create({ chatId: record.id, userId: ownerId });
-    for (let user of users) {
-      await ChatUser.create({ chatId: record.id, userId: user.id });
+    const participantIds = Array.from(
+      new Set(
+        [ownerId, ...users.map(user => Number(user.id))]
+          .filter(id => Number.isInteger(id) && id > 0)
+      )
+    );
+
+    for (const participantId of participantIds) {
+      await ChatUser.create({ chatId: record.id, userId: participantId });
     }
   }
 
