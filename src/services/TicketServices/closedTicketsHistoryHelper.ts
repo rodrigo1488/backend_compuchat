@@ -134,11 +134,11 @@ export const buildClosedTicketsWhere = async (
     } else {
       to = endOfDay(new Date());
     }
+    const updatedAtRange = {
+      updatedAt: { [Op.between]: [from, to] }
+    } as Filterable["where"];
     whereCondition = {
-      [Op.and]: [
-        whereCondition,
-        { updatedAt: { [Op.between]: [from, to] } }
-      ]
+      [Op.and]: [whereCondition, updatedAtRange]
     };
   }
 
