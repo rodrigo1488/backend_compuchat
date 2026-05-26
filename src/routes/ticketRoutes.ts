@@ -2,8 +2,22 @@ import express from "express";
 import isAuth from "../middleware/isAuth";
 
 import * as TicketController from "../controllers/TicketController";
+import * as TicketHistoryController from "../controllers/TicketHistoryController";
 
 const ticketRoutes = express.Router();
+
+ticketRoutes.get("/tickets/history", isAuth, TicketHistoryController.index);
+ticketRoutes.get("/tickets/history/search", isAuth, TicketHistoryController.search);
+ticketRoutes.get(
+  "/tickets/history/contact/:contactId/timeline",
+  isAuth,
+  TicketHistoryController.contactTimeline
+);
+ticketRoutes.get(
+  "/tickets/history/contact/:contactId",
+  isAuth,
+  TicketHistoryController.contactSessions
+);
 
 ticketRoutes.get("/tickets", isAuth, TicketController.index);
 
