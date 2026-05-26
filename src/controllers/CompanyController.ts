@@ -205,6 +205,9 @@ export const indexPlan = async (req: Request, res: Response): Promise<Response> 
 };
 
 export const createFreeAccount = async (req: Request, res: Response): Promise<Response> => {
+  // #region agent log
+  fetch('http://127.0.0.1:7722/ingest/1dc2964f-dbc4-42bf-9ebd-070565292249',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6145bb'},body:JSON.stringify({sessionId:'6145bb',location:'CompanyController.ts:createFreeAccount',message:'createFreeAccount hit',data:{hasName:!!req.body?.name,planId:req.body?.planId,planIdType:typeof req.body?.planId},timestamp:Date.now(),hypothesisId:'H4'})}).catch(()=>{});
+  // #endregion
   logger.info("=== createFreeAccount chamado ===");
   logger.info("Body recebido:", {
     companyName: req.body.name,

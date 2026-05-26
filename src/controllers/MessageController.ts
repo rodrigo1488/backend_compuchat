@@ -28,6 +28,9 @@ import CheckIsValidContact from "../services/WbotServices/CheckIsValidContact";
 import GetProfilePicUrl from "../services/WbotServices/GetProfilePicUrl";
 import CreateOrUpdateContactService from "../services/ContactServices/CreateOrUpdateContactService";
 import { logger } from "../utils/logger";
+import canUserAccessTicket, {
+  canUserSendOnTicket
+} from "../helpers/CanUserAccessTicketQueue";
 type IndexQuery = {
   pageNumber: string;
 };
@@ -46,22 +49,22 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
   const { ticketId } = req.params;
   const { pageNumber } = req.query as IndexQuery;
   const { companyId, profile } = req.user;
-  const queues: number[] = [];
 
   if (profile !== "admin") {
     const user = await User.findByPk(req.user.id, {
       include: [{ model: Queue, as: "queues" }]
     });
-    user.queues.forEach(queue => {
-      queues.push(queue.id);
-    });
+    const ticket = await ShowTicketService(ticketId, companyId);
+    if (!canUserAccessTicket(ticket, user)) {
+      throw new AppError("ERR_ACCESS_DENIED_TICKET", 403);
+    }
   }
 
   const { count, messages, ticket, hasMore } = await ListMessagesService({
     pageNumber,
     ticketId,
     companyId,
-    queues
+    queues: []
   });
 
   SetTicketMessagesAsRead(ticket);
@@ -73,22 +76,22 @@ export const search = async (req: Request, res: Response): Promise<Response> => 
   const { ticketId } = req.params;
   const { query } = req.query as { query?: string };
   const { companyId, profile } = req.user;
-  const queues: number[] = [];
 
   if (profile !== "admin") {
     const user = await User.findByPk(req.user.id, {
       include: [{ model: Queue, as: "queues" }]
     });
-    user.queues.forEach(queue => {
-      queues.push(queue.id);
-    });
+    const ticket = await ShowTicketService(ticketId, companyId);
+    if (!canUserAccessTicket(ticket, user)) {
+      throw new AppError("ERR_ACCESS_DENIED_TICKET", 403);
+    }
   }
 
   const { messages } = await SearchMessagesService({
     ticketId,
     companyId,
     query: query || "",
-    queues
+    queues: []
   });
 
   return res.json({ messages });
@@ -100,7 +103,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     isInternal?: boolean | string;
   } = req.body;
   const medias = req.files as Express.Multer.File[];
-  const { companyId } = req.user;
+  const { companyId, profile } = req.user;
 
   const ticket = await ShowTicketService(ticketId, companyId);
 
@@ -110,6 +113,18 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
 
   if (ticket.status === "closed" && !isInternalMessage) {
     throw new AppError("ERR_TICKET_CLOSED_CANNOT_SEND", 400);
+  }
+
+  if (!isInternalMessage && profile !== "admin") {
+    const user = await User.findByPk(req.user.id, {
+      include: [{ model: Queue, as: "queues" }]
+    });
+    if (!canUserSendOnTicket(ticket, user)) {
+      if (ticket.status === "pending") {
+        throw new AppError("ERR_TICKET_PENDING_MUST_ACCEPT", 400);
+      }
+      throw new AppError("ERR_ACCESS_DENIED_TICKET", 403);
+    }
   }
 
   SetTicketMessagesAsRead(ticket);

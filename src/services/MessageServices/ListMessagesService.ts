@@ -36,7 +36,6 @@ const ListMessagesService = async ({
     throw new AppError("ERR_NO_TICKET_FOUND", 404);
   }
 
-  // await setMessagesAsRead(ticket);
   const limit = 20;
   const offset = limit * (+pageNumber - 1);
 
@@ -46,15 +45,6 @@ const ListMessagesService = async ({
       companyId
     }
   };
-
-  if (queues.length > 0) {
-    options.where["queueId"] = {
-      [Op.or]: {
-        [Op.in]: queues,
-        [Op.eq]: null
-      }
-    };
-  }
 
   // Construir includes otimizados
   const includes: any[] = [

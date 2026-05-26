@@ -8,6 +8,7 @@ import Ticket from "../models/Ticket";
 import { verify } from "jsonwebtoken";
 import authConfig from "../config/auth";
 import { CounterManager } from "./counter";
+import canUserAccessTicket from "../helpers/CanUserAccessTicketQueue";
 
 let io: SocketIO;
 
@@ -133,16 +134,28 @@ export const initIO = (httpServer: Server): SocketIO => {
         return;
       }
       Ticket.findByPk(ticketId).then(
-        (ticket) => {
-          if (ticket && ticket.companyId === user.companyId
-            && (ticket.userId === user.id || user.profile === "admin")) {
+        async (ticket) => {
+          if (!ticket || ticket.companyId !== user.companyId) {
+            logger.info(`Invalid attempt to join channel of ticket ${ticketId} by user ${user.id}`);
+            return;
+          }
+
+          const userWithQueues = await User.findByPk(user.id, {
+            include: [{ model: Queue, as: "queues" }]
+          });
+
+          const mayJoin =
+            user.profile === "admin" ||
+            canUserAccessTicket(ticket, userWithQueues || user);
+
+          if (mayJoin) {
             let c: number;
             if ((c = counters.incrementCounter(`ticket-${ticketId}`)) === 1) {
               socket.join(ticketId);
             }
-            logger.debug(`joinChatbox[${c}]: Channel: ${ticketId} by user ${user.id}`)
+            logger.debug(`joinChatbox[${c}]: Channel: ${ticketId} by user ${user.id}`);
           } else {
-            logger.info(`Invalid attempt to join channel of ticket ${ticketId} by user ${user.id}`)
+            logger.info(`Invalid attempt to join channel of ticket ${ticketId} by user ${user.id}`);
           }
         },
         (error) => {

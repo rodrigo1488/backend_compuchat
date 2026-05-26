@@ -3,6 +3,7 @@ import { Op } from "sequelize";
 import User from "../../models/User";
 import AppError from "../../errors/AppError";
 import Ticket from "../../models/Ticket";
+import Task from "../../models/Task";
 import UpdateDeletedUserOpenTicketsStatus from "../../helpers/UpdateDeletedUserOpenTicketsStatus";
 
 const DeleteUserService = async (
@@ -36,6 +37,20 @@ const DeleteUserService = async (
 
   if (userOpenTickets.length > 0) {
     UpdateDeletedUserOpenTicketsStatus(userOpenTickets, companyId);
+  }
+
+  const userTasksCount = await Task.count({
+    where: {
+      userId: user.id,
+      companyId
+    }
+  });
+
+  if (userTasksCount > 0) {
+    throw new AppError(
+      "Não é possível excluir este usuário porque existem tarefas vinculadas. Reatribua/exclua as tarefas ou inative o usuário.",
+      400
+    );
   }
 
   await user.destroy();
