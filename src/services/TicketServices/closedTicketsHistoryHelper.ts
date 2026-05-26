@@ -1,5 +1,5 @@
 import { Op, fn, where, col, Filterable, Includeable, literal } from "sequelize";
-import { startOfDay, endOfDay, parseISO } from "date-fns";
+import { startOfDay, endOfDay, parseISO, isValid } from "date-fns";
 import Ticket from "../../models/Ticket";
 import Contact from "../../models/Contact";
 import Queue from "../../models/Queue";
@@ -100,7 +100,9 @@ export const buildClosedTicketsWhere = async (
     whereCondition = {
       [Op.and]: [
         whereCondition,
-        { queueId: { [Op.or]: [queueIds, null] } }
+        {
+          [Op.or]: [{ queueId: { [Op.in]: queueIds } }, { queueId: null }]
+        }
       ]
     };
   }
@@ -118,12 +120,20 @@ export const buildClosedTicketsWhere = async (
   }
 
   if (dateFrom || dateTo) {
-    const from = dateFrom
-      ? +startOfDay(parseISO(dateFrom))
-      : +startOfDay(new Date(0));
-    const to = dateTo
-      ? +endOfDay(parseISO(dateTo))
-      : +endOfDay(new Date());
+    let from: Date;
+    let to: Date;
+    if (dateFrom) {
+      const parsed = parseISO(dateFrom);
+      from = isValid(parsed) ? startOfDay(parsed) : startOfDay(new Date(0));
+    } else {
+      from = startOfDay(new Date(0));
+    }
+    if (dateTo) {
+      const parsed = parseISO(dateTo);
+      to = isValid(parsed) ? endOfDay(parsed) : endOfDay(new Date());
+    } else {
+      to = endOfDay(new Date());
+    }
     whereCondition = {
       [Op.and]: [
         whereCondition,
