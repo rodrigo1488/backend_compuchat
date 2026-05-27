@@ -59,6 +59,7 @@ import printJobRoutes from "./printJobRoutes";
 import deliveryRoutes from "./deliveryRoutes";
 import appointmentServiceRoutes from "./appointmentServiceRoutes";
 import appointmentRoutes from "./appointmentRoutes";
+import whatsappImportRoutes from "./whatsappImportRoutes";
 
 const routes = Router();
 
@@ -70,6 +71,7 @@ routes.use("/auth", authRoutes);
 routes.use(settingRoutes);
 routes.use(contactRoutes);
 routes.use(ticketRoutes);
+routes.use(whatsappImportRoutes);
 routes.use(whatsappRoutes);
 routes.use(messageRoutes);
 routes.use(messageRoutes);
