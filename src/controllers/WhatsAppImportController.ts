@@ -4,6 +4,7 @@ import { purgeStaleImportUploads } from "../config/whatsappImportUpload";
 import ImportWhatsAppHistoryService, {
   ParticipantMapping
 } from "../services/TicketServices/ImportWhatsAppHistoryService";
+import PreviewWhatsAppImportService from "../services/TicketServices/PreviewWhatsAppImportService";
 
 export const store = async (req: Request, res: Response): Promise<Response> => {
   const { companyId, id: userId } = req.user;
@@ -57,6 +58,26 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     filePath: file.path,
     originalName: file.originalname,
     appendToExisting
+  });
+
+  return res.status(200).json(result);
+};
+
+export const preview = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const file = req.file;
+
+  if (!file) {
+    throw new AppError("ERR_WHATSAPP_IMPORT_NO_FILE", 400);
+  }
+
+  purgeStaleImportUploads();
+
+  const result = await PreviewWhatsAppImportService({
+    filePath: file.path,
+    originalName: file.originalname
   });
 
   return res.status(200).json(result);

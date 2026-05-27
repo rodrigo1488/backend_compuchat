@@ -26,8 +26,13 @@ const uploadSingle = (
 };
 
 const importHandlers = [isAuth, uploadSingle, WhatsAppImportController.store];
+const previewHandlers = [isAuth, uploadSingle, WhatsAppImportController.preview];
 
 whatsappImportRoutes.post("/whatsapp-import", ...importHandlers);
 whatsappImportRoutes.post("/contacts/import-whatsapp", ...importHandlers);
+whatsappImportRoutes.post(
+  "/contacts/import-whatsapp/preview",
+  ...previewHandlers
+);
 
 export default whatsappImportRoutes;
