@@ -10,6 +10,12 @@ const upload = multer(uploadUserAvatarConfig);
 
 userRoutes.get("/users", isAuth, UserController.index);
 
+userRoutes.get(
+  "/users/page-permissions",
+  isAuth,
+  UserController.pagePermissionsCatalog
+);
+
 userRoutes.get("/users/list", isAuth, UserController.list);
 
 userRoutes.post("/users", isAuth, UserController.store);

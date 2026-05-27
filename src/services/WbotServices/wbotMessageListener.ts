@@ -2082,6 +2082,19 @@ const Push = (msg: proto.IWebMessageInfo) => {
   return msg.pushName;
 };
 
+const isFirstCustomerMessageInTicket = async (
+  ticketId: number
+): Promise<boolean> => {
+  const customerMessageCount = await Message.count({
+    where: {
+      ticketId,
+      fromMe: false
+    }
+  });
+
+  return customerMessageCount <= 1;
+};
+
 const verifyQueue = async (
   wbot: Session,
   msg: proto.IWebMessageInfo,
@@ -2105,7 +2118,8 @@ const verifyQueue = async (
 
     if (
       greetingMessage.length > 1 &&
-      sendGreetingMessageOneQueues?.value === "enabled"
+      sendGreetingMessageOneQueues?.value === "enabled" &&
+      (await isFirstCustomerMessageInTicket(ticket.id))
     ) {
       const body = formatBody(`${greetingMessage}`, contact);
 
@@ -3987,7 +4001,7 @@ const handleMessage = async (
     }
 
     if (
-      !ticket.queue &&
+      !ticket.queueId &&
       !ticket.isGroup &&
       !isFromMe &&
       !ticket.userId &&
@@ -4156,25 +4170,11 @@ const handleMessage = async (
       !isGroup &&
       !isFromMe
     ) {
-      const lastMessage = await Message.findOne({
-        where: {
-          ticketId: ticket.id,
-          fromMe: true
-        },
-        order: [["createdAt", "DESC"]]
-      });
+      const isFirstCustomerMessage = await isFirstCustomerMessageInTicket(
+        ticket.id
+      );
 
-      const renderedGreetingMessage = formatBody(`${whatsapp.greetingMessage || ""}`, contact);
-
-      if (
-        renderedGreetingMessage &&
-        lastMessage &&
-        lastMessage.body.includes(renderedGreetingMessage)
-      ) {
-        return;
-      }
-
-      if (whatsapp.greetingMessage) {
+      if (isFirstCustomerMessage && whatsapp.greetingMessage) {
         const debouncedSentMessage = debounce(
           async () => {
             // Usar getChatJid para obter destino correto

@@ -76,6 +76,13 @@ class User extends Model<User> {
   })
   availabilitySettings: any; // Configurações de disponibilidade para agendamentos
 
+  /** granted: páginas extras; denied: páginas removidas do padrão do perfil user */
+  @Column({
+    type: DataType.JSONB,
+    allowNull: true,
+  })
+  pageAccess: { granted: string[]; denied: string[] } | null;
+
   @CreatedAt
   createdAt: Date;
 

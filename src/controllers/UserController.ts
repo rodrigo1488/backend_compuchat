@@ -49,6 +49,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     whatsappId,
     allTicket,
     defaultRoute,
+    pageAccess,
   } = req.body;
   let userCompanyId: number | null = null;
 
@@ -82,6 +83,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     whatsappId,
     allTicket,
     defaultRoute,
+    pageAccess,
   });
 
   const io = getIO();
@@ -91,6 +93,27 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
   });
 
   return res.status(200).json(user);
+};
+
+export const pagePermissionsCatalog = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  if (req.user.profile !== "admin") {
+    throw new AppError("ERR_NO_PERMISSION", 403);
+  }
+
+  const {
+    PAGE_DEFINITIONS,
+    DEFAULT_USER_PAGE_KEYS,
+    ADMIN_PAGE_KEYS
+  } = await import("../constants/pagePermissions");
+
+  return res.status(200).json({
+    pages: PAGE_DEFINITIONS,
+    defaultUserPages: DEFAULT_USER_PAGE_KEYS,
+    adminPages: ADMIN_PAGE_KEYS
+  });
 };
 
 export const show = async (req: Request, res: Response): Promise<Response> => {

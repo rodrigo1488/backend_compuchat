@@ -2,6 +2,12 @@ import * as Yup from "yup";
 
 import AppError from "../../errors/AppError";
 import { SerializeUser } from "../../helpers/SerializeUser";
+import { sanitizePageAccess } from "../../constants/pagePermissions";
+import ListCompanyModulesService from "../CompanyModuleServices/ListCompanyModulesService";
+import {
+  filterPageAccessForModules,
+  getModuleFlagsFromSlugs
+} from "../../helpers/pagePermissionModules";
 import User from "../../models/User";
 import Plan from "../../models/Plan";
 import Company from "../../models/Company";
@@ -16,6 +22,7 @@ interface Request {
   whatsappId?: number;
   allTicket?: string;
   defaultRoute?: string | null;
+  pageAccess?: { granted?: string[]; denied?: string[] } | null;
 }
 
 interface Response {
@@ -35,6 +42,7 @@ const CreateUserService = async ({
   whatsappId,
   allTicket,
   defaultRoute,
+  pageAccess: pageAccessInput,
 }: Request): Promise<Response> => {
   if (companyId !== undefined) {
     const company = await Company.findOne({
@@ -85,6 +93,16 @@ const CreateUserService = async ({
     throw new AppError(err.message);
   }
 
+  let resolvedPageAccess = null;
+  if (profile !== "admin" && companyId !== undefined) {
+    const companyModules = await ListCompanyModulesService(companyId);
+    const moduleFlags = getModuleFlagsFromSlugs(companyModules);
+    resolvedPageAccess = filterPageAccessForModules(
+      sanitizePageAccess(pageAccessInput),
+      moduleFlags
+    );
+  }
+
   const user = await User.create(
     {
       email,
@@ -95,6 +113,7 @@ const CreateUserService = async ({
       whatsappId: whatsappId || null,
       allTicket,
       defaultRoute: defaultRoute || null,
+      pageAccess: profile === "admin" ? null : resolvedPageAccess,
     },
     { include: ["queues", "company"] }
   );

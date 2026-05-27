@@ -15,6 +15,7 @@ interface SerializedUser {
   allTicket: string;
   avatar: string;
   defaultRoute: string | null;
+  pageAccess: { granted: string[]; denied: string[] } | null;
 }
 
 export const SerializeUser = async (user: User): Promise<SerializedUser> => {
@@ -31,5 +32,6 @@ export const SerializeUser = async (user: User): Promise<SerializedUser> => {
     allTicket: u.allTicket ?? "",
     avatar: u.avatar ?? null,
     defaultRoute: u.defaultRoute ?? null,
+    pageAccess: u.pageAccess ?? null,
   };
 };

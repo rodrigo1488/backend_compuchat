@@ -19,6 +19,7 @@ const ShowUserService = async (id: string | number): Promise<User> => {
       "avatar",
       "defaultRoute",
       "active",
+      "pageAccess",
     ],
     include: [
       { model: Queue, as: "queues", attributes: ["id", "name", "color"] },
