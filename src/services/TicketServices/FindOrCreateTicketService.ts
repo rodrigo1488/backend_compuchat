@@ -68,7 +68,12 @@ const FindOrCreateTicketService = async (
       // chegam com fromMe=true e não devem causar reabertura.
       return await ShowTicketService(ticket.id, companyId);
     }
-    await ticket.update({ queueId: null, userId: null, status: "pending" });
+    await ticket.update({
+      queueId: null,
+      userId: null,
+      status: "pending",
+      sessionStartedAt: new Date()
+    });
   }
 
   if (!ticket && groupContact) {
@@ -129,7 +134,8 @@ const FindOrCreateTicketService = async (
           userId: null,
           unreadMessages,
           queueId: null,
-          companyId
+          companyId,
+          sessionStartedAt: new Date()
         });
         await FindOrCreateATicketTrakingService({
           ticketId: ticket.id,

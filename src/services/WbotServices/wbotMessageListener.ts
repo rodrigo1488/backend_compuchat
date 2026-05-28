@@ -2083,14 +2083,18 @@ const Push = (msg: proto.IWebMessageInfo) => {
 };
 
 const isFirstCustomerMessageInTicket = async (
-  ticketId: number
+  ticket: Pick<Ticket, "id" | "sessionStartedAt">
 ): Promise<boolean> => {
-  const customerMessageCount = await Message.count({
-    where: {
-      ticketId,
-      fromMe: false
-    }
-  });
+  const where: Record<string, unknown> = {
+    ticketId: ticket.id,
+    fromMe: false
+  };
+
+  if (ticket.sessionStartedAt) {
+    where.createdAt = { [Op.gte]: ticket.sessionStartedAt };
+  }
+
+  const customerMessageCount = await Message.count({ where });
 
   return customerMessageCount <= 1;
 };
@@ -2119,7 +2123,7 @@ const verifyQueue = async (
     if (
       greetingMessage.length > 1 &&
       sendGreetingMessageOneQueues?.value === "enabled" &&
-      (await isFirstCustomerMessageInTicket(ticket.id))
+      (await isFirstCustomerMessageInTicket(ticket))
     ) {
       const body = formatBody(`${greetingMessage}`, contact);
 
@@ -4171,7 +4175,7 @@ const handleMessage = async (
       !isFromMe
     ) {
       const isFirstCustomerMessage = await isFirstCustomerMessageInTicket(
-        ticket.id
+        ticket
       );
 
       if (isFirstCustomerMessage && whatsapp.greetingMessage) {

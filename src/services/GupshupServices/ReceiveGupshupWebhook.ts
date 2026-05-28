@@ -140,7 +140,13 @@ export const processGupshupWebhook = async (payload: any): Promise<void> => {
         const response = await axios.get(mediaUrl, { responseType: "arraybuffer" });
         
         // Determinar extensão do arquivo
-        const mimeType = response.headers["content-type"] || lookup(mediaUrl) || "application/octet-stream";
+        const contentTypeHeader = response.headers["content-type"];
+        const mimeType =
+          (typeof contentTypeHeader === "string"
+            ? contentTypeHeader.split(";")[0].trim()
+            : undefined) ||
+          lookup(mediaUrl) ||
+          "application/octet-stream";
         const ext = mimeExtension(mimeType) || "bin";
         const timestamp = new Date().getTime();
         
@@ -177,7 +183,7 @@ export const processGupshupWebhook = async (payload: any): Promise<void> => {
 
     // Se ticket estava fechado, reabrir
     if (ticket.status === "closed") {
-      await ticket.update({ status: "pending" });
+      await ticket.update({ status: "pending", sessionStartedAt: new Date() });
     }
 
     logger.info(`Gupshup webhook: Mensagem processada - ID: ${messageId}, Contato: ${cleanNumber}`);
