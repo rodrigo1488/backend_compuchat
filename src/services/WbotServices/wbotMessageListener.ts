@@ -50,15 +50,12 @@ import Prompt from "../../models/Prompt";
 import { cacheLayer } from "../../libs/cache";
 import { provider } from "./providers";
 import { debounce } from "../../helpers/Debounce";
-import { ChatCompletionRequestMessage, OpenAIApi } from "openai";
 import {
-  createOpenAIClient,
   getTranscriptionOpenAIClient,
   getLmStudioDefaultModel,
-  getLmStudioContextWindowTokens,
-  getChatCompletionAssistantText,
-  isAiBackendConfigured
+  getLmStudioContextWindowTokens
 } from "../../config/openai";
+import { AIProviderFactory } from "../AiServices/AIProviderFactory";
 import { isBrazilianNumber, getCountryCode, formatBlockedNumberLog } from "../../helpers/ValidateBrazilianNumber";
 import ffmpeg from "fluent-ffmpeg";
 import {
@@ -88,6 +85,7 @@ import ListQueuesService from "../QueueService/ListQueuesService";
 import Tag from "../../models/Tag";
 import ExecuteAppointmentFunction from "../AppointmentAIService/ExecuteAppointmentFunction";
 import DashboardCommandService from "../AiServices/DashboardCommandService";
+import { AIProviderSelector } from "../AiServices/AIProviderSelector";
 
 import { IConnections, INodes } from "../WebhookService/DispatchWebHookService";
 import { ActionsWebhookService } from "../WebhookService/ActionsWebhookService";
@@ -1271,12 +1269,21 @@ const handleOpenAi = async (
     return;
   }
 
-  if (prompt.provider && prompt.provider !== "openai") {
-    logger.warn(`⚠️ handleOpenAi: Provider legado '${prompt.provider}', usando LM Studio (OpenAI-compat)`);
+  if (prompt.provider) {
+    logger.info(`🤖 handleOpenAi: Provider selecionado no prompt: '${prompt.provider}'`);
   }
 
-  if (!isAiBackendConfigured()) {
-    logger.error("LM Studio não configurado: defina LM_STUDIO_BASE_URL no ambiente do backend.");
+  const providers = await AIProviderFactory.getAvailableProviders(ticket.companyId);
+  const targetProvider = (prompt.provider || "openai").toLowerCase();
+  const providerAvailable =
+    targetProvider === "gemini" ? providers.gemini : providers.openai;
+
+  if (!providerAvailable) {
+    logger.error(
+      targetProvider === "gemini"
+        ? "Gemini não configurado: defina GEMINI_API_KEY no backend."
+        : "LM Studio não configurado: defina LM_STUDIO_BASE_URL no backend."
+    );
     openAiProcessingLocks.delete(lockKey);
     return;
   }
@@ -1403,14 +1410,11 @@ const handleOpenAi = async (
     "public"
   );
 
-  let openai: OpenAIApi;
-  try {
-    openai = createOpenAIClient();
-  } catch (err: any) {
-    logger.error(`Cliente LM Studio indisponível: ${err.message}`);
-    openAiProcessingLocks.delete(lockKey);
-    return;
-  }
+  const providerForChat = await AIProviderSelector.getProvider(
+    ticket.companyId,
+    "chat",
+    prompt.provider
+  );
 
   // Limitar histórico para não consumir todos os tokens
   // Pegar apenas as últimas mensagens relevantes (máximo 10 para economizar tokens)
@@ -1447,7 +1451,7 @@ const handleOpenAi = async (
     `\n\nSua resposta deve usar no máximo ${prompt.maxTokens} tokens e cuide para não truncar o final.`;
 
 
-  let messagesOpenAi: ChatCompletionRequestMessage[] = [];
+  let messagesOpenAi: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
 
   if (msg.message?.conversation || msg.message?.extendedTextMessage?.text) {
     messagesOpenAi = [];
@@ -1483,14 +1487,11 @@ const handleOpenAi = async (
     const minCompletion = 512;
     const max_tokens = Math.min(Math.max(prompt.maxTokens, minCompletion), safeMax);
 
-    const chat = await openai.createChatCompletion({
+    let response = await providerForChat.chat(messagesOpenAi as any, {
       model: prompt.model || getLmStudioDefaultModel(),
-      messages: messagesOpenAi,
-      max_tokens: max_tokens,
+      maxTokens: max_tokens,
       temperature: prompt.temperature
     });
-
-    let response = getChatCompletionAssistantText(chat.data);
 
     const sendWhatsAppToCustomer = async (text: string): Promise<void> => {
       const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, { text });
@@ -1590,13 +1591,11 @@ const handleOpenAi = async (
       safeMaxAudio
     );
 
-    const chat = await openai.createChatCompletion({
+    let response = await providerForChat.chat(messagesOpenAi as any, {
       model: prompt.model || getLmStudioDefaultModel(),
-      messages: messagesOpenAi,
-      max_tokens: max_tokens_audio,
+      maxTokens: max_tokens_audio,
       temperature: prompt.temperature
     });
-    let response = getChatCompletionAssistantText(chat.data);
 
     const sendWhatsAppAudio = async (text: string): Promise<void> => {
       const sentMessage = await wbot.sendMessage(msg.key.remoteJid!, { text });
@@ -3791,7 +3790,9 @@ const handleMessage = async (
         temperature,
         apiKey,
         queueId,
-        maxMessages
+        maxMessages,
+        provider,
+        model
       } = nodeSelected.data.typebotIntegration as IOpenAi;
 
       const openAiSettings = {
@@ -3804,7 +3805,9 @@ const handleMessage = async (
         temperature: parseInt(temperature, 10),
         apiKey,
         queueId: parseInt(queueId, 10),
-        maxMessages: parseInt(maxMessages, 10)
+        maxMessages: parseInt(maxMessages, 10),
+        provider: provider || "openai",
+        model
       };
 
       await handleOpenAi(

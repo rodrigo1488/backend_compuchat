@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { isAiBackendConfigured } from "../config/openai";
+import { AIProviderFactory } from "../services/AiServices/AIProviderFactory";
 
 /**
  * Garante que o backend tem LM Studio (OpenAI-compat) configurado via ambiente.
@@ -17,11 +17,12 @@ const validateAIApiKey = async (
       });
     }
 
-    if (!isAiBackendConfigured()) {
+    const available = await AIProviderFactory.getAvailableProviders(req.user.companyId);
+    if (!available.openai && !available.gemini) {
       return res.status(400).json({
         error: "AI_NOT_CONFIGURED",
         message:
-          "Servidor de IA não configurado. O administrador deve definir LM_STUDIO_BASE_URL no ambiente do backend."
+          "Nenhum provider de IA configurado. Configure LM Studio no servidor e/ou a chave Gemini em Configurações → Inteligência Artificial."
       });
     }
 

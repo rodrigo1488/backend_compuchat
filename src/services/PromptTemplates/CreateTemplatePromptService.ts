@@ -3,6 +3,8 @@ import AppError from "../../errors/AppError";
 import Prompt from "../../models/Prompt";
 import ShowPromptService from "../PromptServices/ShowPromptService";
 import { getLmStudioDefaultModel, isAiBackendConfigured } from "../../config/openai";
+import { getGeminiDefaultModel } from "../../config/gemini";
+import { isGeminiConfiguredForCompany } from "../AiServices/GeminiApiKeyService";
 import { AGENT_TEMPLATES, processTemplate, AgentType, TemplateVariables } from "./TemplateDefinitions";
 import Company from "../../models/Company";
 
@@ -54,14 +56,24 @@ const CreateTemplatePromptService = async (
 
   const processedPrompt = processTemplate(template, variables, companyName);
 
-  if (!isAiBackendConfigured()) {
+  const provider = (promptData.provider || "openai").toLowerCase();
+
+  if (provider === "openai" && !isAiBackendConfigured()) {
     throw new AppError(
       "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
       400
     );
   }
+  if (provider === "gemini" && !(await isGeminiConfiguredForCompany(companyIdNumber))) {
+    throw new AppError(
+      "Gemini não configurado. Informe a chave em Configurações → Inteligência Artificial.",
+      400
+    );
+  }
 
-  const finalModel = promptData.model || getLmStudioDefaultModel();
+  const finalModel =
+    promptData.model ||
+    (provider === "gemini" ? getGeminiDefaultModel() : getLmStudioDefaultModel());
 
   // Criar prompt a partir do template
   const promptToCreate: any = {
@@ -75,7 +87,7 @@ const CreateTemplatePromptService = async (
     completionTokens: 0,
     totalTokens: 0,
     model: finalModel,
-    provider: "openai",
+    provider,
     companyId: companyIdNumber,
     apiKey: "", // Sempre string vazia - será buscada das Settings
     tipoAgente: promptData.tipoAgente,

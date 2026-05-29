@@ -3,6 +3,8 @@ import AppError from "../../errors/AppError";
 import Prompt from "../../models/Prompt";
 import ShowPromptService from "./ShowPromptService";
 import { getLmStudioDefaultModel, isAiBackendConfigured } from "../../config/openai";
+import { getGeminiDefaultModel } from "../../config/gemini";
+import { isGeminiConfiguredForCompany } from "../AiServices/GeminiApiKeyService";
 
 interface PromptData {
     name: string;
@@ -39,8 +41,7 @@ const CreatePromptService = async (promptData: PromptData): Promise<Prompt> => {
 
     // Desestruturar dados do prompt
     const { name, prompt, queueId, maxMessages, provider: rawProvider = "openai" } = promptData;
-    const provider =
-      rawProvider === "gemini" ? "openai" : rawProvider || "openai";
+    const provider = (rawProvider || "openai").toLowerCase();
 
     // Garantir que queueId e maxMessages sejam números (queueId agora é opcional)
     const queueIdNumber = queueId ? (typeof queueId === "string" ? parseInt(queueId, 10) : queueId) : null;
@@ -71,14 +72,22 @@ const CreatePromptService = async (promptData: PromptData): Promise<Prompt> => {
         throw new AppError(`Erro de validação: ${err.message || JSON.stringify(err, undefined, 2)}`, 400);
     }
 
-    if (!isAiBackendConfigured()) {
+    if (provider === "openai" && !isAiBackendConfigured()) {
         throw new AppError(
             "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
             400
         );
     }
+    if (provider === "gemini" && !(await isGeminiConfiguredForCompany(companyIdNumber))) {
+        throw new AppError(
+            "Gemini não configurado. Informe a chave em Configurações → Inteligência Artificial.",
+            400
+        );
+    }
 
-    const finalModel = promptData.model || getLmStudioDefaultModel();
+    const finalModel =
+      promptData.model ||
+      (provider === "gemini" ? getGeminiDefaultModel() : getLmStudioDefaultModel());
 
     // Criar objeto de dados para salvar, sempre com apiKey como string vazia
     const promptToCreate: any = {
@@ -92,7 +101,7 @@ const CreatePromptService = async (promptData: PromptData): Promise<Prompt> => {
         completionTokens: promptData.completionTokens || 0,
         totalTokens: promptData.totalTokens || 0,
         model: finalModel,
-        provider: "openai",
+        provider,
         companyId: companyIdNumber,
         apiKey: "", // Sempre string vazia - será buscada das Settings
         canSendInternalMessages: promptData.canSendInternalMessages || false,

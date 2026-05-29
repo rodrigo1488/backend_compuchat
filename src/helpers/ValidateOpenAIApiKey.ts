@@ -1,18 +1,25 @@
 import AppError from "../errors/AppError";
 import { getLmStudioApiKey, isAiBackendConfigured } from "../config/openai";
+import {
+  getCompanyGeminiApiKey,
+  isGeminiConfiguredForCompany
+} from "../services/AiServices/GeminiApiKeyService";
 
 /**
- * Garante que o backend de IA (LM Studio) está configurado via ambiente.
+ * Garante que pelo menos um backend de IA está configurado via ambiente.
  * Não lê mais openaiApiKey por empresa.
  */
 export const validateCompanyOpenAIApiKey = async (
-  _companyId: number
+  companyId: number
 ): Promise<string> => {
-  if (!isAiBackendConfigured()) {
-    throw new AppError(
-      "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
-      400
-    );
+  if (isAiBackendConfigured()) {
+    return getLmStudioApiKey();
   }
-  return getLmStudioApiKey();
+  if (await isGeminiConfiguredForCompany(companyId)) {
+    return getCompanyGeminiApiKey(companyId);
+  }
+  throw new AppError(
+    "Nenhum provider de IA configurado. Configure LM Studio no servidor e/ou a chave Gemini em Configurações.",
+    400
+  );
 };

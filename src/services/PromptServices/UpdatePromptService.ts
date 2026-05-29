@@ -3,6 +3,8 @@ import AppError from "../../errors/AppError";
 import Prompt from "../../models/Prompt";
 import ShowPromptService from "./ShowPromptService";
 import { getLmStudioDefaultModel, isAiBackendConfigured } from "../../config/openai";
+import { getGeminiDefaultModel } from "../../config/gemini";
+import { isGeminiConfiguredForCompany } from "../AiServices/GeminiApiKeyService";
 
 interface PromptData {
     id?: number;
@@ -41,10 +43,13 @@ const UpdatePromptService = async ({
     promptData,
     companyId
 }: Request): Promise<Prompt | undefined> => {
+    const companyIdNumber =
+      typeof companyId === "string" ? parseInt(companyId, 10) : companyId;
+
     const promptTable = await ShowPromptService({ promptId: promptId, companyId });
 
     const rawProv = promptData.provider || promptTable.provider || "openai";
-    const provider = rawProv === "gemini" ? "openai" : rawProv;
+    const provider = String(rawProv).toLowerCase();
 
     // Validação baseada no provider (queueId agora é opcional)
     const promptSchema = Yup.object().shape({
@@ -64,14 +69,21 @@ const UpdatePromptService = async ({
         throw new AppError(`${JSON.stringify(err, undefined, 2)}`);
     }
 
-    if (!isAiBackendConfigured()) {
+    if (provider === "openai" && !isAiBackendConfigured()) {
         throw new AppError(
             "Servidor de IA não configurado. Defina LM_STUDIO_BASE_URL no ambiente do backend.",
             400
         );
     }
+    if (provider === "gemini" && !(await isGeminiConfiguredForCompany(companyIdNumber))) {
+        throw new AppError(
+            "Gemini não configurado. Informe a chave em Configurações → Inteligência Artificial.",
+            400
+        );
+    }
 
-    const finalModel = model || getLmStudioDefaultModel();
+    const finalModel =
+      model || (provider === "gemini" ? getGeminiDefaultModel() : getLmStudioDefaultModel());
 
     const updateData: any = {
         name,
@@ -84,7 +96,7 @@ const UpdatePromptService = async ({
         queueId,
         maxMessages,
         model: finalModel,
-        provider: "openai",
+        provider,
         canSendInternalMessages: canSendInternalMessages !== undefined ? canSendInternalMessages : false,
         canTransferToAgent: canTransferToAgent !== undefined ? canTransferToAgent : false,
         canChangeTag: canChangeTag !== undefined ? canChangeTag : false,

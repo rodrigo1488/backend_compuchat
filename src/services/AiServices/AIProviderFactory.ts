@@ -1,7 +1,8 @@
-import { IAIProvider } from "./AIProviderInterface";
 import { OpenAIProvider } from "./providers/OpenAIProvider";
 import { isAiBackendConfigured } from "../../config/openai";
+import { isGeminiConfiguredForCompany } from "./GeminiApiKeyService";
 import AppError from "../../errors/AppError";
+import { GeminiProvider } from "./providers/GeminiProvider";
 
 /**
  * Factory para o cliente OpenAI-compatível (LM Studio), configurado globalmente via ambiente.
@@ -20,17 +21,31 @@ export class AIProviderFactory {
     return new OpenAIProvider();
   }
 
+  static async createGeminiProvider(companyId?: number): Promise<GeminiProvider> {
+    if (!companyId || !(await isGeminiConfiguredForCompany(companyId))) {
+      throw new AppError(
+        "Gemini não configurado. Informe a chave em Configurações → Inteligência Artificial ou defina GEMINI_API_KEY no servidor.",
+        400
+      );
+    }
+    return new GeminiProvider(companyId);
+  }
+
   /**
    * Disponibilidade de IA: apenas LM Studio (openai-compat). gemini permanece false para compatibilidade de tipos legados.
    */
-  static async getAvailableProviders(_companyId?: number): Promise<{
+  static async getAvailableProviders(companyId?: number): Promise<{
     gemini: boolean;
     openai: boolean;
   }> {
-    const ok = isAiBackendConfigured();
+    const openai = isAiBackendConfigured();
+    const gemini =
+      companyId != null
+        ? await isGeminiConfiguredForCompany(companyId)
+        : false;
     return {
-      gemini: false,
-      openai: ok
+      gemini,
+      openai
     };
   }
 }

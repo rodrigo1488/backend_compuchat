@@ -9,4 +9,6 @@ export interface IOpenAi {
     apiKey: string;
     queueId: string;
     maxMessages: string;
+    provider?: string;
+    model?: string;
 };

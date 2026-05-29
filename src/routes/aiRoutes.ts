@@ -12,6 +12,8 @@ const routes = express.Router();
 // Rotas de configuração de providers
 routes.get("/ai/providers/config", isAuth, AiSummaryController.getProviderConfigurations);
 routes.post("/ai/providers/config", isAuth, AiSummaryController.setProviderConfiguration);
+routes.get("/ai/providers/status", isAuth, AiSummaryController.getProvidersStatus);
+routes.post("/ai/providers/test-gemini", isAuth, AiSummaryController.testGeminiApiKey);
 
 // Rotas de configuração do chat IA (somente leitura; valores fixos no servidor)
 routes.get("/ai/chat/config", isAuth, AiSummaryController.getChatConfig);

@@ -3,6 +3,14 @@ import AgentSummaryGeminiService from "../services/ReportService/AgentSummaryGem
 import ChatGeminiService from "../services/AiServices/ChatGeminiService";
 import { AIProviderSelector } from "../services/AiServices/AIProviderSelector";
 import DashboardCommandService from "../services/AiServices/DashboardCommandService";
+import Setting from "../models/Setting";
+import { AIProviderFactory } from "../services/AiServices/AIProviderFactory";
+import TestOpenAIApiKeyService from "../services/AiServices/TestOpenAIApiKeyService";
+import TestGeminiApiKeyService from "../services/AiServices/TestGeminiApiKeyService";
+import {
+  getGeminiKeySource,
+  isGeminiConfiguredForCompany
+} from "../services/AiServices/GeminiApiKeyService";
 
 export const agentSummary = async (
   req: Request,
@@ -229,19 +237,110 @@ export const setProviderConfiguration = async (
         error: "provider inválido"
       });
     }
+    const available = await AIProviderFactory.getAvailableProviders(companyId);
+    if (provider === "gemini" && !available.gemini) {
+      return res.status(400).json({
+        error: "provider indisponível",
+        message:
+          "Gemini não configurado. Informe a chave em Configurações → Inteligência Artificial."
+      });
+    }
+    if (provider === "openai" && !available.openai) {
+      return res.status(400).json({
+        error: "provider indisponível",
+        message: "LM Studio não configurado. Defina LM_STUDIO_BASE_URL no backend."
+      });
+    }
+    if (functionType === "transcription" && provider === "gemini") {
+      return res.status(400).json({
+        error: "provider inválido",
+        message: "Transcrição suporta apenas provider OpenAI/LM Studio/Whisper."
+      });
+    }
+
+    const key = `aiProvider_${functionType}`;
+    const existing = await Setting.findOne({ where: { companyId, key } });
+    if (existing) {
+      await existing.update({ value: provider });
+    } else {
+      await Setting.create({ companyId, key, value: provider });
+    }
 
     return res.status(200).json({
       success: true,
       functionType,
-      provider: "openai",
-      message:
-        "A IA é servida pelo LM Studio no servidor; a escolha por função foi descontinuada."
+      provider,
+      message: "Configuração de provider atualizada com sucesso."
     });
   } catch (err: any) {
     console.error("Erro ao configurar provider:", err);
     return res.status(500).json({ 
       error: "ERR_SET_PROVIDER_CONFIG",
       message: err.message || "Erro ao configurar provider"
+    });
+  }
+};
+
+/**
+ * Status de disponibilidade e teste rápido dos providers (env do servidor).
+ */
+export const getProvidersStatus = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { companyId } = req.user;
+    const available = await AIProviderFactory.getAvailableProviders(companyId);
+    const config = await AIProviderSelector.getProviderConfigurations(companyId);
+
+    let openaiTest = { valid: false, message: "LM Studio não configurado." };
+    let geminiTest = { valid: false, message: "Gemini não configurado." };
+
+    if (available.openai) {
+      openaiTest = await TestOpenAIApiKeyService({ companyId });
+    }
+    if (available.gemini) {
+      geminiTest = await TestGeminiApiKeyService({ companyId });
+    }
+
+    const geminiKeySource = await getGeminiKeySource(companyId);
+
+    return res.status(200).json({
+      available,
+      configured: config.configured,
+      geminiKeyConfigured: await isGeminiConfiguredForCompany(companyId),
+      geminiKeySource,
+      tests: {
+        openai: openaiTest,
+        gemini: geminiTest
+      }
+    });
+  } catch (err: any) {
+    console.error("Erro ao obter status dos providers:", err);
+    return res.status(500).json({
+      error: "ERR_GET_PROVIDER_STATUS",
+      message: err.message || "Erro ao obter status dos providers"
+    });
+  }
+};
+
+/**
+ * Testa chave Gemini (corpo opcional apiKey; senão usa a salva na empresa ou env).
+ */
+export const testGeminiApiKey = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  try {
+    const { companyId } = req.user;
+    const { apiKey } = req.body as { apiKey?: string };
+    const result = await TestGeminiApiKeyService({ companyId, apiKey });
+    return res.status(200).json(result);
+  } catch (err: any) {
+    console.error("Erro ao testar chave Gemini:", err);
+    return res.status(500).json({
+      error: "ERR_TEST_GEMINI_KEY",
+      message: err.message || "Erro ao testar chave Gemini"
     });
   }
 };
