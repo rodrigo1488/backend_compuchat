@@ -225,6 +225,10 @@ async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise
     const isWappNotInitialized =
       typeof e?.message === "string" &&
       e.message.includes("ERR_WAPP_NOT_INITIALIZED");
+    const isConnectionClosed =
+      typeof e?.message === "string" &&
+      (e.message.includes("Connection Closed") ||
+        e.message.includes("ERR_WAPP_NOT_CONNECTED"));
     logger.error({
       msg: `handleSendTicketMessage: Erro (tentativa ${retries + 1}/${maxRetries})`,
       jobId,
@@ -236,7 +240,7 @@ async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise
 
     // Evitar crash: se a sessão Baileys ainda não existe em memória,
     // iniciamos a sessão (best-effort) e não re-lançamos a exceção.
-    if (isWappNotInitialized) {
+    if (isWappNotInitialized || isConnectionClosed) {
       try {
         const ticket = await ShowTicketService(ticketId, companyId);
         const whatsapp = await ResolveTicketWhatsApp(ticket);
@@ -296,8 +300,9 @@ async function handleSendTicketMessage(job: Job<SendTicketMessageData>): Promise
         }
       }
     }
-    // Para ERR_WAPP_NOT_INITIALIZED, não re-lançar para impedir crash via unhandled rejection.
     if (isWappNotInitialized) return;
+
+    if (isConnectionClosed && isLastAttempt) return;
 
     throw e;
   }

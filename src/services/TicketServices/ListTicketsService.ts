@@ -60,8 +60,17 @@ const ListTicketsService = async ({
       : undefined;
 
   let whereCondition: Filterable["where"] = {
-    [Op.or]: [{ userId }, { status: "pending" }],
-    status: { [Op.ne]: "rating" }
+    [Op.and]: [
+      { status: { [Op.ne]: "rating" } },
+      {
+        [Op.or]: [
+          { userId },
+          { status: "pending" },
+          // Grupos abertos não têm userId; precisam aparecer para atendentes
+          { isGroup: true, status: "open" }
+        ]
+      }
+    ]
   };
   if (queueFilter) {
     whereCondition = {

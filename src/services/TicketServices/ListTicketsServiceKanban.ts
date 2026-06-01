@@ -54,8 +54,16 @@ const ListTicketsServiceKanban = async ({
   }
 
   let whereCondition: Filterable["where"] = {
-    [Op.or]: [{ userId }, { status: "pending" }],
-    queueId: { [Op.or]: [queueIds, null] }
+    [Op.and]: [
+      {
+        [Op.or]: [
+          { userId },
+          { status: "pending" },
+          { isGroup: true, status: "open" }
+        ]
+      },
+      { queueId: { [Op.or]: [queueIds, null] } }
+    ]
   };
   let includeCondition: Includeable[];
 

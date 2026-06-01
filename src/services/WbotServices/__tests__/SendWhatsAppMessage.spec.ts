@@ -88,6 +88,30 @@ describe("SendWhatsAppMessage", () => {
     );
   });
 
+  it("normaliza contact.number que já contém @g.us (evita JID duplicado)", async () => {
+    const ticket = {
+      id: 1,
+      contactId: 1,
+      companyId: 1,
+      contact: { id: 1, number: "120363123456789012@g.us" },
+      isGroup: true,
+      groupContact: null,
+      update: jest.fn().mockResolvedValue(undefined)
+    } as unknown as Ticket;
+
+    await SendWhatsAppMessage({
+      body: "Olá grupo",
+      ticket
+    });
+
+    expect(mockSendMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      "120363123456789012@g.us",
+      expect.any(String),
+      expect.any(Object)
+    );
+  });
+
   it("envia para JID do grupo usando contact quando ticket é grupo sem groupContact", async () => {
     const ticket = {
       id: 1,
