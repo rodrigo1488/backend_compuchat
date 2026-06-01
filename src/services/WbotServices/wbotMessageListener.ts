@@ -30,6 +30,8 @@ import CreateMessageService, {
   normalizeMessageBodyForDb
 } from "../MessageServices/CreateMessageService";
 import { logger } from "../../utils/logger";
+import { runWithMessageProcessConcurrency } from "../../utils/messageProcessConcurrency";
+import { runWithFfmpegConcurrency } from "../../utils/ffmpegConcurrency";
 import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateContactService";
 import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
 import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
@@ -997,16 +999,19 @@ const convertWavToAnotherFormat = (
   outputPath: string,
   toFormat: string
 ) => {
-  return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(inputPath)
-      .toFormat(toFormat)
-      .on("end", () => resolve(outputPath))
-      .on("error", (err: { message: any }) =>
-        reject(new Error(`Error converting file: ${err.message}`))
-      )
-      .save(outputPath);
-  });
+  return runWithFfmpegConcurrency(
+    () =>
+      new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(inputPath)
+          .toFormat(toFormat)
+          .on("end", () => resolve(outputPath))
+          .on("error", (err: { message: any }) =>
+            reject(new Error(`Error converting file: ${err.message}`))
+          )
+          .save(outputPath);
+      })
+  );
 };
 
 const deleteFileSync = (path: string): void => {
@@ -4409,8 +4414,10 @@ const wbotMessageListener = async (
               remoteJid: message.key.remoteJid
             });
             
-            await handleMessage(message, wbot, companyId);
-            await verifyCampaignMessageAndCloseTicket(message, companyId);
+            await runWithMessageProcessConcurrency(async () => {
+              await handleMessage(message, wbot, companyId);
+              await verifyCampaignMessageAndCloseTicket(message, companyId);
+            });
           } else {
             logger.debug({
               msg: "wbotMessageListener: Mensagem duplicada ignorada",

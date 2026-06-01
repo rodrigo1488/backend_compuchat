@@ -5,15 +5,20 @@ import User from "../../models/User";
 import Queue from "../../models/Queue";
 import Tag from "../../models/Tag";
 import Whatsapp from "../../models/Whatsapp";
+import { parseTicketRouteIdentifier } from "../../utils/ticketIdentifier";
 
 const ShowTicketUUIDService = async (uuid: string, companyId: number): Promise<Ticket> => {
-  const uuidStr = uuid != null ? String(uuid).trim() : "";
-  if (!uuidStr || uuidStr === "undefined") {
-    throw new AppError("UUID do ticket é obrigatório", 400);
+  const lookup = parseTicketRouteIdentifier(uuid);
+  if (!lookup) {
+    throw new AppError(
+      "Identificador de ticket inválido (use UUID ou ID numérico)",
+      400
+    );
   }
+
   const ticket = await Ticket.findOne({
     where: {
-      uuid: uuidStr,
+      [lookup.field]: lookup.value,
       companyId
     },
     include: [

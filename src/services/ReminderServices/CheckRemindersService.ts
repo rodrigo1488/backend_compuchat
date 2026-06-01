@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, Sequelize } from "sequelize";
 import UserAppointment from "../../models/UserAppointment";
 import Task from "../../models/Task";
 import { logger } from "../../utils/logger";
@@ -8,17 +8,24 @@ const CheckRemindersService = async (): Promise<void> => {
   try {
     const now = new Date();
 
-    // 1. Buscar agendamentos que precisam de lembrete
-    // Buscar todos os agendamentos pendentes não notificados
-    const allAppointments = await UserAppointment.findAll({
+    // 1. Agendamentos na janela de lembrete (filtro no SQL, não em memória)
+    const appointments = await UserAppointment.findAll({
       where: {
         notificationSent: false,
         status: {
           [Op.notIn]: ["cancelled", "completed"]
         },
         startTime: {
-          [Op.gt]: now // Apenas agendamentos futuros
-        }
+          [Op.gt]: now
+        },
+        [Op.and]: [
+          Sequelize.where(
+            Sequelize.literal(
+              `"startTime" - (COALESCE("reminderMinutes", 0) * interval '1 minute')`
+            ),
+            { [Op.lte]: now }
+          )
+        ]
       },
       include: [
         {
@@ -30,18 +37,6 @@ const CheckRemindersService = async (): Promise<void> => {
           attributes: ["id", "name", "email"]
         }
       ]
-    });
-
-    // Filtrar agendamentos que estão dentro da janela de lembrete
-    const appointments = allAppointments.filter((appointment) => {
-      const startTime = new Date(appointment.startTime);
-      const reminderTime = new Date(startTime);
-      reminderTime.setMinutes(
-        reminderTime.getMinutes() - appointment.reminderMinutes
-      );
-
-      // Verificar se já passou o tempo de lembrete (estamos dentro da janela)
-      return now >= reminderTime && now < startTime;
     });
 
     // 2. Buscar tarefas que precisam de lembrete (15 minutos antes do vencimento)

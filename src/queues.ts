@@ -39,6 +39,8 @@ import CreateMessageService from "./services/MessageServices/CreateMessageServic
 import Message from "./models/Message";
 import ResolveTicketWhatsApp from "./helpers/ResolveTicketWhatsApp";
 import { StartWhatsAppSession } from "./services/WbotServices/StartWhatsAppSession";
+import { parseEnvInt } from "./utils/runWithSemaphore";
+import { isBullWorkersEnabled } from "./utils/whatsappShard";
 
 const nodemailer = require('nodemailer');
 const CronJob = require('cron').CronJob;
@@ -48,6 +50,21 @@ const connection = process.env.REDIS_URI || "";
 const bullRedisOpts = { createClient: createBullRedisClient };
 const limiterMax = process.env.REDIS_OPT_LIMITER_MAX || 1;
 const limiterDuration = process.env.REDIS_OPT_LIMITER_DURATION || 3000;
+
+/** Bull repeat — padrões menos agressivos para reduzir CPU basal (override via .env). */
+const SCHEDULE_MONITOR_CRON =
+  process.env.SCHEDULE_MONITOR_CRON?.trim() || "*/30 * * * * *";
+const CAMPAIGN_VERIFY_CRON =
+  process.env.CAMPAIGN_VERIFY_CRON?.trim() || "*/60 * * * * *";
+const QUEUE_MONITOR_CRON =
+  process.env.QUEUE_MONITOR_CRON?.trim() || "*/60 * * * * *";
+
+const campaignQueueConcurrency = parseEnvInt(
+  process.env.CAMPAIGN_QUEUE_CONCURRENCY,
+  2,
+  1,
+  8
+);
 
 interface ProcessCampaignData {
   id: number;
@@ -540,12 +557,13 @@ async function handleSendScheduledMessage(job) {
 }
 
 async function handleVerifyCampaigns(job) {
-  /**
-   * @todo
-   * Implementar filtro de campanhas
-   */
-
-  // Log removido para reduzir ruído - usar logger.debug se necessário
+  const activeCheck: { active: number }[] = await sequelize.query(
+    `SELECT 1 AS active FROM "Campaigns" WHERE status IN ('PROGRAMADA', 'EM_ANDAMENTO') LIMIT 1`,
+    { type: QueryTypes.SELECT }
+  );
+  if (!activeCheck.length) {
+    return;
+  }
 
   const campaigns: { id: number; scheduledAt: string }[] =
     await sequelize.query(
@@ -1362,6 +1380,12 @@ handleCloseInactiveTickets48h()
 handleInvoiceCreate()
 
 export async function startQueueProcess() {
+  if (!isBullWorkersEnabled()) {
+    logger.info(
+      "[🏁] - ENABLE_BULL_WORKERS=false — processamento de filas ignorado."
+    );
+    return;
+  }
 
   logger.info("[🏁] - Iniciando processamento de filas");
 
@@ -1379,9 +1403,17 @@ export async function startQueueProcess() {
 
   campaignQueue.process("ProcessCampaign", 1, handleProcessCampaign);
 
-  campaignQueue.process("PrepareContact", 1, handlePrepareContact);
+  campaignQueue.process(
+    "PrepareContact",
+    campaignQueueConcurrency,
+    handlePrepareContact
+  );
 
-  campaignQueue.process("DispatchCampaign", 1, handleDispatchCampaign);
+  campaignQueue.process(
+    "DispatchCampaign",
+    campaignQueueConcurrency,
+    handleDispatchCampaign
+  );
 
 
   //queueMonitor.process("VerifyQueueStatus", handleVerifyQueue);
@@ -1424,7 +1456,7 @@ export async function startQueueProcess() {
     "Verify",
     {},
     {
-      repeat: { cron: "*/5 * * * * *", key: "verify" },
+      repeat: { cron: SCHEDULE_MONITOR_CRON, key: "verify" },
       removeOnComplete: true
     }
   );
@@ -1433,7 +1465,7 @@ export async function startQueueProcess() {
     "VerifyCampaigns",
     {},
     {
-      repeat: { cron: "*/20 * * * * *", key: "verify-campaing" },
+      repeat: { cron: CAMPAIGN_VERIFY_CRON, key: "verify-campaing" },
       removeOnComplete: true
     }
   );
@@ -1451,8 +1483,16 @@ export async function startQueueProcess() {
     "VerifyQueueStatus",
     {},
     {
-      repeat: { cron: "*/20 * * * * *" },
+      repeat: { cron: QUEUE_MONITOR_CRON },
       removeOnComplete: true
     }
   );
+
+  logger.info({
+    msg: "Filas Bull: intervalos de repeat configurados",
+    scheduleMonitor: SCHEDULE_MONITOR_CRON,
+    campaignVerify: CAMPAIGN_VERIFY_CRON,
+    queueMonitor: QUEUE_MONITOR_CRON,
+    campaignConcurrency: campaignQueueConcurrency
+  });
 }

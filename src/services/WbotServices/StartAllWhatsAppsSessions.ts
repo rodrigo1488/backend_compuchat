@@ -2,6 +2,10 @@ import ListWhatsAppsService from "../WhatsappService/ListWhatsAppsService";
 import { StartWhatsAppSession } from "./StartWhatsAppSession";
 import * as Sentry from "@sentry/node";
 import { logger } from "../../utils/logger";
+import {
+  canStartAnotherWhatsAppSession,
+  registerWhatsAppSessionStarted
+} from "../../utils/whatsappShard";
 
 export const StartAllWhatsAppsSessions = async (
   companyId: number
@@ -14,6 +18,13 @@ export const StartAllWhatsAppsSessions = async (
           logger.info(`StartAllWhatsAppsSessions: Skipping Instagram session ${whatsapp.name}`);
           return;
         }
+        if (!canStartAnotherWhatsAppSession()) {
+          logger.warn(
+            `StartAllWhatsAppsSessions: limite WHATSAPP_MAX_SESSIONS_PER_PROCESS atingido — sessão ${whatsapp.name} não iniciada`
+          );
+          return;
+        }
+        registerWhatsAppSessionStarted();
         StartWhatsAppSession(whatsapp, companyId);
       });
     }

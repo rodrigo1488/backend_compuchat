@@ -8,6 +8,29 @@ interface Request {
   chats?: Chat[];
 }
 
+const contactKey = (item: Contact): string =>
+  item?.id != null ? String(item.id) : JSON.stringify(item);
+
+const dedupeContacts = (items: Contact[]): Contact[] => {
+  const map = new Map<string, Contact>();
+  for (const item of items) {
+    map.set(contactKey(item), item);
+  }
+  return Array.from(map.values());
+};
+
+const dedupeChats = (items: Chat[]): Chat[] => {
+  const map = new Map<string, Chat>();
+  for (const item of items) {
+    const key =
+      (item as { id?: string })?.id != null
+        ? String((item as { id?: string }).id)
+        : JSON.stringify(item);
+    map.set(key, item);
+  }
+  return Array.from(map.values());
+};
+
 const createOrUpdateBaileysService = async ({
   whatsappId,
   contacts,
@@ -25,21 +48,22 @@ const createOrUpdateBaileysService = async ({
       ? JSON.parse(JSON.stringify(baileysExists.contacts))
       : [];
 
-    if (chats && isArray(getChats)) {
-      getChats.push(...chats);
-      getChats.sort();
-      getChats.filter((v, i, a) => a.indexOf(v) === i);
+    let mergedChats = isArray(getChats) ? [...getChats] : [];
+    let mergedContacts = isArray(getContacts) ? [...getContacts] : [];
+
+    if (chats?.length) {
+      mergedChats.push(...chats);
+      mergedChats = dedupeChats(mergedChats);
     }
 
-    if (contacts && isArray(getContacts)) {
-      getContacts.push(...contacts);
-      getContacts.sort();
-      getContacts.filter((v, i, a) => a.indexOf(v) === i);
+    if (contacts?.length) {
+      mergedContacts.push(...contacts);
+      mergedContacts = dedupeContacts(mergedContacts);
     }
 
     const newBaileys = await baileysExists.update({
-      chats: JSON.stringify(getChats),
-      contacts: JSON.stringify(getContacts)
+      chats: JSON.stringify(mergedChats),
+      contacts: JSON.stringify(mergedContacts)
     });
 
     return newBaileys;

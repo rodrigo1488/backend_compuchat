@@ -10,6 +10,7 @@ import Ticket from "../../models/Ticket";
 import mime from "mime-types";
 import Contact from "../../models/Contact";
 import { getChatJid } from "../../helpers/chatJid";
+import { runWithFfmpegConcurrency } from "../../utils/ffmpegConcurrency";
 
 interface Request {
   media: Express.Multer.File;
@@ -27,33 +28,33 @@ interface RequestFlow {
 
 const publicFolder = path.resolve(__dirname, "..", "..", "..", "public");
 
-const processAudio = async (audio: string): Promise<string> => {
-  const outputAudio = `${publicFolder}/${new Date().getTime()}.mp3`;
-  return new Promise((resolve, reject) => {
-    exec(
-      `${ffmpegPath.path} -i ${audio} -vn -ab 128k -ar 44100 -f ipod ${outputAudio} -y`,
-      (error, _stdout, _stderr) => {
-        if (error) reject(error);
-        //fs.unlinkSync(audio);
-        resolve(outputAudio);
-      }
-    );
+const processAudio = async (audio: string): Promise<string> =>
+  runWithFfmpegConcurrency(() => {
+    const outputAudio = `${publicFolder}/${new Date().getTime()}.mp3`;
+    return new Promise<string>((resolve, reject) => {
+      exec(
+        `${ffmpegPath.path} -i ${audio} -vn -ab 128k -ar 44100 -f ipod ${outputAudio} -y`,
+        (error, _stdout, _stderr) => {
+          if (error) reject(error);
+          resolve(outputAudio);
+        }
+      );
+    });
   });
-};
 
-const processAudioFile = async (audio: string): Promise<string> => {
-  const outputAudio = `${publicFolder}/${new Date().getTime()}.mp3`;
-  return new Promise((resolve, reject) => {
-    exec(
-      `${ffmpegPath.path} -i ${audio} -vn -ar 44100 -ac 2 -b:a 192k ${outputAudio}`,
-      (error, _stdout, _stderr) => {
-        if (error) reject(error);
-        //fs.unlinkSync(audio);
-        resolve(outputAudio);
-      }
-    );
+const processAudioFile = async (audio: string): Promise<string> =>
+  runWithFfmpegConcurrency(() => {
+    const outputAudio = `${publicFolder}/${new Date().getTime()}.mp3`;
+    return new Promise<string>((resolve, reject) => {
+      exec(
+        `${ffmpegPath.path} -i ${audio} -vn -ar 44100 -ac 2 -b:a 192k ${outputAudio}`,
+        (error, _stdout, _stderr) => {
+          if (error) reject(error);
+          resolve(outputAudio);
+        }
+      );
+    });
   });
-};
 
 const nameFileDiscovery = (pathMedia: string) => {
   const spliting = pathMedia.split('/')

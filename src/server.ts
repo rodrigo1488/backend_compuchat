@@ -6,13 +6,8 @@ import { logger } from "./utils/logger";
 import { StartAllWhatsAppsSessions } from "./services/WbotServices/StartAllWhatsAppsSessions";
 import Company from "./models/Company";
 import { startQueueProcess } from "./queues";
-import { TransferTicketQueue } from "./wbotTransferTicketQueue";
 import cron from "node-cron";
 import RenewSubscriptionService, { findCompaniesNeedingRenewal } from "./services/SubscriptionService/RenewSubscriptionService";
-import CheckRemindersService from "./services/ReminderServices/CheckRemindersService";
-import CheckAgendamentoRemindersService from "./services/AppointmentServices/CheckAgendamentoRemindersService";
-import CheckWaitlistAndNotifyService from "./services/AppointmentServices/CheckWaitlistAndNotifyService";
-import CheckOrderAutoConfirmService from "./services/OrderServices/CheckOrderAutoConfirmService";
 import CloseStuckTicketsFromDisconnectedWhatsAppService from "./services/TicketServices/CloseStuckTicketsFromDisconnectedWhatsAppService";
 import AutoLiberarMesasService from "./services/MesaServices/AutoLiberarMesasService";
 import { Op } from "sequelize";
@@ -22,8 +17,16 @@ import {
   isDbUnavailableError,
   logCronDbUnavailable,
 } from "./utils/dbUnavailable";
+import runMinuteCronJobs from "./services/MinuteCronJobsService";
+import {
+  isWhatsAppEnabled,
+  isBullWorkersEnabled,
+  shouldStartCompanyWhatsApp,
+  logWhatsAppShardConfig
+} from "./utils/whatsappShard";
 
 const server = app.listen(process.env.PORT, async () => {
+  logWhatsAppShardConfig();
   let companies: Company[] = [];
   try {
     companies = await Company.findAll();
@@ -37,18 +40,36 @@ const server = app.listen(process.env.PORT, async () => {
   }
 
   const allPromises: any[] = [];
-  companies.forEach((c) => {
-    allPromises.push(StartAllWhatsAppsSessions(c.id));
-  });
+  if (isWhatsAppEnabled()) {
+    companies.forEach((c) => {
+      if (shouldStartCompanyWhatsApp(c.id)) {
+        allPromises.push(StartAllWhatsAppsSessions(c.id));
+      }
+    });
+  } else {
+    logger.info(
+      "ENABLE_WHATSAPP=false — sessões Baileys não serão iniciadas neste processo."
+    );
+  }
+
+  const startWorkers = () => {
+    if (isBullWorkersEnabled()) {
+      startQueueProcess();
+    } else {
+      logger.info(
+        "ENABLE_BULL_WORKERS=false — filas Bull não serão processadas neste processo."
+      );
+    }
+  };
 
   if (allPromises.length === 0) {
-    startQueueProcess();
+    startWorkers();
   } else {
     Promise.all(allPromises)
-      .then(() => startQueueProcess())
+      .then(() => startWorkers())
       .catch((e) => {
         logger.error("Erro ao iniciar sessões WhatsApp na subida:", e);
-        startQueueProcess();
+        startWorkers();
       });
   }
   
@@ -73,13 +94,9 @@ const server = app.listen(process.env.PORT, async () => {
   logger.info(`Server started on port: ${process.env.PORT}`);
 });
 
+// Jobs por minuto unificados (transferência, lembretes, pedidos, impressão)
 cron.schedule("* * * * *", async () => {
-  try {
-    await TransferTicketQueue();
-  } catch (error: any) {
-    if (isDbUnavailableError(error)) logCronDbUnavailable("TransferTicketQueue");
-    else logger.error("TransferTicketQueue:", error);
-  }
+  await runMinuteCronJobs();
 });
 
 // Job para verificar e processar renovações de assinaturas
@@ -112,71 +129,6 @@ cron.schedule("0 9 * * *", async () => {
     if (isDbUnavailableError(error))
       logCronDbUnavailable("renewal");
     else logger.error("Erro no job de renovação de assinaturas:", error);
-  }
-});
-
-// Job para verificar e enviar lembretes de agendamentos e tarefas
-// Roda a cada 1 minuto
-cron.schedule("* * * * *", async () => {
-  try {
-    await CheckRemindersService();
-  } catch (error: any) {
-    if (isDbUnavailableError(error)) logCronDbUnavailable("CheckReminders");
-    else logger.error("Erro ao processar lembretes:", error);
-  }
-});
-
-// Job para lembretes de agendamento (formulário público) — reminderHours por form
-cron.schedule("* * * * *", async () => {
-  try {
-    await CheckAgendamentoRemindersService();
-  } catch (error: any) {
-    if (isDbUnavailableError(error))
-      logCronDbUnavailable("CheckAgendamentoReminders");
-    else logger.error("Erro ao processar lembretes de agendamento:", error);
-  }
-});
-
-// Job para lista de espera: verificar vagas e notificar por WhatsApp
-cron.schedule("* * * * *", async () => {
-  try {
-    await CheckWaitlistAndNotifyService();
-  } catch (error: any) {
-    if (isDbUnavailableError(error)) logCronDbUnavailable("CheckWaitlist");
-    else logger.error("Erro ao processar lista de espera:", error);
-  }
-});
-
-// Job para avançar pedidos novo -> confirmado automaticamente
-cron.schedule("* * * * *", async () => {
-  try {
-    await CheckOrderAutoConfirmService();
-  } catch (error: any) {
-    if (isDbUnavailableError(error))
-      logCronDbUnavailable("CheckOrderAutoConfirm");
-    else logger.error("Erro no job de auto-confirmação de pedidos:", error);
-  }
-});
-
-// Job para reverter jobs de impressão travados (printing há mais de 5 min)
-cron.schedule("* * * * *", async () => {
-  try {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const [affected] = await PrintPedido.update(
-      { status: "pending" },
-      {
-        where: {
-          status: "printing",
-          updatedAt: { [Op.lt]: fiveMinAgo }
-        }
-      }
-    );
-    if (affected > 0) {
-      logger.info(`Reverted ${affected} stuck print job(s) to pending`);
-    }
-  } catch (error: any) {
-    if (isDbUnavailableError(error)) logCronDbUnavailable("PrintPedido revert");
-    else logger.error("Erro ao reverter jobs de impressão travados:", error);
   }
 });
 
