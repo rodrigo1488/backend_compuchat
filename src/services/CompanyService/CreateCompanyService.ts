@@ -164,8 +164,8 @@ const CreateCompanyService = async (
     },
     defaults: {
       companyId: company.id,
-      key: "enabled",
-      value: ""
+      key: "CheckMsgIsGroup",
+      value: "enabled"
     },
   });
 
@@ -173,7 +173,7 @@ const CreateCompanyService = async (
   await Setting.findOrCreate({
     where: {
       companyId: company.id,
-      key: ""
+      key: "call"
     },
     defaults: {
       companyId: company.id,

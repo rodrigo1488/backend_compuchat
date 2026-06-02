@@ -2125,6 +2125,7 @@ const verifyQueue = async (
     });
 
     if (
+      !ticket.isGroup &&
       greetingMessage.length > 1 &&
       sendGreetingMessageOneQueues?.value === "enabled" &&
       (await isFirstCustomerMessageInTicket(ticket))
@@ -3479,7 +3480,11 @@ const handleMessage = async (
     //   }
     // }
 
-    if (msgIsGroupBlock?.value === "enabled" && isGroup) return;
+    // Segurança: se a configuração estiver ausente/inválida, manter bloqueio de grupos por padrão.
+    const shouldIgnoreGroupMessages =
+      isGroup && msgIsGroupBlock?.value !== "disabled";
+
+    if (shouldIgnoreGroupMessages) return;
 
     // Em grupos, criar contato separado para o GRUPO (usado para vincular ticket)
     if (isGroup) {
