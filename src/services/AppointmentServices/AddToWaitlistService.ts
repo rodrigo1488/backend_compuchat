@@ -2,6 +2,7 @@ import Form from "../../models/Form";
 import AppointmentService from "../../models/AppointmentService";
 import AppointmentWaitlist from "../../models/AppointmentWaitlist";
 import AppError from "../../errors/AppError";
+import { findPublicFormBySlug } from "../FormServices/FindPublicFormService";
 
 interface Request {
   slug: string;
@@ -22,14 +23,9 @@ const AddToWaitlistService = async ({
   responderPhone,
   responderEmail,
 }: Request): Promise<AppointmentWaitlist> => {
-  const form = await Form.findOne({
-    where: { publicId: slug, isActive: true },
+  const form = await findPublicFormBySlug(slug, {
     attributes: ["id", "companyId", "settings"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const formSettings = form.settings as any;
   if (formSettings?.formType !== "agendamento") {

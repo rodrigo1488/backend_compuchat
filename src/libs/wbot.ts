@@ -382,10 +382,13 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                 });
                 await CloseTicketsByWhatsAppIdService(whatsappUpdate.id);
                 await DeleteBaileysService(whatsappUpdate.id);
-                io.to(`company-${whatsapp.companyId}-mainchannel`).emit("whatsappSession", {
-                  action: "update",
-                  session: whatsappUpdate
-                });
+                io.to(`company-${whatsapp.companyId}-mainchannel`).emit(
+                  `company-${whatsapp.companyId}-whatsappSession`,
+                  {
+                    action: "update",
+                    session: whatsappUpdate
+                  }
+                );
                 wsocket.ev.removeAllListeners("connection.update");
                 wsocket.ws.close();
                 wsocket = null;

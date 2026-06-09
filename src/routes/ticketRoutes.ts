@@ -21,6 +21,8 @@ ticketRoutes.get(
 
 ticketRoutes.get("/tickets", isAuth, TicketController.index);
 
+ticketRoutes.get("/tickets/overview", isAuth, TicketController.overview);
+
 ticketRoutes.get("/tickets/:ticketId", isAuth, TicketController.show);
 ticketRoutes.get("/tickets/:ticketId/group-participants", isAuth, TicketController.groupParticipants);
 

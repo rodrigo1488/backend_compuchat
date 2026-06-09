@@ -14,6 +14,7 @@ import CheckCancellationPolicyService from "../services/AppointmentServices/Chec
 import CancelAppointmentByTokenService from "../services/AppointmentServices/CancelAppointmentByTokenService";
 import RescheduleAppointmentByTokenService from "../services/AppointmentServices/RescheduleAppointmentByTokenService";
 import GenerateAppointmentIcalService from "../services/AppointmentServices/GenerateAppointmentIcalService";
+import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -91,14 +92,9 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
 export const getPublicAppointmentServices = async (req: Request, res: Response): Promise<Response> => {
   const { publicId } = req.params as any;
 
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     attributes: ["id", "companyId", "settings"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const formSettings = form.settings as any;
   if (formSettings?.formType !== "agendamento") {

@@ -15,6 +15,7 @@ import DeleteFormService from "../services/FormServices/DeleteFormService";
 import AppError from "../errors/AppError";
 import { normalizeBrazilPhoneForWhatsapp } from "../helpers/NormalizeBrazilPhone";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
+import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -243,8 +244,7 @@ export const getPublicForm = async (
 
   console.log(`[PublicForm] Buscando formulário com publicId: ${publicId}`);
 
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     include: [
       {
         association: "fields",
@@ -253,11 +253,6 @@ export const getPublicForm = async (
       },
     ],
   });
-
-  if (!form) {
-    console.log(`[PublicForm] Formulário não encontrado: ${publicId}`);
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const formData: any = form.toJSON();
   console.log(`[PublicForm] Formulário encontrado: ${formData.name} (${formData.fields?.length || 0} campos)`);
@@ -418,13 +413,9 @@ export const uploadLogo = async (req: Request, res: Response): Promise<Response>
 export const getPublicMostOrdered = async (req: Request, res: Response): Promise<Response> => {
   setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     attributes: ["id"],
   });
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
   const responses = await FormResponse.findAll({
     where: { formId: form.id },
     attributes: ["metadata"],
@@ -465,13 +456,9 @@ export const getPublicRepeatData = async (req: Request, res: Response): Promise<
     throw new AppError("Telefone inválido. Informe DDD e número.", 400);
   }
 
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     attributes: ["id", "companyId", "settings"],
   });
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const settings = (form.settings as any) || {};
   const maxOrders = Math.min(30, Math.max(1, Number(settings.pieceAgainMaxOrders ?? 5) || 5));

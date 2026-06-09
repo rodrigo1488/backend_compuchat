@@ -2,6 +2,7 @@ import Appointment from "../../models/Appointment";
 import Form from "../../models/Form";
 import AppError from "../../errors/AppError";
 import { verifyAppointmentToken } from "../../helpers/MesaLinkSign";
+import { findPublicFormBySlug } from "../FormServices/FindPublicFormService";
 
 interface Request {
   token: string;
@@ -17,14 +18,9 @@ const GetAppointmentByTokenService = async ({
     throw new AppError("Link inválido ou expirado", 404);
   }
 
-  const form = await Form.findOne({
-    where: { publicId: formSlug, isActive: true },
+  const form = await findPublicFormBySlug(formSlug, {
     attributes: ["id", "companyId", "name", "slug", "publicId", "settings"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const appointment = await Appointment.findOne({
     where: { id: decoded.appointmentId, formId: form.id, companyId: form.companyId },

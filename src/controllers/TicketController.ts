@@ -11,6 +11,7 @@ import UpdateTicketService from "../services/TicketServices/UpdateTicketService"
 import SetTicketMessagesAsUnread from "../helpers/SetTicketMessagesAsUnread";
 import ListTicketsServiceKanban from "../services/TicketServices/ListTicketsServiceKanban";
 import GetGroupParticipantsService from "../services/TicketServices/GetGroupParticipantsService";
+import GetTicketsOverviewService from "../services/TicketServices/GetTicketsOverviewService";
 
 type IndexQuery = {
   searchParam: string;
@@ -36,6 +37,39 @@ interface TicketData {
   integrationId: number;
   reuseOpenTicket?: boolean;
 }
+
+export const overview = async (req: Request, res: Response): Promise<Response> => {
+  const { showAll, queueIds: queueIdsStringified, search } = req.query as {
+    showAll?: string;
+    queueIds?: string;
+    search?: string;
+  };
+
+  const { companyId, id: userId } = req.user;
+
+  if (!companyId) {
+    return res.status(400).json({ error: "companyId é obrigatório" });
+  }
+
+  let queueIds: number[] = [];
+  if (queueIdsStringified) {
+    try {
+      queueIds = JSON.parse(queueIdsStringified);
+    } catch {
+      queueIds = [];
+    }
+  }
+
+  const data = await GetTicketsOverviewService({
+    companyId,
+    userId,
+    showAll,
+    queueIds,
+    search: search || "",
+  });
+
+  return res.status(200).json(data);
+};
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const {

@@ -5,6 +5,7 @@ import Company from "../../models/Company";
 import Setting from "../../models/Setting";
 import { Op } from "sequelize";
 import AppError from "../../errors/AppError";
+import { findPublicFormBySlug } from "../FormServices/FindPublicFormService";
 
 /** Default business hours if not configured (8h-18h) */
 const DEFAULT_START = 8;
@@ -34,14 +35,9 @@ const GetAvailabilityService = async ({
   date,
   excludeAppointmentId,
 }: Request): Promise<{ slots: Slot[] }> => {
-  const form = await Form.findOne({
-    where: { publicId: formSlug, isActive: true },
+  const form = await findPublicFormBySlug(formSlug, {
     attributes: ["id", "companyId", "settings"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const service = await AppointmentService.findOne({
     where: { id: serviceId, companyId: form.companyId, userId, isActive: true },

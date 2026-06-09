@@ -58,10 +58,13 @@ export const StartWhatsAppSession = async (
   await whatsapp.update({ status: "OPENING" });
 
   const io = getIO();
-  io.to(`company-${whatsapp.companyId}-mainchannel`).emit("whatsappSession", {
-    action: "update",
-    session: whatsapp
-  });
+  io.to(`company-${whatsapp.companyId}-mainchannel`).emit(
+    `company-${whatsapp.companyId}-whatsappSession`,
+    {
+      action: "update",
+      session: whatsapp
+    }
+  );
 
   try {
     const wbot = await initWASocket(whatsapp);

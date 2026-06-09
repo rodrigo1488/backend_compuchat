@@ -23,6 +23,8 @@ import AddOnItem from "../models/AddOnItem";
 import GrupoAddOn from "../models/GrupoAddOn";
 import AppError from "../errors/AppError";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
+import { assertCompanyPublicAccess } from "../helpers/companyPublicAccess";
+import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
 import Contact from "../models/Contact";
 import CreateTicketService from "../services/TicketServices/CreateTicketService";
@@ -526,14 +528,9 @@ export const getPublicMesas = async (req: Request, res: Response): Promise<Respo
   setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
 
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     attributes: ["companyId"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const mesas = await Mesa.findAll({
     where: { companyId: form.companyId },
@@ -582,6 +579,8 @@ export const getPublicMesaByToken = async (req: Request, res: Response): Promise
   });
   if (!mesa) throw new AppError("ERR_MESA_NOT_FOUND", 404);
   const companyId = mesa.companyId;
+
+  await assertCompanyPublicAccess(companyId);
 
   if (process.env.MESA_LINK_SECRET) {
     if (!tokenFromQuery || !verifyMesaLinkOnly(companyId, mesaIdNum, tokenFromQuery)) {
@@ -637,6 +636,8 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
   });
   if (!mesa) throw new AppError("ERR_MESA_NOT_FOUND", 404);
   const companyId = mesa.companyId;
+
+  await assertCompanyPublicAccess(companyId);
 
   if (process.env.MESA_LINK_SECRET) {
     if (!tokenFromQuery || !verifyMesaLinkOnly(companyId, mesaIdNum, tokenFromQuery)) {
@@ -707,14 +708,9 @@ export const getPublicMesaById = async (req: Request, res: Response): Promise<Re
   const { publicId, mesaId } = req.params as any;
   const tokenFromQuery = (req.query.t as string) || "";
 
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     attributes: ["id", "companyId"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   const mesaIdNum = Number(mesaId);
   if (!Number.isFinite(mesaIdNum)) {

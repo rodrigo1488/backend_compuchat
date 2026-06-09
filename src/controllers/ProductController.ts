@@ -20,6 +20,7 @@ import AddOnSubgroup from "../models/AddOnSubgroup";
 import AddOnItem from "../models/AddOnItem";
 import AppError from "../errors/AppError";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
+import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -243,15 +244,9 @@ export const getPublicMenuProducts = async (
   setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
 
-  // Buscar formulário pelo publicId para obter companyId
-  const form = await Form.findOne({
-    where: { publicId, isActive: true },
+  const form = await findPublicFormBySlug(publicId, {
     attributes: ["id", "companyId"],
   });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
 
   // Buscar todos os produtos de cardápio da empresa (com variações e addOnGroupId)
   const products = await Product.findAll({

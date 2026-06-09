@@ -11,6 +11,10 @@ import UpdateOrderStatusService from "../services/OrderServices/UpdateOrderStatu
 import { ReprintLastPrintJobForFormResponse } from "../services/PrintJobService/ReprintPrintJobService";
 import AppError from "../errors/AppError";
 import { verifyOrderToken } from "../helpers/MesaLinkSign";
+import {
+  findPublicFormById,
+  findPublicFormBySlug,
+} from "../services/FormServices/FindPublicFormService";
 
 const RESPONSES_MAX_AGE_HOURS = 24;
 
@@ -341,16 +345,8 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
 
   // Buscar formulário pelo slug ou pelo formId do orderToken
   const form = formIdToUse
-    ? await Form.findOne({
-        where: { id: formIdToUse, isActive: true },
-      })
-    : await Form.findOne({
-        where: { publicId, isActive: true },
-      });
-
-  if (!form) {
-    throw new AppError("ERR_FORM_NOT_FOUND", 404);
-  }
+    ? await findPublicFormById(formIdToUse)
+    : await findPublicFormBySlug(publicId);
 
   // Se orderToken foi fornecido, validar que o formId corresponde
   if (data.orderToken && formIdToUse && form.id !== formIdToUse) {
