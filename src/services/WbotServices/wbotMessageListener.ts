@@ -762,6 +762,40 @@ const downloadMedia = async (msg: proto.IWebMessageInfo) => {
  * Quando o id é um LID (numero@lid), tentamos resolver para PN via getPNForLID antes de validar
  * número; fluxos que dependem de número de telefone devem usar verifyContact para obter contato.
  */
+/**
+ * Busca a URL da foto de perfil usando cache Redis (TTL: 24h).
+ * Evita fazer uma chamada de rede ao WhatsApp em cada mensagem recebida,
+ * o que era a principal causa do atraso de 5–10 min na entrega das mensagens.
+ */
+const getProfilePicUrlCached = async (
+  wbot: Session,
+  jid: string,
+  companyId: number
+): Promise<string> => {
+  const fallback = `${process.env.FRONTEND_URL}/nopicture.png`;
+  const cacheKey = `profilepic:${companyId}:${jid}`;
+  const TTL_SECONDS = 60 * 60 * 24; // 24 horas
+
+  try {
+    const cached = await cacheLayer.get(cacheKey);
+    if (cached) return cached;
+  } catch (_) {}
+
+  try {
+    const url = await wbot.profilePictureUrl(jid);
+    const result = url || fallback;
+    try {
+      await cacheLayer.set(cacheKey, result, "EX", TTL_SECONDS);
+    } catch (_) {}
+    return result;
+  } catch (_) {
+    try {
+      await cacheLayer.set(cacheKey, fallback, "EX", TTL_SECONDS);
+    } catch (_) {}
+    return fallback;
+  }
+};
+
 const verifyContact = async (
   msgContact: IMe,
   wbot: Session,
@@ -774,17 +808,30 @@ const verifyContact = async (
     ? msgContact.id
     : jidNormalizedUser(msgContact.id);
 
-  // Log removido para reduzir ruído - usar logger.debug se necessário para diagnóstico
+  // Verificar se o contato já existe no banco antes de buscar a foto.
+  // Para contatos já conhecidos que já têm foto, não fazemos chamada de rede.
+  // Isso elimina a principal causa de atraso: profilePictureUrl em cada msg.
+  const isGroup = normalizedContactId.includes("g.us");
+  const existingNumberCheck = isGroup
+    ? normalizedContactId
+    : normalizedContactId.replace(/@.*$/, "").replace(/\D/g, "");
 
-  try {
-    profilePicUrl = await wbot.profilePictureUrl(normalizedContactId);
-  } catch (e) {
-    Sentry.captureException(e);
-    profilePicUrl = `${process.env.FRONTEND_URL}/nopicture.png`;
+  const existingForPic = !isGroup
+    ? await Contact.findOne({
+        where: { number: existingNumberCheck, companyId },
+        attributes: ["id", "profilePicUrl"]
+      })
+    : null;
+
+  if (existingForPic?.profilePicUrl && !existingForPic.profilePicUrl.includes("nopicture")) {
+    // Contato já tem foto — usar cache/valor existente, sem chamada de rede
+    profilePicUrl = existingForPic.profilePicUrl;
+  } else {
+    // Contato novo ou sem foto — buscar com cache Redis
+    profilePicUrl = await getProfilePicUrlCached(wbot, normalizedContactId, companyId);
   }
 
   // Extrair número do JID normalizado (remove @s.whatsapp.net ou @g.us)
-  const isGroup = normalizedContactId.includes("g.us");
   let contactNumber = isGroup
     ? normalizedContactId
     : normalizedContactId.replace(/@.*$/, "").replace(/\D/g, "");
@@ -816,22 +863,25 @@ const verifyContact = async (
       logger.warn('⚠️ Função getPNForLID não disponível no wbot');
     }
 
-    // ESTRATÉGIA 2: Se ainda inválido, tentar onWhatsApp
+    // ESTRATÉGIA 2: Se ainda inválido, tentar onWhatsApp (com timeout de 5s para não bloquear)
     if (!isValidPhoneNumber(contactNumber)) {
-      // Log removido para reduzir ruído
       try {
-        const onWhatsAppResult = await wbot.onWhatsApp(normalizedContactId);
+        const timeout = new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error("onWhatsApp timeout")), 5000)
+        );
+        const onWhatsAppResult = await Promise.race([
+          wbot.onWhatsApp(normalizedContactId),
+          timeout
+        ]) as Awaited<ReturnType<typeof wbot.onWhatsApp>> | null;
         if (onWhatsAppResult && onWhatsAppResult.length > 0) {
           const jid = onWhatsAppResult[0].jid;
           const phoneNumber = jid.replace(/@.*$/, "").replace(/\D/g, "");
-          // Log removido para reduzir ruído
           contactNumber = phoneNumber;
         } else {
           logger.warn('⚠️ onWhatsApp não retornou resultados');
         }
       } catch (e) {
-        logger.error('❌ Erro ao usar onWhatsApp:', e);
-        Sentry.captureException(e);
+        logger.warn('⚠️ onWhatsApp falhou ou timeout (LID resolution):', (e as Error)?.message);
       }
     }
 

@@ -77,7 +77,17 @@ const CreateOrUpdateContactService = async ({
 
   // Se o contato já existia, atualizar os dados
   if (!created) {
-    const updateData: any = { profilePicUrl };
+    const updateData: any = {};
+
+    // Atualizar profilePicUrl apenas se mudou e não é o fallback nopicture
+    const newPicIsReal = profilePicUrl && !profilePicUrl.includes("nopicture");
+    const oldPicIsReal = contact.profilePicUrl && !contact.profilePicUrl.includes("nopicture");
+    if (newPicIsReal && profilePicUrl !== contact.profilePicUrl) {
+      updateData.profilePicUrl = profilePicUrl;
+    } else if (!oldPicIsReal && profilePicUrl) {
+      // Contato não tinha foto — atualizar mesmo que seja nopicture
+      updateData.profilePicUrl = profilePicUrl;
+    }
 
     // Atualizar whatsappId apenas se não estiver definido
     if (isNil(contact.whatsappId) && whatsappId) {
@@ -89,7 +99,9 @@ const CreateOrUpdateContactService = async ({
       updateData.userId = userId;
     }
 
-    await contact.update(updateData);
+    if (Object.keys(updateData).length > 0) {
+      await contact.update(updateData);
+    }
 
     io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-contact`, {
       action: "update",
