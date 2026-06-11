@@ -10,6 +10,8 @@ import OcuparMesaService from "../services/MesaServices/OcuparMesaService";
 import LiberarMesaService from "../services/MesaServices/LiberarMesaService";
 import ResumoContaMesaService from "../services/MesaServices/ResumoContaMesaService";
 import DeleteMesaService from "../services/MesaServices/DeleteMesaService";
+import ValidateMesaRestoreQrService from "../services/MesaServices/ValidateMesaRestoreQrService";
+import RestoreMesaFromQrService from "../services/MesaServices/RestoreMesaFromQrService";
 import RegisterGourmetVendaService from "../services/GourmetFinanceiroServices/RegisterGourmetVendaService";
 import GetOrCreateDefaultCardapioFormService from "../services/FormServices/GetOrCreateDefaultCardapioFormService";
 import { Op } from "sequelize";
@@ -187,9 +189,73 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
   return res.status(200).json(mesa);
 };
 
+export const validateRestoreQr = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { companyId } = req.user;
+  const { qrContent } = req.body;
+
+  if (!qrContent || typeof qrContent !== "string") {
+    throw new AppError("ERR_MESA_QR_INVALID", 400);
+  }
+
+  const result = await ValidateMesaRestoreQrService({
+    companyId,
+    qrContent: qrContent.trim(),
+  });
+
+  return res.status(200).json(result);
+};
+
+export const restoreFromQr = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { companyId } = req.user;
+  const data = req.body;
+
+  const schema = Yup.object().shape({
+    qrContent: Yup.string().required(),
+    number: Yup.string().required(),
+    name: Yup.string().nullable(),
+    type: Yup.string().oneOf(["mesa", "comanda"]).nullable(),
+    formId: Yup.number().nullable(),
+    capacity: Yup.number().nullable(),
+    section: Yup.string().nullable(),
+    displayOrder: Yup.number().nullable(),
+  });
+
+  try {
+    await schema.validate(data);
+  } catch (err: any) {
+    throw new AppError(err.message, 400);
+  }
+
+  const mesa = await RestoreMesaFromQrService({
+    companyId,
+    qrContent: String(data.qrContent).trim(),
+    number: data.number,
+    name: data.name,
+    type: data.type === "comanda" ? "comanda" : "mesa",
+    formId: data.formId ?? null,
+    capacity: data.capacity ?? null,
+    section: data.section ?? null,
+    displayOrder: data.displayOrder ?? 0,
+  });
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-mesa`, {
+    action: "restore",
+    mesa,
+  });
+
+  return res.status(200).json(mesa);
+};
+
 export const storeBulk = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
-  const { count, prefix, suffix, startFrom, formId } = req.body;
+  const { count, prefix, suffix, startFrom, formId, type } = req.body;
 
   const schema = Yup.object().shape({
     count: Yup.number().required().min(1).max(50),
@@ -197,21 +263,25 @@ export const storeBulk = async (req: Request, res: Response): Promise<Response> 
     suffix: Yup.string().nullable(),
     startFrom: Yup.number().nullable(),
     formId: Yup.number().nullable(),
+    type: Yup.string().oneOf(["mesa", "comanda"]).nullable(),
   });
 
   try {
-    await schema.validate({ count, prefix, suffix, startFrom, formId });
+    await schema.validate({ count, prefix, suffix, startFrom, formId, type });
   } catch (err: any) {
     throw new AppError(err.message, 400);
   }
 
+  const normalizedType = type === "comanda" ? "comanda" : "mesa";
+
   const mesas = await CreateBulkMesasService({
     companyId,
     count,
-    prefix: prefix || "Mesa",
+    prefix,
     suffix: suffix || "",
     startFrom: startFrom ?? 1,
     formId: formId ?? null,
+    type: normalizedType,
   });
 
   const io = getIO();

@@ -12,6 +12,18 @@ routes.get("/mesas/by-identifier", isAuth, requireLanchonetes, MesaController.by
 routes.get("/mesas/default-cardapio-form", isAuth, requireLanchonetes, MesaController.getDefaultCardapioForm);
 routes.post("/mesas", isAuth, requireLanchonetes, MesaController.store);
 routes.post("/mesas/bulk", isAuth, requireLanchonetes, MesaController.storeBulk);
+routes.post(
+  "/mesas/validate-restore-qr",
+  isAuth,
+  requireLanchonetes,
+  MesaController.validateRestoreQr
+);
+routes.post(
+  "/mesas/restore-from-qr",
+  isAuth,
+  requireLanchonetes,
+  MesaController.restoreFromQr
+);
 routes.get("/mesas/:id/link-qr", isAuth, requireLanchonetes, MesaController.getMesaLinkQr);
 routes.get("/mesas/:id", isAuth, requireLanchonetes, MesaController.show);
 routes.get("/mesas/:id/resumo-conta", isAuth, requireLanchonetes, MesaController.resumoConta);

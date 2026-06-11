@@ -8,22 +8,27 @@ interface Request {
   suffix?: string;
   startFrom?: number;
   formId?: number | null;
+  type?: "mesa" | "comanda";
 }
 
 const CreateBulkMesasService = async ({
   companyId,
   count,
-  prefix = "Mesa",
+  prefix,
   suffix = "",
   startFrom = 1,
   formId = null,
+  type: rawType = "mesa",
 }: Request): Promise<Mesa[]> => {
   if (count < 1 || count > 50) {
     throw new AppError("ERR_MESA_BULK_COUNT_INVALID", 400);
   }
 
+  const type = rawType === "comanda" ? "comanda" : "mesa";
+  const defaultPrefix = type === "comanda" ? "Comanda" : "Mesa";
+  const resolvedPrefix = prefix !== undefined && prefix !== null ? prefix : defaultPrefix;
+
   const mesas: Mesa[] = [];
-  const type = "mesa";
   const existingNumbers = new Set(
     (await Mesa.findAll({ where: { companyId, type }, attributes: ["number"] })).map(
       (m) => m.number
@@ -32,7 +37,7 @@ const CreateBulkMesasService = async ({
 
   for (let i = 0; i < count; i++) {
     const num = startFrom + i;
-    const number = `${prefix}${prefix ? " " : ""}${num}${suffix ? " " : ""}${suffix}`.trim();
+    const number = `${resolvedPrefix}${resolvedPrefix ? " " : ""}${num}${suffix ? " " : ""}${suffix}`.trim();
     if (existingNumbers.has(number)) {
       continue;
     }
