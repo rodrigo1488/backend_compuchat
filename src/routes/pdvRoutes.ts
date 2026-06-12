@@ -7,5 +7,6 @@ const routes = express.Router();
 const requireLanchonetes = hasCompanyModule("lanchonetes");
 
 routes.post("/pdv/venda", isAuth, requireLanchonetes, PdvController.registrarVenda);
+routes.get("/pdv/relatorio-produtos", isAuth, requireLanchonetes, PdvController.relatorioProdutos);
 
 export default routes;
