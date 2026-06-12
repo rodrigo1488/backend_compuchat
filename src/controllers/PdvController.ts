@@ -34,6 +34,11 @@ export const registrarVenda = async (req: Request, res: Response): Promise<Respo
     tipo: "pdv",
     valor: totalCalculado,
     meiosPagamento: meiosPagamento ?? null,
+    itens: itens.map((i: ItemBody) => ({
+      productName: i.productName || "",
+      quantity: Number(i.quantity) || 0,
+      productValue: Number(i.productValue) ?? 0,
+    })),
   });
 
   return res.status(200).json({

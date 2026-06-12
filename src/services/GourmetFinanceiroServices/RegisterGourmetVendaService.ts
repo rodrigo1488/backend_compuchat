@@ -26,6 +26,7 @@ interface RequestPdv {
   tipo: "pdv";
   valor: number;
   meiosPagamento?: any;
+  itens?: Array<{ productName: string; quantity: number; productValue: number }>;
 }
 
 type Request = RequestMesa | RequestDelivery | RequestPdv;
@@ -53,6 +54,7 @@ const RegisterGourmetVendaService = async (data: Request): Promise<GourmetFinanc
     payload.protocol = null;
     payload.entregadorUserId = null;
     payload.entregadorNome = null;
+    payload.itens = (data as RequestPdv).itens ?? null;
   } else {
     payload.mesaId = null;
     payload.mesaNumero = null;

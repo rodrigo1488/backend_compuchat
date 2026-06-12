@@ -59,6 +59,9 @@ class GourmetFinanceiro extends Model<GourmetFinanceiro> {
   @Column(DataType.JSON)
   meiosPagamento: any;
 
+  @Column(DataType.JSON)
+  itens: any;
+
   @CreatedAt
   createdAt: Date;
 

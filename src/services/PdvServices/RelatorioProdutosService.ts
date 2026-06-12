@@ -1,5 +1,6 @@
 import { Op } from "sequelize";
 import FormResponse from "../../models/FormResponse";
+import GourmetFinanceiro from "../../models/GourmetFinanceiro";
 
 export interface ProdutoRelatório {
   productName: string;
@@ -24,9 +25,33 @@ interface Params {
   endDate: string;
 }
 
+/** Acumula itens de uma lista no map de agregação. */
+function acumularItens(
+  map: Map<string, { qty: number; unitValue: number }>,
+  items: any[]
+) {
+  for (const item of items) {
+    const name = (item.productName || item.name || "Item").trim();
+    const qty = Number(item.quantity) || 0;
+    const pv = Number(item.productValue) || 0;
+    const at = Number(item.addonsTotal) || 0;
+    const unit = Math.round((pv + at) * 100) / 100;
+
+    if (qty <= 0) continue;
+
+    const existing = map.get(name);
+    if (existing) {
+      existing.qty += qty;
+    } else {
+      map.set(name, { qty, unitValue: unit });
+    }
+  }
+}
+
 /**
- * Agrega todos os menuItems de pedidos (FormResponse) cujo formResponseId
- * pertença à empresa e cuja data de criação esteja no intervalo fornecido.
+ * Agrega os produtos vendidos no período considerando:
+ * 1. FormResponse (pedidos de mesa/delivery) com menuItems em metadata
+ * 2. GourmetFinanceiro tipo="pdv" com itens salvos na coluna itens
  * Pedidos cancelados são excluídos.
  */
 const RelatorioProdutosService = async ({
@@ -37,9 +62,9 @@ const RelatorioProdutosService = async ({
   const start = `${startDate} 00:00:00`;
   const end = `${endDate} 23:59:59`;
 
-  // Buscar todas as respostas de formulário (pedidos) da empresa no período
-  // O companyId está na Form, mas FormResponse não tem FK direta → filtramos
-  // via include(Form) onde companyId === companyId
+  const map = new Map<string, { qty: number; unitValue: number }>();
+
+  // ── 1. Pedidos de formulário (mesa/delivery) ─────────────────────────────
   const responses = await FormResponse.findAll({
     where: {
       submittedAt: { [Op.gte]: start, [Op.lte]: end },
@@ -56,31 +81,28 @@ const RelatorioProdutosService = async ({
     ],
   });
 
-  // Agregar por nome de produto
-  const map = new Map<string, { qty: number; unitValue: number }>();
-
   for (const response of responses) {
     const meta = (response as any).metadata || {};
     const items: any[] = Array.isArray(meta.menuItems) ? meta.menuItems : [];
-
-    for (const item of items) {
-      const name = (item.productName || item.name || "Item").trim();
-      const qty = Number(item.quantity) || 0;
-      const pv = Number(item.productValue) || 0;
-      const at = Number(item.addonsTotal) || 0;
-      const unit = Math.round((pv + at) * 100) / 100;
-
-      if (qty <= 0) continue;
-
-      const existing = map.get(name);
-      if (existing) {
-        existing.qty += qty;
-      } else {
-        map.set(name, { qty, unitValue: unit });
-      }
-    }
+    acumularItens(map, items);
   }
 
+  // ── 2. Vendas PDV (nova venda) ────────────────────────────────────────────
+  const pdvVendas = await GourmetFinanceiro.findAll({
+    where: {
+      companyId,
+      tipo: "pdv",
+      createdAt: { [Op.gte]: start, [Op.lte]: end },
+    },
+    attributes: ["id", "itens"],
+  });
+
+  for (const venda of pdvVendas) {
+    const items: any[] = Array.isArray((venda as any).itens) ? (venda as any).itens : [];
+    acumularItens(map, items);
+  }
+
+  // ── Montar resultado ──────────────────────────────────────────────────────
   const produtos: ProdutoRelatório[] = Array.from(map.entries())
     .map(([productName, { qty, unitValue }]) => ({
       productName,
