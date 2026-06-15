@@ -1,13 +1,15 @@
 import { Op } from "sequelize";
 import TicketTraking from "./models/TicketTraking";
-import { format } from "date-fns";
 import moment from "moment";
 import Ticket from "./models/Ticket";
 import Whatsapp from "./models/Whatsapp";
+import Queue from "./models/Queue";
 import { getIO } from "./libs/socket";
 import { logger } from "./utils/logger";
 import ShowTicketService from "./services/TicketServices/ShowTicketService";
 
+/** Evita log repetido no mesmo job quando transferQueueId aponta para fila inexistente. */
+const invalidTransferConfigLogged = new Set<number>();
 
 export const TransferTicketQueue = async (): Promise<void> => {
   const io = getIO();
@@ -16,6 +18,9 @@ export const TransferTicketQueue = async (): Promise<void> => {
   let hasMore = true;
   let totalProcessed = 0;
   let totalTransferred = 0;
+  let totalSkippedInvalidQueue = 0;
+
+  invalidTransferConfigLogged.clear();
 
   try {
     while (hasMore) {
@@ -45,7 +50,7 @@ export const TransferTicketQueue = async (): Promise<void> => {
             where: {
               id: ticket.whatsappId
             },
-            attributes: ['id', 'timeToTransfer', 'transferQueueId'] // Apenas campos necessários
+            attributes: ["id", "companyId", "timeToTransfer", "transferQueueId"]
           });
 
           if (!wpp || !wpp.timeToTransfer || !wpp.transferQueueId || wpp.timeToTransfer == 0) {
@@ -56,6 +61,25 @@ export const TransferTicketQueue = async (): Promise<void> => {
           dataLimite.setMinutes(dataLimite.getMinutes() + wpp.timeToTransfer);
 
           if (new Date() > dataLimite) {
+            const targetQueue = await Queue.findOne({
+              where: {
+                id: wpp.transferQueueId,
+                companyId: ticket.companyId
+              },
+              attributes: ["id"]
+            });
+
+            if (!targetQueue) {
+              totalSkippedInvalidQueue++;
+              if (!invalidTransferConfigLogged.has(wpp.id)) {
+                invalidTransferConfigLogged.add(wpp.id);
+                logger.warn(
+                  `TransferTicketQueue: conexão WhatsApp ${wpp.id} com transferQueueId=${wpp.transferQueueId} inválido (fila inexistente ou de outra empresa). Ajuste a configuração da conexão.`
+                );
+              }
+              continue;
+            }
+
             await ticket.update({
               queueId: wpp.transferQueueId,
             });
@@ -114,7 +138,12 @@ export const TransferTicketQueue = async (): Promise<void> => {
     }
 
     if (totalProcessed > 0) {
-      logger.info(`[📊] TransferTicketQueue concluído: ${totalProcessed} tickets processados, ${totalTransferred} transferidos`);
+      logger.info(
+        `[📊] TransferTicketQueue concluído: ${totalProcessed} tickets processados, ${totalTransferred} transferidos` +
+          (totalSkippedInvalidQueue > 0
+            ? `, ${totalSkippedInvalidQueue} ignorados (fila de destino inválida)`
+            : "")
+      );
     }
   } catch (err: any) {
     logger.error(`[🚨] Erro crítico em TransferTicketQueue:`, err.message);
