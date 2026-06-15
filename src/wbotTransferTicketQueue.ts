@@ -65,13 +65,12 @@ export const TransferTicketQueue = async (): Promise<void> => {
                 ticketId: ticket.id
               },
               order: [["createdAt", "DESC"]],
-              attributes: ['id', 'ticketId', 'queuedAt', 'queueId'] // Apenas campos necessários
+              attributes: ["id", "ticketId", "queuedAt"]
             });
 
             if (ticketTraking) {
               await ticketTraking.update({
-                queuedAt: moment().toDate(),
-                queueId: wpp.transferQueueId,
+                queuedAt: moment().toDate()
               });
             }
 
@@ -91,7 +90,10 @@ export const TransferTicketQueue = async (): Promise<void> => {
             logger.info(`Transferencia de ticket automatica ticket id ${ticket.id} para a fila ${wpp.transferQueueId}`);
           }
         } catch (err: any) {
-          logger.error(`Erro ao processar transferência do ticket ${ticket.id}:`, err.message);
+          logger.error(
+            `Erro ao processar transferência do ticket ${ticket.id}: ${err?.message || err}`,
+            err?.stack
+          );
           // Continua com o próximo ticket mesmo se houver erro
         }
         
