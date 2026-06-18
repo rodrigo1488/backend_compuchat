@@ -2,31 +2,23 @@ import { Op } from "sequelize";
 import FormResponse from "../../models/FormResponse";
 import Mesa from "../../models/Mesa";
 import AppError from "../../errors/AppError";
+import { calcSubtotalFromMenuItems } from "../../helpers/gourmetOrderTotals";
 
 interface PedidoResumo {
   id: number;
   protocol: string;
   submittedAt: Date;
   total: number;
-  menuItems: Array<{ productName?: string; quantity: number; productValue?: number }>;
+  menuItems: Array<{ productName?: string; quantity: number; productValue?: number; addonsTotal?: number }>;
 }
 
 interface Response {
   pedidos: PedidoResumo[];
   total: number;
+  subtotal: number;
   mesa: { id: number; number: string; name: string; type?: string };
   cliente?: { id: number; name: string; number: string } | null;
 }
-
-const calcTotalFromMenuItems = (metadata: any): number => {
-  const items = metadata?.menuItems || [];
-  if (!Array.isArray(items)) return 0;
-  return items.reduce((sum: number, item: any) => {
-    const qty = Number(item.quantity) || 0;
-    const val = Number(item.productValue) ?? 0;
-    return sum + qty * val;
-  }, 0);
-};
 
 const ResumoContaMesaService = async (mesaId: number, companyId: number): Promise<Response> => {
   const mesa = await Mesa.findOne({
@@ -43,11 +35,14 @@ const ResumoContaMesaService = async (mesaId: number, companyId: number): Promis
       ? { id: (mesa.contact as any).id, name: (mesa.contact as any).name, number: (mesa.contact as any).number }
       : null;
 
+  const mesaInfo = { id: mesa.id, number: mesa.number, name: mesa.name, type: (mesa as any).type || "mesa" };
+
   if (!mesa.sessionId) {
     return {
       pedidos: [],
       total: 0,
-      mesa: { id: mesa.id, number: mesa.number, name: mesa.name, type: (mesa as any).type || "mesa" },
+      subtotal: 0,
+      mesa: mesaInfo,
       cliente,
     };
   }
@@ -66,7 +61,7 @@ const ResumoContaMesaService = async (mesaId: number, companyId: number): Promis
 
   const pedidos: PedidoResumo[] = responses.map((r) => {
     const meta = (r as any).metadata || {};
-    const total = calcTotalFromMenuItems(meta);
+    const total = calcSubtotalFromMenuItems(meta.menuItems || []);
     return {
       id: r.id,
       protocol: r.protocol || `#${r.id}`,
@@ -76,12 +71,13 @@ const ResumoContaMesaService = async (mesaId: number, companyId: number): Promis
     };
   });
 
-  const total = pedidos.reduce((s, p) => s + p.total, 0);
+  const subtotal = pedidos.reduce((s, p) => s + p.total, 0);
 
   return {
     pedidos,
-    total,
-    mesa: { id: mesa.id, number: mesa.number, name: mesa.name, type: (mesa as any).type || "mesa" },
+    total: subtotal,
+    subtotal,
+    mesa: mesaInfo,
     cliente,
   };
 };

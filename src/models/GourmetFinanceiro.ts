@@ -35,6 +35,28 @@ class GourmetFinanceiro extends Model<GourmetFinanceiro> {
   })
   valor: number;
 
+  @Column({
+    type: DataType.DECIMAL(10, 2),
+    allowNull: true,
+  })
+  subtotal: number;
+
+  @Column({
+    type: DataType.DECIMAL(10, 2),
+    allowNull: false,
+    defaultValue: 0,
+  })
+  desconto: number;
+
+  @Column
+  descontoTipo: string;
+
+  @Column({
+    type: DataType.DECIMAL(10, 2),
+    allowNull: true,
+  })
+  descontoValor: number;
+
   @Column
   dataVenda: string;
 

@@ -1,6 +1,13 @@
 import GourmetFinanceiro from "../../models/GourmetFinanceiro";
 import { getBrazilISODateString } from "../../helpers/BrazilTimezone";
 
+interface DescontoFields {
+  subtotal?: number | null;
+  desconto?: number | null;
+  descontoTipo?: string | null;
+  descontoValor?: number | null;
+}
+
 interface RequestMesa {
   companyId: number;
   tipo: "mesa";
@@ -29,7 +36,7 @@ interface RequestPdv {
   itens?: Array<{ productName: string; quantity: number; productValue: number }>;
 }
 
-type Request = RequestMesa | RequestDelivery | RequestPdv;
+type Request = (RequestMesa | RequestDelivery | RequestPdv) & DescontoFields;
 
 const RegisterGourmetVendaService = async (data: Request): Promise<GourmetFinanceiro> => {
   const today = getBrazilISODateString(new Date());
@@ -39,6 +46,10 @@ const RegisterGourmetVendaService = async (data: Request): Promise<GourmetFinanc
     valor: data.valor,
     dataVenda: today,
     meiosPagamento: (data as any).meiosPagamento ?? null,
+    subtotal: data.subtotal ?? null,
+    desconto: data.desconto ?? 0,
+    descontoTipo: data.descontoTipo ?? null,
+    descontoValor: data.descontoValor ?? null,
   };
   if (data.tipo === "mesa") {
     payload.mesaId = data.mesaId;

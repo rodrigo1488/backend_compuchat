@@ -10,6 +10,8 @@ export interface ReciboPdfData {
     menuItems?: ReciboMenuItem[];
   }>;
   total?: number;
+  subtotal?: number;
+  desconto?: number;
   mesa?: { number?: string; name?: string; type?: string } | null;
   cliente?: { name?: string; number?: string } | null;
   meiosPagamento?: Array<{ metodo?: string; valor?: number }>;
@@ -88,6 +90,16 @@ function buildHtml({ variant, data }: ReciboPdfRequest): string {
 
   const headerLine = numeroConta ? `${tipoConta}: ${escapeHtml(numeroConta)}` : escapeHtml(tipoConta);
 
+  const descontoVal = Number(data.desconto || 0);
+  const subtotalVal = data.subtotal != null ? Number(data.subtotal) : null;
+  let totalBlock = "";
+  if (descontoVal > 0.001) {
+    const sub = subtotalVal != null ? subtotalVal : Number(data.total || 0) + descontoVal;
+    totalBlock += `<p class="muted" style="display:flex;justify-content:space-between"><span>Subtotal</span><span>${formatMoney(sub)}</span></p>`;
+    totalBlock += `<p class="muted" style="display:flex;justify-content:space-between"><span>Desconto</span><span>- ${formatMoney(descontoVal)}</span></p>`;
+  }
+  totalBlock += `<p class="total">TOTAL: ${formatMoney(Number(data.total) || 0)}</p>`;
+
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -115,7 +127,7 @@ function buildHtml({ variant, data }: ReciboPdfRequest): string {
     <thead><tr><th>Descrição</th><th style="text-align:right">Qtd</th><th style="text-align:right">Unit.</th><th style="text-align:right">Total</th></tr></thead>
     <tbody>${bodyRows}</tbody>
   </table>
-  <p class="total">TOTAL: ${formatMoney(Number(data.total) || 0)}</p>
+  ${totalBlock}
   ${payBlock}
   <p class="nf">Obrigado! Volte sempre.</p>
 </body>

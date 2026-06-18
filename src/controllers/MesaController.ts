@@ -13,6 +13,7 @@ import DeleteMesaService from "../services/MesaServices/DeleteMesaService";
 import ValidateMesaRestoreQrService from "../services/MesaServices/ValidateMesaRestoreQrService";
 import RestoreMesaFromQrService from "../services/MesaServices/RestoreMesaFromQrService";
 import RegisterGourmetVendaService from "../services/GourmetFinanceiroServices/RegisterGourmetVendaService";
+import { applyDiscount, validatePayments } from "../helpers/gourmetOrderTotals";
 import GetOrCreateDefaultCardapioFormService from "../services/FormServices/GetOrCreateDefaultCardapioFormService";
 import { Op } from "sequelize";
 import Form from "../models/Form";
@@ -53,7 +54,10 @@ const generateOccupationKeyword = (length = 6): string => {
 const isPlaceholderPhone = (number?: string | null): boolean =>
   !number || number.startsWith("SEMTELEFONE-");
 
-const isKeywordValidationEnabled = async (mesa: Mesa): Promise<boolean> => {
+const isKeywordValidationEnabled = async (
+  mesa: Mesa,
+  createdBy?: number
+): Promise<boolean> => {
   let form: Form | null = null;
   if (mesa.formId) {
     form = await Form.findOne({
@@ -62,7 +66,10 @@ const isKeywordValidationEnabled = async (mesa: Mesa): Promise<boolean> => {
     });
   }
   if (!form) {
-    form = await GetOrCreateDefaultCardapioFormService({ companyId: mesa.companyId });
+    form = await GetOrCreateDefaultCardapioFormService({
+      companyId: mesa.companyId,
+      createdBy,
+    });
   }
   const settings = (form.settings || {}) as Record<string, unknown>;
   return settings.mesaOccupationKeywordValidation === true;
@@ -385,7 +392,7 @@ export const ocupar = async (req: Request, res: Response): Promise<Response> => 
     throw new AppError("ERR_CONTACT_NOT_FOUND", 404);
   }
 
-  const keywordValidationEnabled = await isKeywordValidationEnabled(mesaEntity);
+  const keywordValidationEnabled = await isKeywordValidationEnabled(mesaEntity, userId);
   const shouldSendKeyword = keywordValidationEnabled && !isPlaceholderPhone(resolvedContact.number);
 
   if (shouldSendKeyword) {
@@ -539,29 +546,61 @@ export const liberar = async (req: Request, res: Response): Promise<Response> =>
   const { id } = req.params;
   const { companyId } = req.user;
   const mesaId = Number(id);
-  const { meiosPagamento } = req.body || {};
+  const { meiosPagamento, desconto } = req.body || {};
 
-  let resumo: { total: number; mesa?: { number?: string; name?: string } } | null = null;
+  let resumo: { total: number; subtotal: number; mesa?: { number?: string; name?: string } } | null = null;
   try {
     resumo = await ResumoContaMesaService(mesaId, companyId);
   } catch (_) {}
+
+  let financePayload: {
+    subtotal: number;
+    desconto: number;
+    descontoTipo: string | null;
+    descontoValor: number | null;
+    valor: number;
+  } | null = null;
+
+  if (resumo && Number(resumo.subtotal ?? resumo.total) > 0) {
+    const subtotalBruto = Number(resumo.subtotal ?? resumo.total);
+    const discountResult = applyDiscount(subtotalBruto, desconto);
+    financePayload = {
+      subtotal: discountResult.subtotal,
+      desconto: discountResult.desconto,
+      descontoTipo: discountResult.descontoTipo,
+      descontoValor: discountResult.descontoValor,
+      valor: discountResult.total,
+    };
+
+    if (meiosPagamento != null) {
+      const payCheck = validatePayments(discountResult.total, meiosPagamento, { requireFullPayment: true });
+      if (!payCheck.ok) {
+        throw new AppError("ERR_MESA_PAYMENT_MISMATCH", 400);
+      }
+    }
+  }
 
   const mesa = await LiberarMesaService({
     mesaId,
     companyId,
   });
 
-  if (resumo && Number(resumo.total) > 0) {
+  if (resumo && financePayload) {
     try {
       await RegisterGourmetVendaService({
         companyId,
         tipo: "mesa",
-        valor: Number(resumo.total),
+        valor: financePayload.valor,
+        subtotal: financePayload.subtotal,
+        desconto: financePayload.desconto,
+        descontoTipo: financePayload.descontoTipo,
+        descontoValor: financePayload.descontoValor,
         mesaId,
         mesaNumero: resumo.mesa?.number || resumo.mesa?.name || String(mesaId),
         meiosPagamento: meiosPagamento ?? null,
       });
     } catch (err) {
+      if (err instanceof AppError) throw err;
       console.error("RegisterGourmetVendaService (mesa):", err);
     }
   }
@@ -828,7 +867,8 @@ export const getPublicMesaById = async (req: Request, res: Response): Promise<Re
 /** Retorna o formulário cardápio padrão da empresa (obtido ou criado). Usado pelo painel quando a mesa não tem cardápio vinculado. */
 export const getDefaultCardapioForm = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
-  const form = await GetOrCreateDefaultCardapioFormService({ companyId });
+  const createdBy = parseInt(req.user.id);
+  const form = await GetOrCreateDefaultCardapioFormService({ companyId, createdBy });
   const plain = form.get({ plain: true }) as any;
   return res.json({
     formId: plain.id,
