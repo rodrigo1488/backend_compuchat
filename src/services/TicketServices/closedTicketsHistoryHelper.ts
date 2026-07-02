@@ -144,16 +144,30 @@ export const buildClosedTicketsWhere = async (
 
   if (searchParam && searchParam.trim()) {
     const sanitized = searchParam.toLocaleLowerCase().trim();
+    const normalizedSearch = searchParam.trim();
+
+    const matchingContacts = await Contact.findAll({
+      where: {
+        companyId,
+        [Op.or]: [
+          where(fn("LOWER", col("name")), "LIKE", `%${sanitized}%`),
+          { number: { [Op.like]: `%${normalizedSearch}%` } }
+        ]
+      },
+      attributes: ["id"],
+      raw: true
+    });
+
+    const contactIds = matchingContacts
+      .map((contact) => Number(contact.id))
+      .filter((id) => !Number.isNaN(id));
+
+    if (contactIds.length === 0) {
+      return { id: -1 };
+    }
+
     whereCondition = {
-      [Op.and]: [
-        whereCondition,
-        {
-          [Op.or]: [
-            where(fn("LOWER", col("contact.name")), "LIKE", `%${sanitized}%`),
-            { "$contact.number$": { [Op.like]: `%${sanitized}%` } }
-          ]
-        }
-      ]
+      [Op.and]: [whereCondition, { contactId: { [Op.in]: contactIds } }]
     };
   }
 

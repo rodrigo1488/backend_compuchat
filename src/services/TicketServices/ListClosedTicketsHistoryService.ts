@@ -68,12 +68,7 @@ const fetchClosedTicketsHistory = async ({
       : { tickets: [], count: 0, hasMore: false };
   }
 
-  let includes = ticketHistoryIncludes();
-  if (filters.searchParam?.trim()) {
-    includes = includes.map((inc: { as?: string }) =>
-      inc.as === "contact" ? { ...inc, required: true } : inc
-    );
-  }
+  const includes = ticketHistoryIncludes();
 
   if (groupBy === "contact") {
     const totalGroups = await Ticket.count({
