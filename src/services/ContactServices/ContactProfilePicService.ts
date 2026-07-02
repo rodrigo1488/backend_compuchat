@@ -4,6 +4,8 @@ import axios from "axios";
 import { cacheLayer } from "../../libs/cache";
 import { logger } from "../../utils/logger";
 import uploadConfig from "../../config/upload";
+import Contact from "../../models/Contact";
+import { getIO } from "../../libs/socket";
 import {
   fallbackProfilePicUrl,
   isLocalContactProfileUrl,
@@ -19,6 +21,7 @@ type WbotProfile = {
 };
 
 const PROFILE_PIC_FETCH_TTL_SECONDS = 60 * 60 * 6;
+const PROFILE_PIC_THROTTLE_SECONDS = 10 * 60;
 
 export const getLocalProfilePicPath = (
   companyId: number,
@@ -59,7 +62,7 @@ export const persistProfilePictureFromUrl = async (
     await fs.promises.mkdir(path.dirname(localPath), { recursive: true });
     const response = await axios.get<ArrayBuffer>(whatsappUrl, {
       responseType: "arraybuffer",
-      timeout: 15000,
+      timeout: 8000,
       maxRedirects: 5,
       headers: {
         "User-Agent":
@@ -98,6 +101,40 @@ export const shouldRefreshContactProfilePic = (
   return false;
 };
 
+/** Caminho rápido no processamento de mensagens — nunca bloqueia em rede. */
+export const resolveProfilePicForInboundMessage = (
+  profilePicUrl: string | null | undefined,
+  companyId: number,
+  number: string
+): string => {
+  if (
+    profilePicUrl &&
+    isLocalContactProfileUrl(profilePicUrl) &&
+    fs.existsSync(getLocalProfilePicPath(companyId, number))
+  ) {
+    return profilePicUrl;
+  }
+  return fallbackProfilePicUrl();
+};
+
+const updateContactProfilePicInDb = async (
+  contactId: number,
+  companyId: number,
+  profilePicUrl: string
+): Promise<void> => {
+  const contact = await Contact.findByPk(contactId);
+  if (!contact || contact.profilePicUrl === profilePicUrl) {
+    return;
+  }
+
+  await contact.update({ profilePicUrl });
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-contact`, {
+    action: "update",
+    contact
+  });
+};
+
 export const fetchAndPersistProfilePic = async (
   wbot: WbotProfile,
   jid: string,
@@ -105,42 +142,20 @@ export const fetchAndPersistProfilePic = async (
   number: string
 ): Promise<string> => {
   const fallback = fallbackProfilePicUrl();
-  const cacheKey = `profilepic:stored:${companyId}:${jid}`;
   const localPath = getLocalProfilePicPath(companyId, number);
   const publicUrl = getLocalProfilePicPublicUrl(companyId, number);
 
   if (fs.existsSync(localPath)) {
-    try {
-      await cacheLayer.set(cacheKey, publicUrl, "EX", PROFILE_PIC_FETCH_TTL_SECONDS);
-    } catch (_) {}
     return publicUrl;
   }
 
   try {
-    const cached = await cacheLayer.get(cacheKey);
-    if (cached && !isWhatsAppCdnProfileUrl(cached)) {
-      return cached;
-    }
-  } catch (_) {}
-
-  try {
-    const whatsappUrl = await wbot.profilePictureUrl(jid, "image");
+    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 5000);
     if (!whatsappUrl) {
-      try {
-        await cacheLayer.set(cacheKey, fallback, "EX", 300);
-      } catch (_) {}
       return fallback;
     }
 
-    const storedUrl = await persistProfilePictureFromUrl(
-      whatsappUrl,
-      companyId,
-      number
-    );
-    try {
-      await cacheLayer.set(cacheKey, storedUrl, "EX", PROFILE_PIC_FETCH_TTL_SECONDS);
-    } catch (_) {}
-    return storedUrl;
+    return await persistProfilePictureFromUrl(whatsappUrl, companyId, number);
   } catch (err: any) {
     logger.debug(
       `[profilePic] profilePictureUrl falhou (${jid}): ${err?.message || err}`
@@ -148,9 +163,61 @@ export const fetchAndPersistProfilePic = async (
     if (fs.existsSync(localPath)) {
       return publicUrl;
     }
-    try {
-      await cacheLayer.set(cacheKey, fallback, "EX", 300);
-    } catch (_) {}
     return fallback;
   }
+};
+
+const refreshContactProfilePicInBackground = async (
+  wbot: WbotProfile,
+  jid: string,
+  companyId: number,
+  number: string,
+  contactId?: number
+): Promise<void> => {
+  const throttleKey = `profilepic:throttle:${companyId}:${number.replace(/\D/g, "")}`;
+  try {
+    const throttled = await cacheLayer.get(throttleKey);
+    if (throttled) {
+      return;
+    }
+    await cacheLayer.set(throttleKey, "1", "EX", PROFILE_PIC_THROTTLE_SECONDS);
+  } catch (_) {}
+
+  const url = await fetchAndPersistProfilePic(wbot, jid, companyId, number);
+  if (url.includes("nopicture")) {
+    return;
+  }
+
+  if (contactId) {
+    await updateContactProfilePicInDb(contactId, companyId, url);
+    return;
+  }
+
+  const contact = await Contact.findOne({ where: { companyId, number } });
+  if (contact) {
+    await updateContactProfilePicInDb(contact.id, companyId, url);
+  }
+};
+
+/** Atualiza foto em background para não atrasar messages.upsert. */
+export const scheduleContactProfilePicRefresh = (
+  wbot: WbotProfile,
+  jid: string,
+  companyId: number,
+  number: string,
+  contactId?: number
+): void => {
+  setImmediate(() => {
+    refreshContactProfilePicInBackground(
+      wbot,
+      jid,
+      companyId,
+      number,
+      contactId
+    ).catch(err => {
+      logger.debug(
+        `[profilePic] refresh em background falhou (${number}): ${err?.message || err}`
+      );
+    });
+  });
 };

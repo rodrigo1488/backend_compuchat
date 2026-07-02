@@ -51,10 +51,10 @@ import Setting from "../../models/Setting";
 import Prompt from "../../models/Prompt";
 import { cacheLayer } from "../../libs/cache";
 import {
-  fetchAndPersistProfilePic,
+  resolveProfilePicForInboundMessage,
+  scheduleContactProfilePicRefresh,
   shouldRefreshContactProfilePic
 } from "../ContactServices/ContactProfilePicService";
-import { sanitizeContactProfilePicUrl } from "../../helpers/contactProfilePic";
 import { provider } from "./providers";
 import { debounce } from "../../helpers/Debounce";
 import {
@@ -768,17 +768,8 @@ const downloadMedia = async (msg: proto.IWebMessageInfo) => {
  * número; fluxos que dependem de número de telefone devem usar verifyContact para obter contato.
  */
 /**
- * Busca foto de perfil, persiste em /public/contacts e retorna URL estável do backend.
+ * Foto de perfil: caminho rápido na mensagem; download em background.
  */
-const getProfilePicUrlCached = async (
-  wbot: Session,
-  jid: string,
-  companyId: number,
-  number: string
-): Promise<string> => {
-  return fetchAndPersistProfilePic(wbot, jid, companyId, number);
-};
-
 const verifyContact = async (
   msgContact: IMe,
   wbot: Session,
@@ -806,23 +797,11 @@ const verifyContact = async (
       })
     : null;
 
-  if (
-    existingForPic?.profilePicUrl &&
-    !shouldRefreshContactProfilePic(
-      existingForPic.profilePicUrl,
-      companyId,
-      existingNumberCheck
-    )
-  ) {
-    profilePicUrl = sanitizeContactProfilePicUrl(existingForPic.profilePicUrl);
-  } else {
-    profilePicUrl = await getProfilePicUrlCached(
-      wbot,
-      normalizedContactId,
-      companyId,
-      existingNumberCheck
-    );
-  }
+  profilePicUrl = resolveProfilePicForInboundMessage(
+    existingForPic?.profilePicUrl,
+    companyId,
+    existingNumberCheck
+  );
 
   // Extrair número do JID normalizado (remove @s.whatsapp.net ou @g.us)
   let contactNumber = isGroup
@@ -963,6 +942,23 @@ const verifyContact = async (
   };
 
   const contact = await CreateOrUpdateContactService(contactData);
+
+  if (
+    !isGroup &&
+    shouldRefreshContactProfilePic(
+      contact.profilePicUrl,
+      companyId,
+      existingNumberCheck
+    )
+  ) {
+    scheduleContactProfilePicRefresh(
+      wbot,
+      normalizedContactId,
+      companyId,
+      existingNumberCheck,
+      contact.id
+    );
+  }
 
   return contact;
 };
