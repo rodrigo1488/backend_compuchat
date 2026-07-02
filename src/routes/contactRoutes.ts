@@ -24,6 +24,12 @@ contactRoutes.post("/contacts/upload", isAuth, ContactController.storeUpload);
 
 contactRoutes.put("/contacts/:contactId", isAuth, ContactController.update);
 
+contactRoutes.post(
+  "/contacts/:contactId/refresh-profile-pic",
+  isAuth,
+  ContactController.refreshProfilePic
+);
+
 contactRoutes.delete("/contacts/:contactId", isAuth, ContactController.remove);
 
 contactRoutes.put("/contacts/toggleDisableBot/:contactId", isAuth, ContactController.toggleDisableBot);

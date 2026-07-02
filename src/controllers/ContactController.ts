@@ -19,6 +19,7 @@ import SimpleListService, {
 import ContactCustomField from "../models/ContactCustomField";
 import { logger } from "../utils/logger";
 import ToggleDisableBotContactService from "../services/ContactServices/ToggleDisableBotContactService";
+import RefreshContactProfilePicService from "../services/ContactServices/RefreshContactProfilePicService";
 
 type IndexQuery = {
   searchParam: string;
@@ -274,6 +275,24 @@ const createUploadedContact = async ( newContact : ContactData, companyId : numb
 
   return contact;
 }
+
+export const refreshProfilePic = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { contactId } = req.params;
+  const { companyId } = req.user;
+
+  const contact = await RefreshContactProfilePicService(
+    Number(contactId),
+    companyId
+  );
+
+  return res.status(200).json({
+    contact,
+    profilePicUrl: contact.profilePicUrl
+  });
+};
 
 export const toggleDisableBot = async (req: Request, res: Response): Promise<Response> => {
   var { contactId } = req.params;

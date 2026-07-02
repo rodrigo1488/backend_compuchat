@@ -121,18 +121,65 @@ const updateContactProfilePicInDb = async (
   contactId: number,
   companyId: number,
   profilePicUrl: string
-): Promise<void> => {
+): Promise<Contact | null> => {
   const contact = await Contact.findByPk(contactId);
   if (!contact || contact.profilePicUrl === profilePicUrl) {
-    return;
+    return contact;
   }
 
   await contact.update({ profilePicUrl });
+  await contact.reload();
   const io = getIO();
   io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-contact`, {
     action: "update",
     contact
   });
+  return contact;
+};
+
+/** Busca foto atual no WhatsApp, ignora cache local e throttle. */
+export const forceRefreshContactProfilePic = async (
+  wbot: WbotProfile,
+  jid: string,
+  companyId: number,
+  number: string,
+  contactId: number
+): Promise<string> => {
+  const fallback = fallbackProfilePicUrl();
+  const localPath = getLocalProfilePicPath(companyId, number);
+
+  try {
+    if (fs.existsSync(localPath)) {
+      await fs.promises.unlink(localPath);
+    }
+  } catch (_) {}
+
+  try {
+    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 8000);
+    if (!whatsappUrl) {
+      return fallback;
+    }
+
+    const url = await persistProfilePictureFromUrl(
+      whatsappUrl,
+      companyId,
+      number
+    );
+
+    if (!url.includes("nopicture")) {
+      await updateContactProfilePicInDb(contactId, companyId, url);
+    }
+
+    return url;
+  } catch (err: any) {
+    logger.debug(
+      `[profilePic] refresh manual falhou (${number}): ${err?.message || err}`
+    );
+    if (fs.existsSync(localPath)) {
+      return getLocalProfilePicPublicUrl(companyId, number);
+    }
+    return fallback;
+  }
 };
 
 export const fetchAndPersistProfilePic = async (
