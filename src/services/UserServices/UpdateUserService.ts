@@ -3,6 +3,7 @@ import * as Yup from "yup";
 import AppError from "../../errors/AppError";
 import ShowUserService from "./ShowUserService";
 import Company from "../../models/Company";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 import User from "../../models/User";
 import { sanitizePageAccess } from "../../constants/pagePermissions";
 import ListCompanyModulesService from "../CompanyModuleServices/ListCompanyModulesService";
@@ -128,6 +129,8 @@ const UpdateUserService = async ({
     defaultRoute: user.defaultRoute ?? null,
     pageAccess: user.pageAccess ?? null,
   };
+
+  void CacheInvalidationService.onUserChanged(user.id, user.companyId);
 
   return serializedUser;
 };

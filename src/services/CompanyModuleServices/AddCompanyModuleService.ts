@@ -1,6 +1,7 @@
 import CompanyModule from "../../models/CompanyModule";
 import Module from "../../models/Module";
 import ListCompanyModulesService from "./ListCompanyModulesService";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 /**
  * Adiciona um módulo à empresa pelo slug.
@@ -20,6 +21,7 @@ const AddCompanyModuleService = async (
   if (existing) return ListCompanyModulesService(companyId);
 
   await CompanyModule.create({ companyId, moduleId: module.id });
+  void CacheInvalidationService.onModuleChanged(companyId);
   return ListCompanyModulesService(companyId);
 };
 

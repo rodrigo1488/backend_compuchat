@@ -5,9 +5,12 @@ import Message from "../../models/Message";
 import Campaign from "../../models/Campaign";
 import Whatsapp from "../../models/Whatsapp";
 import User from "../../models/User";
-import Queue from "../../models/Queue";
 import Task from "../../models/Task";
-import CheckOpenAITokensService, { OpenAITokenInfo } from "../AiServices/CheckOpenAITokensService";
+import CheckOpenAITokensService, {
+  OpenAITokenInfo
+} from "../AiServices/CheckOpenAITokensService";
+import { logger } from "../../utils/logger";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
 /** Mantido na resposta da API para compatibilidade com o dashboard legado. */
 export interface GeminiTokenInfo {
@@ -18,7 +21,6 @@ export interface GeminiTokenInfo {
   quotaExceeded?: boolean;
   error?: string;
 }
-import { logger } from "../../utils/logger";
 
 export interface ExtendedDashboardData {
   ticketsToday: number;
@@ -45,10 +47,7 @@ export interface ExtendedParams {
   date_to?: string;
 }
 
-const DashboardExtendedService = async (
-  companyId: number,
-  params: ExtendedParams
-): Promise<ExtendedDashboardData> => {
+const resolveDateRange = (params: ExtendedParams) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -69,112 +68,156 @@ const DashboardExtendedService = async (
     dateTo.setHours(23, 59, 59, 999);
   }
 
-  // Tickets criados hoje
-  const ticketsToday = await Ticket.count({
-    where: {
-      companyId,
-      createdAt: {
-        [Op.gte]: today
-      }
-    }
-  });
+  return { today, dateFrom, dateTo };
+};
 
-  // Total de tickets criados no período (denominador: "recebidos" no período)
-  const ticketsTotal = await Ticket.count({
-    where: {
-      companyId,
-      createdAt: {
-        [Op.between]: [+dateFrom, +dateTo]
-      }
-    }
-  });
+const fetchLiveBlock = async (
+  companyId: number,
+  today: Date,
+  params: ExtendedParams
+) => {
+  const cacheKey = appCache.buildKey(
+    "dashboard",
+    companyId,
+    "block:live",
+    params
+  );
 
-  // Tickets criados no período que já foram fechados (numerador alinhado ao denominador).
-  // Antes: contava-se fechados por updatedAt no período, incluindo tickets antigos —
-  // isso permitia taxa > 100%. Agora só contamos resoluções dentro do conjunto recebido no período.
-  const ticketsFinished = await Ticket.count({
-    where: {
-      companyId,
-      status: "closed",
-      createdAt: {
-        [Op.between]: [+dateFrom, +dateTo]
-      }
-    }
-  });
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.live,
+    async () => {
+      const [ticketsToday, connections, users] = await Promise.all([
+        Ticket.count({
+          where: { companyId, createdAt: { [Op.gte]: today } }
+        }),
+        Whatsapp.findAll({
+          where: { companyId },
+          attributes: ["id", "status"]
+        }),
+        User.findAll({
+          where: { companyId },
+          attributes: ["id", "online"]
+        })
+      ]);
 
-  // Taxa de resolução (sempre ≤ 100% quando ticketsTotal > 0)
-  const resolutionRate =
-    ticketsTotal > 0
-      ? Math.min(100, Math.round((ticketsFinished / ticketsTotal) * 100))
-      : 0;
+      const onlineConnections = connections.filter(
+        w => w.status === "CONNECTED"
+      ).length;
 
-  // Campanhas ativas
-  const activeCampaigns = await Campaign.count({
-    where: {
-      companyId,
-      status: "EM_ANDAMENTO"
-    }
-  });
+      return {
+        ticketsToday,
+        onlineConnections,
+        totalConnections: connections.length,
+        onlineUsers: users.filter(u => u.online).length,
+        totalUsers: users.length
+      };
+    },
+    "dashboard"
+  );
 
-  // Mensagens enviadas no período
-  const messagesSent = await Message.count({
-    where: {
-      companyId,
-      fromMe: true,
-      createdAt: {
-        [Op.between]: [+dateFrom, +dateTo]
-      }
-    }
-  });
+  return value;
+};
 
-  // Tarefas pendentes
-  let pendingTasks = 0;
-  try {
-    pendingTasks = await Task.count({
-      where: {
-        companyId,
-        status: "pending"
-      }
-    });
-  } catch (e) {
-    // Task table may not exist yet
-    pendingTasks = 0;
-  }
+const fetchMetricsBlock = async (
+  companyId: number,
+  dateFrom: Date,
+  dateTo: Date,
+  params: ExtendedParams
+) => {
+  const cacheKey = appCache.buildKey(
+    "dashboard",
+    companyId,
+    "block:metrics",
+    params
+  );
 
-  // Conexões WhatsApp online
-  const connections = await Whatsapp.findAll({
-    where: { companyId },
-    attributes: ["id", "status"]
-  });
-  const onlineConnections = connections.filter(w => w.status === "CONNECTED").length;
-  const totalConnections = connections.length;
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.warm,
+    async () => {
+      const [
+        ticketsTotal,
+        ticketsFinished,
+        activeCampaigns,
+        messagesSent,
+        pendingTasks
+      ] = await Promise.all([
+        Ticket.count({
+          where: {
+            companyId,
+            createdAt: { [Op.between]: [+dateFrom, +dateTo] }
+          }
+        }),
+        Ticket.count({
+          where: {
+            companyId,
+            status: "closed",
+            createdAt: { [Op.between]: [+dateFrom, +dateTo] }
+          }
+        }),
+        Campaign.count({
+          where: { companyId, status: "EM_ANDAMENTO" }
+        }),
+        Message.count({
+          where: {
+            companyId,
+            fromMe: true,
+            createdAt: { [Op.between]: [+dateFrom, +dateTo] }
+          }
+        }),
+        Task.count({
+          where: { companyId, status: "pending" }
+        }).catch(() => 0)
+      ]);
 
-  // Usuários online
-  const users = await User.findAll({
-    where: { companyId },
-    attributes: ["id", "online"]
-  });
-  const onlineUsers = users.filter(u => u.online).length;
-  const totalUsers = users.length;
+      const resolutionRate =
+        ticketsTotal > 0
+          ? Math.min(100, Math.round((ticketsFinished / ticketsTotal) * 100))
+          : 0;
 
-  // Tickets por status
-  const ticketsByStatusQuery = await Ticket.findAll({
-    where: { companyId },
-    attributes: [
-      "status",
-      [Sequelize.fn("COUNT", Sequelize.col("id")), "count"]
-    ],
-    group: ["status"],
-    raw: true
-  }) as any[];
+      return {
+        resolutionRate,
+        activeCampaigns,
+        messagesSent,
+        pendingTasks
+      };
+    },
+    "dashboard"
+  );
 
-  const ticketsByStatus = ticketsByStatusQuery.map(item => ({
-    status: item.status,
-    count: parseInt(item.count, 10)
-  }));
+  return value;
+};
 
-  // Tickets por fila
-  const ticketsByQueueQuery = await sequelize.query(`
+const fetchAggregatesBlock = async (
+  companyId: number,
+  dateFrom: Date,
+  dateTo: Date,
+  params: ExtendedParams
+) => {
+  const cacheKey = appCache.buildKey(
+    "dashboard",
+    companyId,
+    "block:aggregates",
+    params
+  );
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.warm,
+    async () => {
+      const ticketsByStatusQuery = (await Ticket.findAll({
+            where: { companyId },
+            attributes: [
+              "status",
+              [Sequelize.fn("COUNT", Sequelize.col("id")), "count"]
+            ],
+            group: ["status"],
+            raw: true
+          })) as any[];
+
+      const ticketsByQueueQuery = (await sequelize.query(
+            `
     SELECT 
       q.name,
       q.color,
@@ -186,59 +229,15 @@ const DashboardExtendedService = async (
     GROUP BY q.id, q.name, q.color
     ORDER BY count DESC
     LIMIT 6
-  `, {
-    replacements: { companyId },
-    type: QueryTypes.SELECT
-  }) as any[];
+  `,
+            {
+              replacements: { companyId },
+              type: QueryTypes.SELECT
+            }
+          )) as any[];
 
-  const ticketsByQueue = ticketsByQueueQuery.map(item => ({
-    name: item.name || "Sem Fila",
-    count: parseInt(item.count, 10),
-    color: item.color || "#6B7280"
-  }));
-
-  // Tickets por hora (últimas 24h)
-  const ticketsByHourQuery = await sequelize.query(`
-    SELECT 
-      TO_CHAR("createdAt", 'HH24:00') as hour,
-      COUNT(*) as count
-    FROM "Tickets"
-    WHERE "companyId" = :companyId
-    AND "createdAt" >= NOW() - INTERVAL '24 hours'
-    GROUP BY TO_CHAR("createdAt", 'HH24:00')
-    ORDER BY hour
-  `, {
-    replacements: { companyId },
-    type: QueryTypes.SELECT
-  }) as any[];
-
-  const ticketsByHour = ticketsByHourQuery.map(item => ({
-    hour: item.hour,
-    count: parseInt(item.count, 10)
-  }));
-
-  // Tickets por dia (últimos 7 dias)
-  const ticketsByDayQuery = await sequelize.query(`
-    SELECT 
-      TO_CHAR("createdAt", 'DD/MM') as day,
-      COUNT(*) as count
-    FROM "Tickets"
-    WHERE "companyId" = :companyId
-    AND "createdAt" >= NOW() - INTERVAL '7 days'
-    GROUP BY TO_CHAR("createdAt", 'DD/MM'), DATE("createdAt")
-    ORDER BY DATE("createdAt")
-  `, {
-    replacements: { companyId },
-    type: QueryTypes.SELECT
-  }) as any[];
-
-  const ticketsByDay = ticketsByDayQuery.map(item => ({
-    day: item.day,
-    count: parseInt(item.count, 10)
-  }));
-
-  // Top 5 atendentes
-  const topAttendantsQuery = await sequelize.query(`
+      const topAttendantsQuery = (await sequelize.query(
+            `
     SELECT 
       u.name,
       COUNT(t.id) as count
@@ -250,60 +249,179 @@ const DashboardExtendedService = async (
     GROUP BY u.id, u.name
     ORDER BY count DESC
     LIMIT 5
-  `, {
-    replacements: { companyId, dateFrom, dateTo },
-    type: QueryTypes.SELECT
-  }) as any[];
+  `,
+            {
+              replacements: {
+                companyId,
+                dateFrom,
+                dateTo
+              },
+              type: QueryTypes.SELECT
+            }
+          )) as any[];
 
-  const topAttendants = topAttendantsQuery.map(item => ({
-    name: item.name,
-    count: parseInt(item.count, 10)
-  }));
+      return {
+        ticketsByStatus: ticketsByStatusQuery.map(item => ({
+          status: item.status,
+          count: parseInt(item.count, 10)
+        })),
+        ticketsByQueue: ticketsByQueueQuery.map(item => ({
+          name: item.name || "Sem Fila",
+          count: parseInt(item.count, 10),
+          color: item.color || "#6B7280"
+        })),
+        topAttendants: topAttendantsQuery.map(item => ({
+          name: item.name,
+          count: parseInt(item.count, 10)
+        }))
+      };
+    },
+    "dashboard"
+  );
 
-  // Verificar tokens/quota do Gemini e OpenAI
-  let geminiTokens: GeminiTokenInfo = {
-    available: false,
-    error: "Não verificado"
-  };
-  let openAITokens: OpenAITokenInfo = {
-    available: false,
-    error: "Não verificado"
-  };
+  return value;
+};
 
-  geminiTokens = {
-    available: false,
-    error: "Não aplicável — a IA usa LM Studio no servidor (OpenAI-compat)."
-  };
+const fetchHistoricalBlock = async (companyId: number) => {
+  const cacheKey = appCache.buildKey(
+    "dashboard",
+    companyId,
+    "block:historical",
+    {}
+  );
 
-  try {
-    openAITokens = await CheckOpenAITokensService(companyId);
-  } catch (error: any) {
-    logger.error(`Erro ao verificar tokens do OpenAI no dashboard:`, error);
-    openAITokens = {
-      available: false,
-      error: error.message || "Erro ao verificar"
-    };
-  }
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.historical,
+    async () => {
+      const ticketsByHourQuery = (await sequelize.query(
+          `
+    SELECT 
+      TO_CHAR("createdAt", 'HH24:00') as hour,
+      COUNT(*) as count
+    FROM "Tickets"
+    WHERE "companyId" = :companyId
+    AND "createdAt" >= NOW() - INTERVAL '24 hours'
+    GROUP BY TO_CHAR("createdAt", 'HH24:00')
+    ORDER BY hour
+  `,
+          {
+            replacements: { companyId },
+            type: QueryTypes.SELECT
+          }
+        )) as any[];
+
+      const ticketsByDayQuery = (await sequelize.query(
+          `
+    SELECT 
+      TO_CHAR("createdAt", 'DD/MM') as day,
+      COUNT(*) as count
+    FROM "Tickets"
+    WHERE "companyId" = :companyId
+    AND "createdAt" >= NOW() - INTERVAL '7 days'
+    GROUP BY TO_CHAR("createdAt", 'DD/MM'), DATE("createdAt")
+    ORDER BY DATE("createdAt")
+  `,
+          {
+            replacements: { companyId },
+            type: QueryTypes.SELECT
+          }
+        )) as any[];
+
+      return {
+        ticketsByHour: ticketsByHourQuery.map(item => ({
+          hour: item.hour,
+          count: parseInt(item.count, 10)
+        })),
+        ticketsByDay: ticketsByDayQuery.map(item => ({
+          day: item.day,
+          count: parseInt(item.count, 10)
+        }))
+      };
+    },
+    "dashboard"
+  );
+
+  return value;
+};
+
+const fetchExternalBlock = async (companyId: number) => {
+  const cacheKey = appCache.buildKey(
+    "dashboard",
+    companyId,
+    "block:external",
+    {}
+  );
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.external,
+    async () => {
+      const geminiTokens: GeminiTokenInfo = {
+        available: false,
+        error: "Não aplicável — a IA usa LM Studio no servidor (OpenAI-compat)."
+      };
+
+      let openAITokens: OpenAITokenInfo = {
+        available: false,
+        error: "Não verificado"
+      };
+
+      try {
+        openAITokens = await Promise.race([
+          CheckOpenAITokensService(companyId),
+          new Promise<OpenAITokenInfo>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 5000)
+          )
+        ]);
+      } catch (error: any) {
+        logger.error(`Erro ao verificar tokens do OpenAI no dashboard:`, error);
+        openAITokens = {
+          available: false,
+          error: error.message || "Erro ao verificar"
+        };
+      }
+
+      return { geminiTokens, openAITokens };
+    },
+    "dashboard"
+  );
+
+  return value;
+};
+
+const DashboardExtendedService = async (
+  companyId: number,
+  params: ExtendedParams
+): Promise<ExtendedDashboardData> => {
+  const { today, dateFrom, dateTo } = resolveDateRange(params);
+
+  const [live, metrics, aggregates, historical, external] = await Promise.all([
+    fetchLiveBlock(companyId, today, params),
+    fetchMetricsBlock(companyId, dateFrom, dateTo, params),
+    fetchAggregatesBlock(companyId, dateFrom, dateTo, params),
+    fetchHistoricalBlock(companyId),
+    fetchExternalBlock(companyId)
+  ]);
 
   return {
-    ticketsToday,
-    resolutionRate,
-    activeCampaigns,
-    messagesSent,
-    pendingTasks,
-    onlineConnections,
-    totalConnections,
-    onlineUsers,
-    totalUsers,
-    ticketsByStatus,
-    ticketsByQueue,
-    ticketsByHour,
-    ticketsByDay,
-    topAttendants,
-    geminiTokens,
-    openAITokens
+    ticketsToday: live.ticketsToday,
+    resolutionRate: metrics.resolutionRate,
+    activeCampaigns: metrics.activeCampaigns,
+    messagesSent: metrics.messagesSent,
+    pendingTasks: metrics.pendingTasks,
+    onlineConnections: live.onlineConnections,
+    totalConnections: live.totalConnections,
+    onlineUsers: live.onlineUsers,
+    totalUsers: live.totalUsers,
+    ticketsByStatus: aggregates.ticketsByStatus,
+    ticketsByQueue: aggregates.ticketsByQueue,
+    ticketsByHour: historical.ticketsByHour,
+    ticketsByDay: historical.ticketsByDay,
+    topAttendants: aggregates.topAttendants,
+    geminiTokens: external.geminiTokens,
+    openAITokens: external.openAITokens
   };
 };
 
 export default DashboardExtendedService;
-

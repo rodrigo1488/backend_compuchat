@@ -1,5 +1,6 @@
 import Contact from "../../models/Contact";
 import AppError from "../../errors/AppError";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 const DeleteContactService = async (id: string, companyId: number): Promise<void> => {
   const contact = await Contact.findOne({
@@ -11,6 +12,7 @@ const DeleteContactService = async (id: string, companyId: number): Promise<void
   }
 
   await contact.destroy();
+  void CacheInvalidationService.onContactChanged(companyId, Number(id));
 };
 
 export default DeleteContactService;

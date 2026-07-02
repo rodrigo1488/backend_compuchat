@@ -4,6 +4,7 @@ import ContactCustomField from "../../models/ContactCustomField";
 import { isNil } from "lodash";
 import { Op } from "sequelize";
 import { logger } from "../../utils/logger";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 interface ExtraInfo extends ContactCustomField {
   name: string;
   value: string;
@@ -114,6 +115,8 @@ const CreateOrUpdateContactService = async ({
       contact
     });
   }
+
+  void CacheInvalidationService.onContactChanged(companyId, contact.id);
 
   return contact;
 };

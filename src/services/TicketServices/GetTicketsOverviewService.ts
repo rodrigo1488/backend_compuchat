@@ -4,6 +4,7 @@ import Queue from "../../models/Queue";
 import User from "../../models/User";
 import ShowUserService from "../UserServices/ShowUserService";
 import AppError from "../../errors/AppError";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
 export interface OverviewMetrics {
   newMessages: number;
@@ -61,12 +62,37 @@ const rowToMetrics = (row?: AggRow): OverviewMetrics => ({
   returns: toNum(row?.returns),
 });
 
-const GetTicketsOverviewService = async ({
+const GetTicketsOverviewService = async (
+  request: Request
+): Promise<TicketsOverviewData> => {
+  const { companyId, userId, showAll, queueIds, search = "" } = request;
+
+  if (!companyId) {
+    throw new AppError("companyId é obrigatório", 400);
+  }
+
+  const cacheKey = appCache.buildKey("tickets", companyId, `overview:${userId}`, {
+    showAll,
+    queueIds,
+    search
+  });
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.live,
+    async () => fetchTicketsOverview(request),
+    "tickets"
+  );
+
+  return value;
+};
+
+const fetchTicketsOverview = async ({
   companyId,
   userId,
   showAll,
   queueIds: queueIdsParam,
-  search = "",
+  search = ""
 }: Request): Promise<TicketsOverviewData> => {
   if (!companyId) {
     throw new AppError("companyId é obrigatório", 400);

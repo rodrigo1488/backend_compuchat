@@ -1,6 +1,7 @@
 import { Sequelize, Op } from "sequelize";
 import Contact from "../../models/Contact";
 import User from "../../models/User";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
 interface Request {
   searchParam?: string;
@@ -14,7 +15,7 @@ interface Response {
   hasMore: boolean;
 }
 
-const ListContactsService = async ({
+const fetchContacts = async ({
   searchParam = "",
   pageNumber = "1",
   companyId
@@ -25,7 +26,6 @@ const ListContactsService = async ({
     }
   };
 
-  // Adicionar busca apenas se searchParam não estiver vazio
   if (searchParam && searchParam.trim()) {
     whereCondition[Op.or] = [
       {
@@ -38,6 +38,7 @@ const ListContactsService = async ({
       { number: { [Op.like]: `%${searchParam.toLowerCase().trim()}%` } }
     ];
   }
+
   const limit = 30;
   const offset = limit * (+pageNumber - 1);
 
@@ -51,21 +52,18 @@ const ListContactsService = async ({
         {
           model: User,
           as: "user",
-          required: false, // LEFT JOIN para incluir contatos sem usuário vinculado
+          required: false,
           attributes: ["id", "name", "email"]
         }
       ]
     });
 
-    const hasMore = count > offset + contacts.length;
-
     return {
-      contacts,
+      contacts: contacts.map(c => c.toJSON() as Contact),
       count,
-      hasMore
+      hasMore: count > offset + contacts.length
     };
   } catch (error: any) {
-    // Se houver erro com o include (coluna userId pode não existir ainda), tentar sem o include
     console.error("Erro ao listar contatos com include de user:", error.message);
     const { count, rows: contacts } = await Contact.findAndCountAll({
       where: whereCondition,
@@ -74,15 +72,32 @@ const ListContactsService = async ({
       order: [[Sequelize.col("Contact.name"), "ASC"]]
     });
 
-    const hasMore = count > offset + contacts.length;
-
     return {
-      contacts,
+      contacts: contacts.map(c => c.toJSON() as Contact),
       count,
-      hasMore
+      hasMore: count > offset + contacts.length
     };
   }
+};
 
+const ListContactsService = async (request: Request): Promise<Response> => {
+  const { searchParam = "", pageNumber = "1", companyId } = request;
+  const trimmedSearch = searchParam.trim();
+  const ttl = trimmedSearch ? 30 : CACHE_TTL.list;
+
+  const cacheKey = appCache.buildKey("contacts", companyId, "list", {
+    searchParam: trimmedSearch,
+    pageNumber
+  });
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    ttl,
+    async () => fetchContacts(request),
+    "contacts"
+  );
+
+  return value;
 };
 
 export default ListContactsService;

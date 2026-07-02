@@ -1,5 +1,6 @@
 import AppError from "../../errors/AppError";
 import Contact from "../../models/Contact";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 import ContactCustomField from "../../models/ContactCustomField";
 import { Op } from "sequelize";
 
@@ -90,6 +91,8 @@ const UpdateContactService = async ({
     attributes: ["id", "name", "number", "email", "profilePicUrl"],
     include: ["extraInfo", "user"]
   });
+
+  void CacheInvalidationService.onContactChanged(companyId, contact.id);
 
   return contact;
 };

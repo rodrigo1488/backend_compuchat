@@ -12,6 +12,7 @@ import TicketTag from "../../models/TicketTag";
 import { intersection } from "lodash";
 import Whatsapp from "../../models/Whatsapp";
 import AppError from "../../errors/AppError";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
 interface Request {
   searchParam?: string;
@@ -35,6 +36,66 @@ interface Response {
 }
 
 const ListTicketsService = async ({
+  searchParam = "",
+  pageNumber = "1",
+  queueIds,
+  tags,
+  users,
+  status,
+  date,
+  updatedAt,
+  showAll,
+  userId,
+  withUnreadMessages,
+  companyId
+}: Request): Promise<Response> => {
+  const canCache =
+    !searchParam?.trim() &&
+    pageNumber === "1" &&
+    !date &&
+    !updatedAt &&
+    withUnreadMessages !== "true";
+
+  const cacheParams = {
+    userId,
+    showAll,
+    queueIds,
+    tags,
+    users,
+    status
+  };
+
+  const fetchTickets = async (): Promise<Response> =>
+    listTicketsFromDb({
+      searchParam,
+      pageNumber,
+      queueIds,
+      tags,
+      users,
+      status,
+      date,
+      updatedAt,
+      showAll,
+      userId,
+      withUnreadMessages,
+      companyId
+    });
+
+  if (canCache) {
+    const cacheKey = appCache.buildKey("tickets", companyId, "list", cacheParams);
+    const { value } = await appCache.getOrSet(
+      cacheKey,
+      CACHE_TTL.inbox,
+      fetchTickets,
+      "tickets"
+    );
+    return value;
+  }
+
+  return fetchTickets();
+};
+
+const listTicketsFromDb = async ({
   searchParam = "",
   pageNumber = "1",
   queueIds,
@@ -210,8 +271,7 @@ const ListTicketsService = async ({
       where: { 
         tagId: { [Op.in]: tags }
       },
-      attributes: ['ticketId', 'tagId'],
-      limit: 50000 // Limite aumentado já que é uma única query
+      attributes: ['ticketId', 'tagId']
     });
 
     if (allTicketTags.length === 0) {
@@ -263,8 +323,7 @@ const ListTicketsService = async ({
         userId: { [Op.in]: users },
         companyId 
       },
-      attributes: ['id', 'userId'],
-      limit: 50000 // Limite aumentado já que é uma única query
+      attributes: ['id', 'userId']
     });
 
     if (allUserTickets.length === 0) {
@@ -330,7 +389,7 @@ const ListTicketsService = async ({
   const hasMore = count > offset + tickets.length;
 
   return {
-    tickets,
+    tickets: tickets.map(t => t.toJSON() as Ticket),
     count,
     hasMore
   };

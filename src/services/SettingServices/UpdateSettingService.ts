@@ -1,5 +1,6 @@
 import AppError from "../../errors/AppError";
 import Setting from "../../models/Setting";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 interface Request {
   key: string;
@@ -33,6 +34,8 @@ const UpdateSettingService = async ({
   }
 
   await setting.update({ value });
+
+  void CacheInvalidationService.onSettingChanged(companyId, key);
 
   return setting;
 };

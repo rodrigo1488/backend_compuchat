@@ -3,8 +3,9 @@ import AppError from "../../errors/AppError";
 import Queue from "../../models/Queue";
 import Company from "../../models/Company";
 import Plan from "../../models/Plan";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
-const ShowUserService = async (id: string | number): Promise<User> => {
+const fetchUserFromDb = async (id: string | number): Promise<User> => {
   const user = await User.findByPk(id, {
     attributes: [
       "name",
@@ -19,7 +20,7 @@ const ShowUserService = async (id: string | number): Promise<User> => {
       "avatar",
       "defaultRoute",
       "active",
-      "pageAccess",
+      "pageAccess"
     ],
     include: [
       { model: Queue, as: "queues", attributes: ["id", "name", "color"] },
@@ -33,18 +34,18 @@ const ShowUserService = async (id: string | number): Promise<User> => {
           "planId",
           "language",
           "status",
-          "asaasCustomerId",
+          "asaasCustomerId"
         ],
         include: [
           {
             model: Plan,
             as: "plan",
             attributes: ["id", "name"],
-            required: false,
-          },
-        ],
-      },
-    ],
+            required: false
+          }
+        ]
+      }
+    ]
   });
 
   if (!user) {
@@ -52,6 +53,34 @@ const ShowUserService = async (id: string | number): Promise<User> => {
   }
 
   return user;
+};
+
+const ShowUserService = async (id: string | number): Promise<User> => {
+  const userForVersion = await User.findByPk(id, {
+    attributes: ["id", "tokenVersion"]
+  });
+
+  if (!userForVersion) {
+    throw new AppError("ERR_NO_USER_FOUND", 404);
+  }
+
+  const cacheKey = appCache.buildUserKey(
+    userForVersion.id,
+    userForVersion.tokenVersion,
+    "profile"
+  );
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.user,
+    async () => {
+      const user = await fetchUserFromDb(id);
+      return user.get({ plain: true });
+    },
+    "users"
+  );
+
+  return value as unknown as User;
 };
 
 export default ShowUserService;

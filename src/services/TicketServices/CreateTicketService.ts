@@ -4,6 +4,7 @@ import GetDefaultWhatsApp from "../../helpers/GetDefaultWhatsApp";
 import Ticket from "../../models/Ticket";
 import ShowContactService from "../ContactServices/ShowContactService";
 import { getIO } from "../../libs/socket";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 import GetDefaultWhatsAppByUser from "../../helpers/GetDefaultWhatsAppByUser";
 import ShowWhatsAppService from "../WhatsappService/ShowWhatsAppService";
 import { UniqueConstraintError } from "sequelize";
@@ -119,6 +120,8 @@ const CreateTicketService = async ({
       action: "create",
       ticket: ticketPayload
     });
+
+  void CacheInvalidationService.onTicketChanged(companyId, ticket.id);
 
   return ticket;
 };

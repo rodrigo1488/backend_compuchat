@@ -3,6 +3,7 @@
 import { QueryTypes } from "sequelize";
 import * as _ from "lodash";
 import sequelize from "../../database";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
 export interface DashboardData {
   counters: any;
@@ -16,6 +17,27 @@ export interface Params {
 }
 
 export default async function DashboardDataService(
+  companyId: string | number,
+  params: Params
+): Promise<DashboardData> {
+  const cacheKey = appCache.buildKey(
+    "dashboard",
+    companyId,
+    "main",
+    params
+  );
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.warm,
+    async () => fetchDashboardData(companyId, params),
+    "dashboard"
+  );
+
+  return value;
+}
+
+async function fetchDashboardData(
   companyId: string | number,
   params: Params
 ): Promise<DashboardData> {

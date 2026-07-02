@@ -8,6 +8,7 @@ import { logger } from "../../utils/logger";
 import * as Sentry from "@sentry/node";
 import TicketTraking from "../../models/TicketTraking";
 import transcribeAndPersistAudioMessage from "../AiServices/TranscribeAndPersistAudioService";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 export interface MessageData {
   id: string;
@@ -181,6 +182,8 @@ const CreateMessageService = async ({
           }, 500);
         }
       }
+
+      void CacheInvalidationService.onTicketChanged(companyId, payload.ticketId);
 
       return message;
     } catch (error: any) {

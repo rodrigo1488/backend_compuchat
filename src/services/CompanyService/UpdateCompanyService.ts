@@ -1,6 +1,7 @@
 import AppError from "../../errors/AppError";
 import Company from "../../models/Company";
 import Setting from "../../models/Setting";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 interface CompanyData {
   name: string;
@@ -59,6 +60,9 @@ const UpdateCompanyService = async (
       await setting.update({ value: `${campaignsEnabled}` });
     }
   }
+
+  void CacheInvalidationService.onCompanyChanged(company.id);
+  void CacheInvalidationService.onSettingChanged(company.id);
 
   return company;
 };

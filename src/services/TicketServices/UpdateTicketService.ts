@@ -19,6 +19,7 @@ import Whatsapp from "../../models/Whatsapp";
 import AppError from "../../errors/AppError";
 import Company from "../../models/Company";
 import { logger } from "../../utils/logger";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 interface TicketData {
   status?: string;
@@ -352,6 +353,8 @@ const UpdateTicketService = async ({
         action: "update",
         ticket: ticketPayload
       });
+
+    void CacheInvalidationService.onTicketChanged(companyId, ticket.id);
 
     return { ticket, oldStatus, oldUserId };
   } catch (err) {

@@ -1,5 +1,6 @@
 import AppError from "../../errors/AppError";
 import Contact from "../../models/Contact";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 import ContactCustomField from "../../models/ContactCustomField";
 
 interface ExtraInfo extends ContactCustomField {
@@ -46,6 +47,8 @@ const CreateContactService = async ({
       include: ["extraInfo"]
     }
   );
+
+  void CacheInvalidationService.onContactChanged(companyId, contact.id);
 
   return contact;
 };

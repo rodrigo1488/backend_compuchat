@@ -1,3 +1,4 @@
+import { Op, fn, col } from "sequelize";
 import Ticket from "../../models/Ticket";
 import Contact from "../../models/Contact";
 import {
@@ -7,6 +8,7 @@ import {
   serializeSession,
   filterTicketsByAccess
 } from "./closedTicketsHistoryHelper";
+import { appCache, CACHE_TTL } from "../../libs/appCache";
 
 interface Request extends HistoryFilters {
   pageNumber?: string;
@@ -28,7 +30,29 @@ interface Response {
   hasMore: boolean;
 }
 
-const ListClosedTicketsHistoryService = async ({
+const ListClosedTicketsHistoryService = async (
+  request: Request
+): Promise<Response> => {
+  const { pageNumber = "1", groupBy = "contact", ...filters } = request;
+
+  const cacheKey = appCache.buildKey(
+    "tickets",
+    filters.companyId,
+    `history:${groupBy}`,
+    { pageNumber, ...filters, user: { id: filters.user.id, profile: filters.user.profile } }
+  );
+
+  const { value } = await appCache.getOrSet(
+    cacheKey,
+    CACHE_TTL.list,
+    async () => fetchClosedTicketsHistory(request),
+    "tickets"
+  );
+
+  return value;
+};
+
+const fetchClosedTicketsHistory = async ({
   pageNumber = "1",
   groupBy = "contact",
   ...filters
@@ -51,19 +75,45 @@ const ListClosedTicketsHistoryService = async ({
     );
   }
 
-  const { count, rows } = await Ticket.findAndCountAll({
-    where: whereCondition,
-    include: includes,
-    order: [["updatedAt", "DESC"]],
-    distinct: true
-  });
-
-  const accessible = filterTicketsByAccess(rows, filters.user);
-
   if (groupBy === "contact") {
+    const totalGroups = await Ticket.count({
+      where: whereCondition,
+      distinct: true,
+      col: "contactId"
+    });
+
+    const contactPage = (await Ticket.findAll({
+      where: whereCondition,
+      attributes: [
+        "contactId",
+        [fn("MAX", col("updatedAt")), "lastFinishedAt"]
+      ],
+      group: ["contactId"],
+      order: [[fn("MAX", col("updatedAt")), "DESC"]],
+      limit,
+      offset,
+      raw: true
+    })) as unknown as Array<{ contactId: number; lastFinishedAt: Date }>;
+
+    if (contactPage.length === 0) {
+      return { groups: [], count: totalGroups, hasMore: false };
+    }
+
+    const contactIds = contactPage.map(row => row.contactId);
+
+    const rows = await Ticket.findAll({
+      where: {
+        ...whereCondition,
+        contactId: { [Op.in]: contactIds }
+      },
+      include: includes,
+      order: [["updatedAt", "DESC"]]
+    });
+
+    const accessible = filterTicketsByAccess(rows, filters.user);
     const groupsMap = new Map<number, ContactGroup>();
 
-    accessible.forEach((ticket) => {
+    accessible.forEach(ticket => {
       const cid = ticket.contactId;
       if (!cid) return;
 
@@ -92,13 +142,9 @@ const ListClosedTicketsHistoryService = async ({
       }
     });
 
-    const allGroups = Array.from(groupsMap.values()).sort(
-      (a, b) =>
-        new Date(b.lastFinishedAt).getTime() - new Date(a.lastFinishedAt).getTime()
-    );
-
-    const totalGroups = allGroups.length;
-    const groups = allGroups.slice(offset, offset + limit);
+    const groups = contactPage
+      .map(row => groupsMap.get(row.contactId))
+      .filter((group): group is ContactGroup => !!group);
 
     return {
       groups,
@@ -107,14 +153,22 @@ const ListClosedTicketsHistoryService = async ({
     };
   }
 
-  const tickets = accessible
-    .slice(offset, offset + limit)
-    .map(serializeSession);
+  const { count, rows } = await Ticket.findAndCountAll({
+    where: whereCondition,
+    include: includes,
+    order: [["updatedAt", "DESC"]],
+    distinct: true,
+    limit,
+    offset
+  });
+
+  const accessible = filterTicketsByAccess(rows, filters.user);
+  const tickets = accessible.map(serializeSession);
 
   return {
     tickets,
-    count: accessible.length,
-    hasMore: offset + limit < accessible.length
+    count,
+    hasMore: offset + limit < count
   };
 };
 
