@@ -1,5 +1,24 @@
+import fs from "fs";
+import path from "path";
+import uploadConfig from "../config/upload";
+
 const fallbackProfilePicUrl = (): string =>
   `${process.env.FRONTEND_URL || ""}/nopicture.png`;
+
+const localProfilePicPathFromUrl = (url: string): string | null => {
+  const match = url.match(/\/public\/contacts\/(\d+)\/([^/?]+)\.jpg/);
+  if (!match) {
+    return null;
+  }
+  const companyId = match[1];
+  const number = match[2];
+  return path.join(
+    uploadConfig.directory,
+    "contacts",
+    companyId,
+    `${number}.jpg`
+  );
+};
 
 export const isWhatsAppCdnProfileUrl = (url?: string | null): boolean =>
   !!url &&
@@ -22,6 +41,12 @@ export const sanitizeContactProfilePicUrl = (
   }
   if (isWhatsAppCdnProfileUrl(url)) {
     return fallbackProfilePicUrl();
+  }
+  if (isLocalContactProfileUrl(url)) {
+    const localPath = localProfilePicPathFromUrl(url);
+    if (localPath && !fs.existsSync(localPath)) {
+      return fallbackProfilePicUrl();
+    }
   }
   return url;
 };

@@ -6,6 +6,7 @@ import { logger } from "../../utils/logger";
 import uploadConfig from "../../config/upload";
 import Contact from "../../models/Contact";
 import { getIO } from "../../libs/socket";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 import {
   fallbackProfilePicUrl,
   isLocalContactProfileUrl,
@@ -20,8 +21,22 @@ type WbotProfile = {
   ) => Promise<string | undefined>;
 };
 
-const PROFILE_PIC_FETCH_TTL_SECONDS = 60 * 60 * 6;
 const PROFILE_PIC_THROTTLE_SECONDS = 10 * 60;
+
+export const getProfilePicThrottleKey = (
+  companyId: number,
+  number: string
+): string =>
+  `profilepic:throttle:${companyId}:${number.replace(/\D/g, "")}`;
+
+export const clearProfilePicThrottle = async (
+  companyId: number,
+  number: string
+): Promise<void> => {
+  try {
+    await cacheLayer.del(getProfilePicThrottleKey(companyId, number));
+  } catch (_) {}
+};
 
 export const getLocalProfilePicPath = (
   companyId: number,
@@ -117,23 +132,44 @@ export const resolveProfilePicForInboundMessage = (
   return fallbackProfilePicUrl();
 };
 
-const updateContactProfilePicInDb = async (
-  contactId: number,
+const emitContactProfilePicUpdate = (
   companyId: number,
-  profilePicUrl: string
-): Promise<Contact | null> => {
-  const contact = await Contact.findByPk(contactId);
-  if (!contact || contact.profilePicUrl === profilePicUrl) {
-    return contact;
-  }
-
-  await contact.update({ profilePicUrl });
-  await contact.reload();
+  contact: Contact
+): void => {
   const io = getIO();
   io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-contact`, {
     action: "update",
     contact
   });
+};
+
+const updateContactProfilePicInDb = async (
+  contactId: number,
+  companyId: number,
+  profilePicUrl: string,
+  options?: { forceEmit?: boolean }
+): Promise<Contact | null> => {
+  const contact = await Contact.findByPk(contactId);
+  if (!contact) {
+    return null;
+  }
+
+  const safeNumber = contact.number.replace(/\D/g, "") || contact.number;
+  await clearProfilePicThrottle(companyId, safeNumber);
+
+  const urlChanged = contact.profilePicUrl !== profilePicUrl;
+  if (urlChanged) {
+    await contact.update({ profilePicUrl });
+    await contact.reload();
+  }
+
+  void CacheInvalidationService.onContactChanged(companyId, contact.id);
+  void CacheInvalidationService.onTicketChanged(companyId);
+
+  if (urlChanged || options?.forceEmit) {
+    emitContactProfilePicUpdate(companyId, contact);
+  }
+
   return contact;
 };
 
@@ -147,6 +183,8 @@ export const forceRefreshContactProfilePic = async (
 ): Promise<string> => {
   const fallback = fallbackProfilePicUrl();
   const localPath = getLocalProfilePicPath(companyId, number);
+
+  await clearProfilePicThrottle(companyId, number);
 
   try {
     if (fs.existsSync(localPath)) {
@@ -168,6 +206,12 @@ export const forceRefreshContactProfilePic = async (
 
     if (!url.includes("nopicture")) {
       await updateContactProfilePicInDb(contactId, companyId, url);
+    } else {
+      const contact = await Contact.findByPk(contactId);
+      if (contact) {
+        void CacheInvalidationService.onContactChanged(companyId, contact.id);
+        void CacheInvalidationService.onTicketChanged(companyId);
+      }
     }
 
     return url;
@@ -221,7 +265,7 @@ const refreshContactProfilePicInBackground = async (
   number: string,
   contactId?: number
 ): Promise<void> => {
-  const throttleKey = `profilepic:throttle:${companyId}:${number.replace(/\D/g, "")}`;
+  const throttleKey = getProfilePicThrottleKey(companyId, number);
   try {
     const throttled = await cacheLayer.get(throttleKey);
     if (throttled) {

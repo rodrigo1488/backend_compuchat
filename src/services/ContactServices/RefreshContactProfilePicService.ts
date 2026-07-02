@@ -8,9 +8,14 @@ import {
   toWhatsAppGroupJid,
   toWhatsAppPrivateJid
 } from "../../helpers/chatJid";
+import { getIO } from "../../libs/socket";
 import { sanitizeContactProfilePicUrl } from "../../helpers/contactProfilePic";
 import ShowContactService from "./ShowContactService";
-import { forceRefreshContactProfilePic } from "./ContactProfilePicService";
+import {
+  clearProfilePicThrottle,
+  forceRefreshContactProfilePic
+} from "./ContactProfilePicService";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 const resolveWbotForContact = async (
   contact: Contact,
@@ -48,6 +53,8 @@ const RefreshContactProfilePicService = async (
     : toWhatsAppPrivateJid(contact.number);
   const safeNumber = contact.number.replace(/\D/g, "") || contact.number;
 
+  await clearProfilePicThrottle(companyId, safeNumber);
+
   await forceRefreshContactProfilePic(
     wbot,
     jid,
@@ -59,6 +66,16 @@ const RefreshContactProfilePicService = async (
   await contact.reload();
 
   contact.profilePicUrl = sanitizeContactProfilePicUrl(contact.profilePicUrl);
+
+  void CacheInvalidationService.onContactChanged(companyId, contact.id);
+  void CacheInvalidationService.onTicketChanged(companyId);
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-contact`, {
+    action: "update",
+    contact
+  });
+
   return contact;
 };
 
