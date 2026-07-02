@@ -244,7 +244,10 @@ export const getCompanyLanguage = async (
     const { companyId } = req.user;
     const language = await TranslationService.getCompanyLanguage(companyId);
 
-    return res.status(200).json({ language });
+    return res.status(200).json({
+      language,
+      enabled: TranslationService.isEnabled()
+    });
   } catch (err: any) {
     console.error("Erro ao buscar idioma da empresa:", err);
     return res.status(500).json({ 

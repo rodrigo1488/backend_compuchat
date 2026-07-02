@@ -35,6 +35,10 @@ export interface TranslationResult {
 }
 
 export class TranslationService {
+  static isEnabled(): boolean {
+    return process.env.MESSAGE_TRANSLATION_ENABLED === "true";
+  }
+
   /**
    * Gera chave de cache para tradução
    */
@@ -59,6 +63,10 @@ export class TranslationService {
    * Detecta o idioma de um texto usando IA
    */
   static async detectLanguage(text: string, companyId: number): Promise<string> {
+    if (!this.isEnabled()) {
+      return "unknown";
+    }
+
     try {
       // Validações básicas
       if (!text || typeof text !== "string") {
@@ -146,6 +154,18 @@ Language code:`;
    */
   static async translateText(params: TranslateParams): Promise<TranslationResult> {
     const { text, sourceLanguage, targetLanguage, companyId } = params;
+
+    if (!this.isEnabled()) {
+      const normalizedTarget = (targetLanguage || "pt").toLowerCase();
+      return {
+        originalText: text,
+        translatedText: text,
+        sourceLanguage: sourceLanguage?.toLowerCase() || "unknown",
+        targetLanguage: normalizedTarget,
+        translationNeeded: false,
+        cached: false
+      };
+    }
 
     try {
       // Validações
