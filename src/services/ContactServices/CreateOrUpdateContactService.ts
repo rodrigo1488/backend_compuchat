@@ -5,6 +5,10 @@ import { isNil } from "lodash";
 import { Op } from "sequelize";
 import { logger } from "../../utils/logger";
 import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
+import {
+  isLocalContactProfileUrl,
+  isWhatsAppCdnProfileUrl
+} from "../../helpers/contactProfilePic";
 interface ExtraInfo extends ContactCustomField {
   name: string;
   value: string;
@@ -80,14 +84,21 @@ const CreateOrUpdateContactService = async ({
   if (!created) {
     const updateData: any = {};
 
-    // Atualizar profilePicUrl apenas se mudou e não é o fallback nopicture
+    // Atualizar foto: sempre substituir URLs expiradas do CDN WhatsApp ou quando vier URL local nova
     const newPicIsReal = profilePicUrl && !profilePicUrl.includes("nopicture");
-    const oldPicIsReal = contact.profilePicUrl && !contact.profilePicUrl.includes("nopicture");
-    if (newPicIsReal && profilePicUrl !== contact.profilePicUrl) {
+    const oldPicIsReal =
+      contact.profilePicUrl && !contact.profilePicUrl.includes("nopicture");
+    const oldPicIsStale = isWhatsAppCdnProfileUrl(contact.profilePicUrl);
+
+    if (newPicIsReal && (profilePicUrl !== contact.profilePicUrl || oldPicIsStale)) {
       updateData.profilePicUrl = profilePicUrl;
-    } else if (!oldPicIsReal && profilePicUrl) {
-      // Contato não tinha foto — atualizar mesmo que seja nopicture
+    } else if ((!oldPicIsReal || oldPicIsStale) && profilePicUrl) {
       updateData.profilePicUrl = profilePicUrl;
+    } else if (
+      isLocalContactProfileUrl(contact.profilePicUrl) &&
+      isWhatsAppCdnProfileUrl(profilePicUrl)
+    ) {
+      updateData.profilePicUrl = contact.profilePicUrl;
     }
 
     // Atualizar whatsappId apenas se não estiver definido

@@ -13,6 +13,7 @@ import { intersection } from "lodash";
 import Whatsapp from "../../models/Whatsapp";
 import AppError from "../../errors/AppError";
 import { appCache, CACHE_TTL } from "../../libs/appCache";
+import { sanitizeTicketContactPic } from "../../helpers/contactProfilePic";
 
 interface Request {
   searchParam?: string;
@@ -389,7 +390,9 @@ const listTicketsFromDb = async ({
   const hasMore = count > offset + tickets.length;
 
   return {
-    tickets: tickets.map(t => t.toJSON() as Ticket),
+    tickets: tickets.map(t =>
+      sanitizeTicketContactPic(t.toJSON() as Ticket)
+    ),
     count,
     hasMore
   };

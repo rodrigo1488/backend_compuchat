@@ -2,6 +2,7 @@ import { Sequelize, Op } from "sequelize";
 import Contact from "../../models/Contact";
 import User from "../../models/User";
 import { appCache, CACHE_TTL } from "../../libs/appCache";
+import { sanitizeContactProfilePicUrl } from "../../helpers/contactProfilePic";
 
 interface Request {
   searchParam?: string;
@@ -59,7 +60,11 @@ const fetchContacts = async ({
     });
 
     return {
-      contacts: contacts.map(c => c.toJSON() as Contact),
+      contacts: contacts.map(c => {
+        const json = c.toJSON() as Contact;
+        json.profilePicUrl = sanitizeContactProfilePicUrl(json.profilePicUrl);
+        return json;
+      }),
       count,
       hasMore: count > offset + contacts.length
     };
@@ -73,7 +78,11 @@ const fetchContacts = async ({
     });
 
     return {
-      contacts: contacts.map(c => c.toJSON() as Contact),
+      contacts: contacts.map(c => {
+        const json = c.toJSON() as Contact;
+        json.profilePicUrl = sanitizeContactProfilePicUrl(json.profilePicUrl);
+        return json;
+      }),
       count,
       hasMore: count > offset + contacts.length
     };

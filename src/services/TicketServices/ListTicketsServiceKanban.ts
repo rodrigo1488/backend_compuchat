@@ -11,6 +11,7 @@ import Tag from "../../models/Tag";
 import TicketTag from "../../models/TicketTag";
 import Whatsapp from "../../models/Whatsapp";
 import AppError from "../../errors/AppError";
+import { sanitizeTicketContactPic } from "../../helpers/contactProfilePic";
 
 interface Request {
   searchParam?: string;
@@ -283,7 +284,7 @@ const ListTicketsServiceKanban = async ({
   });
 
   return {
-    tickets,
+    tickets: tickets.map(t => sanitizeTicketContactPic(t)),
     count,
     hasMore: count > offset + tickets.length
   };

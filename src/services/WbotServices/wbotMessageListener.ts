@@ -50,6 +50,11 @@ import User from "../../models/User";
 import Setting from "../../models/Setting";
 import Prompt from "../../models/Prompt";
 import { cacheLayer } from "../../libs/cache";
+import {
+  fetchAndPersistProfilePic,
+  shouldRefreshContactProfilePic
+} from "../ContactServices/ContactProfilePicService";
+import { sanitizeContactProfilePicUrl } from "../../helpers/contactProfilePic";
 import { provider } from "./providers";
 import { debounce } from "../../helpers/Debounce";
 import {
@@ -763,37 +768,15 @@ const downloadMedia = async (msg: proto.IWebMessageInfo) => {
  * número; fluxos que dependem de número de telefone devem usar verifyContact para obter contato.
  */
 /**
- * Busca a URL da foto de perfil usando cache Redis (TTL: 24h).
- * Evita fazer uma chamada de rede ao WhatsApp em cada mensagem recebida,
- * o que era a principal causa do atraso de 5–10 min na entrega das mensagens.
+ * Busca foto de perfil, persiste em /public/contacts e retorna URL estável do backend.
  */
 const getProfilePicUrlCached = async (
   wbot: Session,
   jid: string,
-  companyId: number
+  companyId: number,
+  number: string
 ): Promise<string> => {
-  const fallback = `${process.env.FRONTEND_URL}/nopicture.png`;
-  const cacheKey = `profilepic:${companyId}:${jid}`;
-  const TTL_SECONDS = 60 * 60 * 24; // 24 horas
-
-  try {
-    const cached = await cacheLayer.get(cacheKey);
-    if (cached) return cached;
-  } catch (_) {}
-
-  try {
-    const url = await wbot.profilePictureUrl(jid);
-    const result = url || fallback;
-    try {
-      await cacheLayer.set(cacheKey, result, "EX", TTL_SECONDS);
-    } catch (_) {}
-    return result;
-  } catch (_) {
-    try {
-      await cacheLayer.set(cacheKey, fallback, "EX", TTL_SECONDS);
-    } catch (_) {}
-    return fallback;
-  }
+  return fetchAndPersistProfilePic(wbot, jid, companyId, number);
 };
 
 const verifyContact = async (
@@ -823,12 +806,22 @@ const verifyContact = async (
       })
     : null;
 
-  if (existingForPic?.profilePicUrl && !existingForPic.profilePicUrl.includes("nopicture")) {
-    // Contato já tem foto — usar cache/valor existente, sem chamada de rede
-    profilePicUrl = existingForPic.profilePicUrl;
+  if (
+    existingForPic?.profilePicUrl &&
+    !shouldRefreshContactProfilePic(
+      existingForPic.profilePicUrl,
+      companyId,
+      existingNumberCheck
+    )
+  ) {
+    profilePicUrl = sanitizeContactProfilePicUrl(existingForPic.profilePicUrl);
   } else {
-    // Contato novo ou sem foto — buscar com cache Redis
-    profilePicUrl = await getProfilePicUrlCached(wbot, normalizedContactId, companyId);
+    profilePicUrl = await getProfilePicUrlCached(
+      wbot,
+      normalizedContactId,
+      companyId,
+      existingNumberCheck
+    );
   }
 
   // Extrair número do JID normalizado (remove @s.whatsapp.net ou @g.us)

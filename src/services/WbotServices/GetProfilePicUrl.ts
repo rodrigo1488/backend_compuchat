@@ -1,22 +1,26 @@
 import GetDefaultWhatsApp from "../../helpers/GetDefaultWhatsApp";
 import { getWbot } from "../../libs/wbot";
+import { fetchAndPersistProfilePic } from "../ContactServices/ContactProfilePicService";
+import { fallbackProfilePicUrl } from "../../helpers/contactProfilePic";
 
 const GetProfilePicUrl = async (
   number: string,
   companyId: number
 ): Promise<string> => {
   const defaultWhatsapp = await GetDefaultWhatsApp(companyId);
-
   const wbot = getWbot(defaultWhatsapp.id);
+  const jid = `${number.replace(/\D/g, "")}@s.whatsapp.net`;
 
-  let profilePicUrl: string;
   try {
-    profilePicUrl = await wbot.profilePictureUrl(`${number}@s.whatsapp.net`);
-  } catch (error) {
-    profilePicUrl = `${process.env.FRONTEND_URL}/nopicture.png`;
+    return await fetchAndPersistProfilePic(
+      wbot,
+      jid,
+      companyId,
+      number.replace(/\D/g, "")
+    );
+  } catch {
+    return fallbackProfilePicUrl();
   }
-
-  return profilePicUrl;
 };
 
 export default GetProfilePicUrl;
