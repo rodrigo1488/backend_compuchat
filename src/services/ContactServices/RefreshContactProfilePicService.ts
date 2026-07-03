@@ -37,10 +37,15 @@ const resolveWbotForContact = async (
   return getWbot(defaultWhatsapp.id);
 };
 
+export type RefreshContactProfilePicResult = {
+  contact: Contact;
+  updated: boolean;
+};
+
 const RefreshContactProfilePicService = async (
   contactId: number,
   companyId: number
-): Promise<Contact> => {
+): Promise<RefreshContactProfilePicResult> => {
   const contact = await ShowContactService(contactId, companyId);
 
   if (contact.isGroup) {
@@ -55,7 +60,7 @@ const RefreshContactProfilePicService = async (
 
   await clearProfilePicThrottle(companyId, safeNumber);
 
-  await forceRefreshContactProfilePic(
+  const { updated } = await forceRefreshContactProfilePic(
     wbot,
     jid,
     companyId,
@@ -76,7 +81,7 @@ const RefreshContactProfilePicService = async (
     contact
   });
 
-  return contact;
+  return { contact, updated };
 };
 
 export default RefreshContactProfilePicService;

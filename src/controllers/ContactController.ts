@@ -283,14 +283,15 @@ export const refreshProfilePic = async (
   const { contactId } = req.params;
   const { companyId } = req.user;
 
-  const contact = await RefreshContactProfilePicService(
+  const { contact, updated } = await RefreshContactProfilePicService(
     Number(contactId),
     companyId
   );
 
   return res.status(200).json({
     contact,
-    profilePicUrl: contact.profilePicUrl
+    profilePicUrl: contact.profilePicUrl,
+    updated
   });
 };
 

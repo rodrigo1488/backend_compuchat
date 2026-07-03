@@ -173,6 +173,12 @@ const updateContactProfilePicInDb = async (
   return contact;
 };
 
+export type ForceRefreshResult = {
+  url: string;
+  /** true quando uma foto real foi baixada e gravada no contato */
+  updated: boolean;
+};
+
 /** Busca foto atual no WhatsApp, ignora cache local e throttle. */
 export const forceRefreshContactProfilePic = async (
   wbot: WbotProfile,
@@ -180,23 +186,34 @@ export const forceRefreshContactProfilePic = async (
   companyId: number,
   number: string,
   contactId: number
-): Promise<string> => {
+): Promise<ForceRefreshResult> => {
   const fallback = fallbackProfilePicUrl();
   const localPath = getLocalProfilePicPath(companyId, number);
 
   await clearProfilePicThrottle(companyId, number);
 
   try {
-    if (fs.existsSync(localPath)) {
-      await fs.promises.unlink(localPath);
-    }
-  } catch (_) {}
-
-  try {
     const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 8000);
+
     if (!whatsappUrl) {
-      return fallback;
+      // Contato sem foto (ou privacidade): remove arquivo local antigo e
+      // grava nopicture no banco para não deixar URL órfã.
+      try {
+        if (fs.existsSync(localPath)) {
+          await fs.promises.unlink(localPath);
+        }
+      } catch (_) {}
+      await updateContactProfilePicInDb(contactId, companyId, fallback);
+      return { url: fallback, updated: false };
     }
+
+    // Apaga o arquivo antigo somente com foto nova confirmada no CDN,
+    // para o download regravar do zero.
+    try {
+      if (fs.existsSync(localPath)) {
+        await fs.promises.unlink(localPath);
+      }
+    } catch (_) {}
 
     const url = await persistProfilePictureFromUrl(
       whatsappUrl,
@@ -206,23 +223,23 @@ export const forceRefreshContactProfilePic = async (
 
     if (!url.includes("nopicture")) {
       await updateContactProfilePicInDb(contactId, companyId, url);
-    } else {
-      const contact = await Contact.findByPk(contactId);
-      if (contact) {
-        void CacheInvalidationService.onContactChanged(companyId, contact.id);
-        void CacheInvalidationService.onTicketChanged(companyId);
-      }
+      return { url, updated: true };
     }
 
-    return url;
+    // Download falhou e não há arquivo local: grava fallback no banco.
+    await updateContactProfilePicInDb(contactId, companyId, fallback);
+    return { url: fallback, updated: false };
   } catch (err: any) {
     logger.debug(
       `[profilePic] refresh manual falhou (${number}): ${err?.message || err}`
     );
     if (fs.existsSync(localPath)) {
-      return getLocalProfilePicPublicUrl(companyId, number);
+      return {
+        url: getLocalProfilePicPublicUrl(companyId, number),
+        updated: false
+      };
     }
-    return fallback;
+    return { url: fallback, updated: false };
   }
 };
 
