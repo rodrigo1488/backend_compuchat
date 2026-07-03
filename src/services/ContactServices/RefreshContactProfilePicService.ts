@@ -13,7 +13,8 @@ import { sanitizeContactProfilePicUrl } from "../../helpers/contactProfilePic";
 import ShowContactService from "./ShowContactService";
 import {
   clearProfilePicThrottle,
-  forceRefreshContactProfilePic
+  forceRefreshContactProfilePic,
+  ProfilePicFailReason
 } from "./ContactProfilePicService";
 import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
@@ -40,6 +41,7 @@ const resolveWbotForContact = async (
 export type RefreshContactProfilePicResult = {
   contact: Contact;
   updated: boolean;
+  reason?: ProfilePicFailReason;
 };
 
 const RefreshContactProfilePicService = async (
@@ -60,7 +62,7 @@ const RefreshContactProfilePicService = async (
 
   await clearProfilePicThrottle(companyId, safeNumber);
 
-  const { updated } = await forceRefreshContactProfilePic(
+  const { updated, reason } = await forceRefreshContactProfilePic(
     wbot,
     jid,
     companyId,
@@ -81,7 +83,7 @@ const RefreshContactProfilePicService = async (
     contact
   });
 
-  return { contact, updated };
+  return { contact, updated, reason };
 };
 
 export default RefreshContactProfilePicService;

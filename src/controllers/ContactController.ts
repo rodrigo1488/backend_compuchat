@@ -283,7 +283,7 @@ export const refreshProfilePic = async (
   const { contactId } = req.params;
   const { companyId } = req.user;
 
-  const { contact, updated } = await RefreshContactProfilePicService(
+  const { contact, updated, reason } = await RefreshContactProfilePicService(
     Number(contactId),
     companyId
   );
@@ -291,7 +291,8 @@ export const refreshProfilePic = async (
   return res.status(200).json({
     contact,
     profilePicUrl: contact.profilePicUrl,
-    updated
+    updated,
+    reason
   });
 };
 

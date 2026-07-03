@@ -173,10 +173,87 @@ const updateContactProfilePicInDb = async (
   return contact;
 };
 
+export type ProfilePicFailReason = "no_photo" | "privacy" | "timeout" | "error";
+
 export type ForceRefreshResult = {
   url: string;
   /** true quando uma foto real foi baixada e gravada no contato */
   updated: boolean;
+  /** presente quando updated=false, explica o motivo da falha */
+  reason?: ProfilePicFailReason;
+};
+
+/**
+ * Interpreta o erro lançado pelo Baileys (Boom com código WA em err.data):
+ * 404 item-not-found = sem foto; 401/403 not-authorized = privacidade/tctoken.
+ */
+const classifyProfilePicError = (err: any): ProfilePicFailReason => {
+  const waCode = Number(err?.data) || Number(err?.output?.statusCode) || 0;
+  const message = String(err?.message || "").toLowerCase();
+
+  if (waCode === 404 || message.includes("item-not-found")) {
+    return "no_photo";
+  }
+  if (
+    waCode === 401 ||
+    waCode === 403 ||
+    message.includes("not-authorized") ||
+    message.includes("forbidden")
+  ) {
+    return "privacy";
+  }
+  if (message.includes("timed out") || message.includes("timeout")) {
+    return "timeout";
+  }
+  return "error";
+};
+
+/**
+ * Consulta a URL da foto no WhatsApp tentando "image" (alta resolução) e,
+ * em falha que não seja "sem foto", cai para "preview" (padrão do WA Web).
+ */
+const queryProfilePictureUrl = async (
+  wbot: WbotProfile,
+  jid: string,
+  number: string
+): Promise<{ whatsappUrl?: string; reason?: ProfilePicFailReason }> => {
+  try {
+    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 8000);
+    if (!whatsappUrl) {
+      return { reason: "no_photo" };
+    }
+    return { whatsappUrl };
+  } catch (imageErr: any) {
+    const imageReason = classifyProfilePicError(imageErr);
+    logger.warn(
+      `[profilePic] consulta "image" falhou (${number}, jid=${jid}, waCode=${
+        imageErr?.data ?? "?"
+      }, reason=${imageReason}): ${imageErr?.message || imageErr}`
+    );
+
+    if (imageReason === "no_photo") {
+      return { reason: "no_photo" };
+    }
+
+    try {
+      const previewUrl = await wbot.profilePictureUrl(jid, "preview", 8000);
+      if (!previewUrl) {
+        return { reason: "no_photo" };
+      }
+      logger.info(
+        `[profilePic] fallback "preview" funcionou (${number}, jid=${jid})`
+      );
+      return { whatsappUrl: previewUrl };
+    } catch (previewErr: any) {
+      const previewReason = classifyProfilePicError(previewErr);
+      logger.warn(
+        `[profilePic] consulta "preview" falhou (${number}, jid=${jid}, waCode=${
+          previewErr?.data ?? "?"
+        }, reason=${previewReason}): ${previewErr?.message || previewErr}`
+      );
+      return { reason: previewReason };
+    }
+  }
 };
 
 /** Busca foto atual no WhatsApp, ignora cache local e throttle. */
@@ -192,21 +269,38 @@ export const forceRefreshContactProfilePic = async (
 
   await clearProfilePicThrottle(companyId, number);
 
-  try {
-    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 8000);
+  const { whatsappUrl, reason } = await queryProfilePictureUrl(
+    wbot,
+    jid,
+    number
+  );
 
-    if (!whatsappUrl) {
-      // Contato sem foto (ou privacidade): remove arquivo local antigo e
-      // grava nopicture no banco para não deixar URL órfã.
+  if (!whatsappUrl) {
+    if (reason === "no_photo") {
+      // Contato sem foto: remove arquivo local antigo e grava nopicture
+      // no banco para não deixar URL órfã.
       try {
         if (fs.existsSync(localPath)) {
           await fs.promises.unlink(localPath);
         }
       } catch (_) {}
       await updateContactProfilePicInDb(contactId, companyId, fallback);
-      return { url: fallback, updated: false };
+      return { url: fallback, updated: false, reason };
     }
 
+    // Falha transitória (privacidade/timeout/erro): preserva a foto local
+    // existente, se houver.
+    if (fs.existsSync(localPath)) {
+      return {
+        url: getLocalProfilePicPublicUrl(companyId, number),
+        updated: false,
+        reason
+      };
+    }
+    return { url: fallback, updated: false, reason };
+  }
+
+  try {
     // Apaga o arquivo antigo somente com foto nova confirmada no CDN,
     // para o download regravar do zero.
     try {
@@ -227,19 +321,25 @@ export const forceRefreshContactProfilePic = async (
     }
 
     // Download falhou e não há arquivo local: grava fallback no banco.
+    logger.warn(
+      `[profilePic] download da foto falhou apos CDN retornar URL (${number})`
+    );
     await updateContactProfilePicInDb(contactId, companyId, fallback);
-    return { url: fallback, updated: false };
+    return { url: fallback, updated: false, reason: "error" };
   } catch (err: any) {
-    logger.debug(
-      `[profilePic] refresh manual falhou (${number}): ${err?.message || err}`
+    logger.warn(
+      `[profilePic] refresh manual falhou ao persistir (${number}): ${
+        err?.message || err
+      }`
     );
     if (fs.existsSync(localPath)) {
       return {
         url: getLocalProfilePicPublicUrl(companyId, number),
-        updated: false
+        updated: false,
+        reason: "error"
       };
     }
-    return { url: fallback, updated: false };
+    return { url: fallback, updated: false, reason: "error" };
   }
 };
 
