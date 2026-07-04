@@ -31,6 +31,12 @@ import CreateMessageService, {
 } from "../MessageServices/CreateMessageService";
 import { logger } from "../../utils/logger";
 import { runWithMessageProcessConcurrency } from "../../utils/messageProcessConcurrency";
+import { buildChatMutexKey, runWithChatMutex } from "../../utils/ticketChatMutex";
+import { getMessageCreatedAt, getMessageTimestampSeconds } from "../../helpers/messageTimestamp";
+import {
+  isAutomatedInboundMessage,
+  isDuplicateAutomatedEcho
+} from "../../helpers/automatedMessage";
 import { runWithFfmpegConcurrency } from "../../utils/ffmpegConcurrency";
 import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateContactService";
 import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
@@ -1787,6 +1793,7 @@ export const verifyMediaMessage = async (
     participant: msg.key.participant,
     dataJson: JSON.stringify(msg),
     ticketTrakingId: ticketTraking?.id,
+    createdAt: getMessageCreatedAt(msg)
   };
 
   logger.debug('💾 Salvando mensagem de mídia:', {
@@ -1951,7 +1958,8 @@ export const verifyMessage = async (
     remoteJid: msg.key.remoteJid,
     participant: msg.key.participant,
     dataJson: JSON.stringify(msg),
-    isEdited: isEdited
+    isEdited: isEdited,
+    createdAt: getMessageCreatedAt(msg)
   };
 
   logger.debug('💾 Salvando mensagem:', {
@@ -3567,18 +3575,24 @@ const handleMessage = async (
       order: [["createdAt", "DESC"]]
     });
 
-    // Validação de mensagem de conclusão duplicada - adicionado log e verificação mais segura
-    // IMPORTANTE: Não bloquear se houver prompt configurado (bot de IA pode precisar responder)
+    const isAutomatedInbound =
+      !isFromMe && isAutomatedInboundMessage(bodyMessage);
+
+    // Eco de mensagens automáticas (conclusão, saudação, avaliação) — evita reprocessamento
     const hasPromptInWhatsapp = !isNil(whatsapp.promptId);
     if (
-      !hasPromptInWhatsapp && // Só bloquear se NÃO houver prompt configurado no WhatsApp
+      !hasPromptInWhatsapp &&
       unreadMessages === 0 &&
-      whatsapp.complationMessage &&
       lastMessage &&
-      formatBody(whatsapp.complationMessage, contact).trim().toLowerCase() ===
-      lastMessage.body.trim().toLowerCase()
+      isDuplicateAutomatedEcho(bodyMessage, [
+        whatsapp.complationMessage,
+        whatsapp.greetingMessage,
+        whatsapp.ratingMessage
+      ], contact)
     ) {
-      logger.info(`Mensagem de conclusão duplicada ignorada para contato ${contact.id} (empresa: ${companyId})`);
+      logger.info(
+        `Eco de mensagem automática ignorado para contato ${contact.id} (empresa: ${companyId})`
+      );
       return;
     }
 
@@ -3588,7 +3602,8 @@ const handleMessage = async (
       unreadMessages,
       companyId,
       groupContact,
-      isFromMe
+      isFromMe,
+      isAutomatedInbound
     );
 
     // Ecos de mensagens automáticas enviadas pelo sistema (fromMe=true) não devem
@@ -3598,7 +3613,9 @@ const handleMessage = async (
       return;
     }
 
-    await provider(ticket, msg, companyId, contact, wbot as WASocket);
+    if (!isAutomatedInbound) {
+      await provider(ticket, msg, companyId, contact, wbot as WASocket);
+    }
 
     // voltar para o menu inicial
 
@@ -3625,6 +3642,17 @@ const handleMessage = async (
       mediaSent = await verifyMediaMessage(msg, ticket, contact);
     } else {
       await verifyMessage(msg, ticket, contact);
+    }
+
+    if (isAutomatedInbound) {
+      logger.warn({
+        msg: "handleMessage: mensagem automática inbound — bots e integrações ignorados",
+        companyId,
+        contactId: contact.id,
+        ticketId: ticket.id,
+        bodyPreview: String(bodyMessage || "").slice(0, 80)
+      });
+      return;
     }
 
     // Atualiza o ticket se a ultima mensagem foi enviada por mim, para que possa ser finalizado.
@@ -4420,7 +4448,10 @@ const wbotMessageListener = async (
     wbot.ev.on("messages.upsert", async (messageUpsert: ImessageUpsert) => {
       const messages = messageUpsert.messages
         .filter(filterMessages)
-        .map(msg => msg);
+        .map(msg => msg)
+        .sort(
+          (a, b) => getMessageTimestampSeconds(a) - getMessageTimestampSeconds(b)
+        );
 
       if (!messages || messages.length === 0) {
         logger.debug(`Nenhuma mensagem para processar após filtro (empresa: ${companyId})`);
@@ -4458,9 +4489,15 @@ const wbotMessageListener = async (
               remoteJid: message.key.remoteJid
             });
             
+            const chatKey = buildChatMutexKey(
+              companyId,
+              message.key.remoteJid
+            );
             await runWithMessageProcessConcurrency(async () => {
-              await handleMessage(message, wbot, companyId);
-              await verifyCampaignMessageAndCloseTicket(message, companyId);
+              await runWithChatMutex(chatKey, async () => {
+                await handleMessage(message, wbot, companyId);
+                await verifyCampaignMessageAndCloseTicket(message, companyId);
+              });
             });
           } else {
             logger.debug({

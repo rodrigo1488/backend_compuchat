@@ -25,6 +25,8 @@ export interface MessageData {
   transcription?: string | null;
   transcriptionStatus?: string | null;
   transcriptionError?: string | null;
+  /** Timestamp real do WhatsApp; quando omitido, usa NOW() do banco. */
+  createdAt?: Date | string;
 }
 interface Request {
   messageData: MessageData;

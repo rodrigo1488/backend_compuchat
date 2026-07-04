@@ -21,7 +21,8 @@ const FindOrCreateTicketService = async (
   unreadMessages: number,
   companyId: number,
   groupContact?: Contact,
-  fromMe?: boolean
+  fromMe?: boolean,
+  isAutomatedInbound?: boolean
 ): Promise<Ticket> => {
   let ticket = await Ticket.findOne({
     where: {
@@ -62,10 +63,9 @@ const FindOrCreateTicketService = async (
   }
 
   if (ticket?.status === "closed") {
-    if (fromMe) {
-      // Mensagem enviada pelo próprio sistema (eco fromMe) — não reabrir o ticket.
-      // Ecos de mensagens automáticas (complationMessage, ratingMessage, expiresInactiveMessage)
-      // chegam com fromMe=true e não devem causar reabertura.
+    if (fromMe || isAutomatedInbound) {
+      // Mensagem enviada pelo próprio sistema (eco fromMe) ou automática de outro
+      // Compuchat (u200e/u200c) — não reabrir o ticket para evitar loop de bots B2B.
       return await ShowTicketService(ticket.id, companyId);
     }
     await ticket.update({
