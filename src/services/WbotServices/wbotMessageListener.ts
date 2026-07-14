@@ -37,6 +37,11 @@ import {
   isAutomatedInboundMessage,
   isDuplicateAutomatedEcho
 } from "../../helpers/automatedMessage";
+import {
+  isConnectionGreetingLimitEnabled,
+  shouldSendConnectionGreeting,
+  tryClaimConnectionGreeting
+} from "../../helpers/connectionGreetingLimit";
 import { runWithFfmpegConcurrency } from "../../utils/ffmpegConcurrency";
 import CreateOrUpdateContactService from "../ContactServices/CreateOrUpdateContactService";
 import FindOrCreateTicketService from "../TicketServices/FindOrCreateTicketService";
@@ -2133,23 +2138,6 @@ const Push = (msg: proto.IWebMessageInfo) => {
   return msg.pushName;
 };
 
-const isFirstCustomerMessageInTicket = async (
-  ticket: Pick<Ticket, "id" | "sessionStartedAt">
-): Promise<boolean> => {
-  const where: Record<string, unknown> = {
-    ticketId: ticket.id,
-    fromMe: false
-  };
-
-  if (ticket.sessionStartedAt) {
-    where.createdAt = { [Op.gte]: ticket.sessionStartedAt };
-  }
-
-  const customerMessageCount = await Message.count({ where });
-
-  return customerMessageCount <= 1;
-};
-
 const verifyQueue = async (
   wbot: Session,
   msg: proto.IWebMessageInfo,
@@ -2175,7 +2163,7 @@ const verifyQueue = async (
       !ticket.isGroup &&
       greetingMessage.length > 1 &&
       sendGreetingMessageOneQueues?.value === "enabled" &&
-      (await isFirstCustomerMessageInTicket(ticket))
+      (await shouldSendConnectionGreeting(ticket))
     ) {
       const body = formatBody(`${greetingMessage}`, contact);
 
@@ -2496,6 +2484,12 @@ const verifyQueue = async (
     await ticketTraking.update({
       chatbotAt: null
     });
+
+    if (await isConnectionGreetingLimitEnabled(companyId)) {
+      if (!(await tryClaimConnectionGreeting(ticket))) {
+        return;
+      }
+    }
 
     if (buttonActive.value === "text") {
       return botText();
@@ -4254,11 +4248,9 @@ const handleMessage = async (
       !isGroup &&
       !isFromMe
     ) {
-      const isFirstCustomerMessage = await isFirstCustomerMessageInTicket(
-        ticket
-      );
+      const canSendGreeting = await shouldSendConnectionGreeting(ticket);
 
-      if (isFirstCustomerMessage && whatsapp.greetingMessage) {
+      if (canSendGreeting && whatsapp.greetingMessage) {
         const debouncedSentMessage = debounce(
           async () => {
             // Usar getChatJid para obter destino correto

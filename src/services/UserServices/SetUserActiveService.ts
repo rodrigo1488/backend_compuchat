@@ -5,6 +5,7 @@ import Chat from "../../models/Chat";
 import ChatUser from "../../models/ChatUser";
 import AppError from "../../errors/AppError";
 import database from "../../database";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 interface Request {
   userId: string | number;
@@ -107,6 +108,9 @@ const SetUserActiveService = async ({
   }
 
   await user.reload();
+
+  void CacheInvalidationService.onUserChanged(user.id, companyId);
+
   return user;
 };
 

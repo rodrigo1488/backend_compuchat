@@ -11,6 +11,7 @@ import {
 import User from "../../models/User";
 import Plan from "../../models/Plan";
 import Company from "../../models/Company";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 interface Request {
   email: string;
@@ -121,6 +122,10 @@ const CreateUserService = async ({
   await user.$set("queues", queueIds);
 
   await user.reload();
+
+  if (companyId !== undefined) {
+    void CacheInvalidationService.onUserChanged(user.id, companyId);
+  }
 
   const serializedUser = SerializeUser(user);
 

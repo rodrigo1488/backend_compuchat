@@ -38,7 +38,14 @@ module.exports = {
 						  createdAt: new Date(),
 						  updatedAt: new Date(),
 						  
-						},						
+						},
+						{
+						  key: "limitConnectionGreeting",
+						  value: "disabled",
+						  companyId: 1,
+						  createdAt: new Date(),
+						  updatedAt: new Date(),
+						},
                         {
                             key: "userRating",
                             value: "disabled",

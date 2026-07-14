@@ -5,6 +5,7 @@ import AppError from "../../errors/AppError";
 import Ticket from "../../models/Ticket";
 import Task from "../../models/Task";
 import UpdateDeletedUserOpenTicketsStatus from "../../helpers/UpdateDeletedUserOpenTicketsStatus";
+import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 
 const DeleteUserService = async (
   id: string | number,
@@ -53,7 +54,10 @@ const DeleteUserService = async (
     );
   }
 
+  const deletedUserId = user.id;
   await user.destroy();
+
+  void CacheInvalidationService.onUserChanged(deletedUserId, companyId);
 };
 
 export default DeleteUserService;

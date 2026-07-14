@@ -209,6 +209,19 @@ const CreateCompanyService = async (
     },
   });
 
+ // Limitar saudação da conexão (1x / 24h ou ao reabrir chat encerrado)
+    await Setting.findOrCreate({
+	where:{
+      companyId: company.id,
+      key: "limitConnectionGreeting",
+    },
+    defaults: {
+      companyId: company.id,
+      key: "limitConnectionGreeting",
+      value: "disabled"
+    },
+  });
+
  // Enviar mensagem de transferencia
     await Setting.findOrCreate({
 	where:{
