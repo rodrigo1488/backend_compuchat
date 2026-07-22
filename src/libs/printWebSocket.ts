@@ -86,6 +86,7 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
           const jobId = msg.job_id;
           const status = msg.status;
           const message = msg.message;
+          const uniplusContaId = msg.uniplusContaId ?? msg.uniplus_conta_id ?? null;
 
           if (!jobId || !status) {
             logger.warn("Invalid ack received: missing job_id or status");
@@ -97,7 +98,8 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
             status,
             message,
             companyId,
-            deviceId
+            deviceId,
+            uniplusContaId,
           });
         }
       } catch (err: any) {
@@ -240,7 +242,7 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
 export function sendPrintJob(
   companyId: number,
   deviceId: string,
-  job: { id: number; conteudo: object }
+  job: { id: number; conteudo: object; tipo?: string }
 ): boolean {
   const key = getConnectionKey(companyId, deviceId);
   const conn = connections.get(key);
@@ -259,16 +261,17 @@ export function sendPrintJob(
   }
 
   try {
+    const event = job.tipo === "uniplus" ? "uniplus_job" : "print_job";
     const message = JSON.stringify({
-      event: "print_job",
+      event,
       job_id: job.id,
       conteudo: job.conteudo
     });
-    logger.info(`sendPrintJob: Sending job ${job.id} to deviceId=${deviceId} via WebSocket (key=${key})`);
+    logger.info(`sendPrintJob: Sending ${event} ${job.id} to deviceId=${deviceId} via WebSocket (key=${key})`);
     conn.ws.send(message);
     return true;
   } catch (err) {
-    logger.error(`sendPrintJob: Error sending print job ${job.id} via WebSocket to deviceId=${deviceId}:`, err);
+    logger.error(`sendPrintJob: Error sending job ${job.id} via WebSocket to deviceId=${deviceId}:`, err);
     return false;
   }
 }

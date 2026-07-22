@@ -55,6 +55,16 @@ class PrintPedido extends Model<PrintPedido> {
   @Column(DataType.JSON)
   conteudo: object;
 
+  @Default("print")
+  @Column
+  tipo: string;
+
+  @Column
+  uniplusContaId: number | null;
+
+  @Column(DataType.STRING(40))
+  externalRef: string | null;
+
   @Default("pending")
   @Column
   status: string;

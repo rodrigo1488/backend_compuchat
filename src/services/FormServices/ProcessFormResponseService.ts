@@ -12,6 +12,10 @@ import SendWhatsAppMessage from "../WbotServices/SendWhatsAppMessage";
 import AppError from "../../errors/AppError";
 import PrintDevice from "../../models/PrintDevice";
 import CreateAndDispatchPrintJobService from "../PrintJobService/CreateAndDispatchPrintJobService";
+import BuildUniplusDeliveryPayloadService, {
+  isUniplusEnabledForCompany,
+  getUniplusPrintDeviceId,
+} from "../UniplusServices/BuildUniplusDeliveryPayloadService";
 import OcuparMesaService from "../MesaServices/OcuparMesaService";
 import Mesa from "../../models/Mesa";
 import Contact from "../../models/Contact";
@@ -997,6 +1001,66 @@ const ProcessFormResponseService = async ({
       }
     } catch (err) {
       console.error("Error creating print job:", err);
+    }
+  }
+
+  // UniPlus: despacha job irmão via PrintAgent (event uniplus_job)
+  if (
+    isMenuForm &&
+    menuItems &&
+    menuItems.length > 0 &&
+    ((response.metadata || metadata || {}) as any)?.orderType === "delivery"
+  ) {
+    try {
+      const formUniplus = (form.settings as any)?.uniplus;
+      if (formUniplus?.enabled === true) {
+        if (await isUniplusEnabledForCompany(form.companyId)) {
+          const devicePk = await getUniplusPrintDeviceId(form.companyId);
+          if (devicePk) {
+            const printDevice = await PrintDevice.findOne({
+              where: { id: devicePk, companyId: form.companyId },
+            });
+            if (printDevice) {
+              const allMenuItems =
+                normalizedMenuItems && normalizedMenuItems.length > 0
+                  ? normalizedMenuItems
+                  : menuItems;
+              const payload = await BuildUniplusDeliveryPayloadService({
+                companyId: form.companyId,
+                form,
+                response,
+                menuItems: allMenuItems,
+                contactName,
+                contactPhone,
+                fields,
+                answers,
+              });
+              await CreateAndDispatchPrintJobService({
+                companyId: form.companyId,
+                deviceId: printDevice.deviceId,
+                formId: form.id,
+                formResponseId: response.id,
+                conteudo: payload,
+                tipo: "uniplus",
+                externalRef: payload.protocol,
+              });
+            } else {
+              console.warn(
+                `ProcessFormResponseService: UniPlus PrintDevice not found id=${devicePk}`
+              );
+            }
+          } else {
+            console.warn(
+              "ProcessFormResponseService: UniPlus enabled but uniplusPrintDeviceId not set"
+            );
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(
+        "Error creating UniPlus job:",
+        err?.message || err
+      );
     }
   }
 

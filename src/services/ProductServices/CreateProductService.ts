@@ -24,6 +24,7 @@ interface Request {
   halfAndHalfGrupo?: string | null;
   variations?: ProductVariationInput[];
   addOnGroupId?: number | null;
+  idUniplus?: string | null;
 }
 
 const CreateProductService = async ({
@@ -41,6 +42,7 @@ const CreateProductService = async ({
   companyId,
   variations = [],
   addOnGroupId,
+  idUniplus,
 }: Request): Promise<Product> => {
   if (!name || name.trim() === "") {
     throw new AppError("ERR_PRODUCT_NAME_REQUIRED", 400);
@@ -73,6 +75,7 @@ const CreateProductService = async ({
     imageUrl: imageUrl?.trim() || null,
     companyId,
     addOnGroupId: addOnGroupId ?? null,
+    idUniplus: idUniplus?.trim() || null,
   });
 
   for (const v of variations) {

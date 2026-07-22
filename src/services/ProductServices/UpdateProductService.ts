@@ -21,6 +21,7 @@ interface Request {
   imageUrl?: string;
   variations?: ProductVariationInput[];
   addOnGroupId?: number | null;
+  idUniplus?: string | null;
 }
 
 const UpdateProductService = async ({
@@ -39,6 +40,7 @@ const UpdateProductService = async ({
   imageUrl,
   variations,
   addOnGroupId,
+  idUniplus,
 }: Request): Promise<Product> => {
   const product = await Product.findOne({
     where: { id: productId, companyId },
@@ -108,6 +110,10 @@ const UpdateProductService = async ({
       }
     }
     product.addOnGroupId = addOnGroupId ?? null;
+  }
+
+  if (idUniplus !== undefined) {
+    product.idUniplus = idUniplus?.trim() || null;
   }
 
   await product.save();

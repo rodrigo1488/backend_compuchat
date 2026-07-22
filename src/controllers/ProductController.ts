@@ -85,6 +85,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     halfAndHalfGrupo: Yup.string().nullable(),
     grupo: Yup.string().nullable(),
     imageUrl: Yup.string().nullable(),
+    idUniplus: Yup.string().max(20).nullable(),
     addOnGroupId: Yup.number().nullable(),
     variations: Yup.array()
       .of(
@@ -167,6 +168,7 @@ export const update = async (
     halfAndHalfGrupo: Yup.string().nullable(),
     grupo: Yup.string().nullable(),
     imageUrl: Yup.string().nullable(),
+    idUniplus: Yup.string().max(20).nullable(),
     addOnGroupId: Yup.number().nullable(),
     variations: Yup.array()
       .of(

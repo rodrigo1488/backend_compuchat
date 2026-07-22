@@ -37,6 +37,7 @@ const DuplicateProductService = async ({ productId, companyId }: Request): Promi
     grupo: originalProduct.grupo,
     imageUrl: originalProduct.imageUrl,
     addOnGroupId: (originalProduct as any).addOnGroupId ?? null,
+    idUniplus: originalProduct.idUniplus ?? null,
     companyId: companyId,
   });
 

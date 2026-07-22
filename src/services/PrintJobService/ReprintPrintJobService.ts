@@ -109,6 +109,8 @@ export async function reprintFromSourceJob(
     formId: source.formId,
     formResponseId: source.formResponseId,
     conteudo,
+    tipo: source.tipo || "print",
+    externalRef: source.externalRef || null,
     status: "pending",
     tentativas: 0,
     maxTentativas: 3,

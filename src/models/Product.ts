@@ -62,6 +62,9 @@ class Product extends Model<Product> {
   @Column
   grupo: string;
 
+  @Column(DataType.STRING(20))
+  idUniplus: string | null;
+
   @Column(DataType.TEXT)
   imageUrl: string;
 

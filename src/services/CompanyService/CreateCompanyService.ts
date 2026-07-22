@@ -195,6 +195,35 @@ const CreateCompanyService = async (
     },
   });
 
+  await Setting.findOrCreate({
+    where: { companyId: company.id, key: "uniplusEnabled" },
+    defaults: { companyId: company.id, key: "uniplusEnabled", value: "disabled" },
+  });
+  await Setting.findOrCreate({
+    where: { companyId: company.id, key: "uniplusIdFilial" },
+    defaults: { companyId: company.id, key: "uniplusIdFilial", value: "1" },
+  });
+  await Setting.findOrCreate({
+    where: { companyId: company.id, key: "uniplusIdUsuario" },
+    defaults: { companyId: company.id, key: "uniplusIdUsuario", value: "1" },
+  });
+  await Setting.findOrCreate({
+    where: { companyId: company.id, key: "uniplusPaymentMap" },
+    defaults: {
+      companyId: company.id,
+      key: "uniplusPaymentMap",
+      value: JSON.stringify({
+        pix: "valorpix",
+        dinheiro: "valordinheiro",
+        cartao: "valorcartao",
+        outro: "valoroutros",
+      }),
+    },
+  });
+  await Setting.findOrCreate({
+    where: { companyId: company.id, key: "uniplusPrintDeviceId" },
+    defaults: { companyId: company.id, key: "uniplusPrintDeviceId", value: "" },
+  });
 
  // Enviar mensagem ao aceitar ticket
     await Setting.findOrCreate({
