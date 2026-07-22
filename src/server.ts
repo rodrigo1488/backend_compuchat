@@ -25,7 +25,16 @@ import {
   logWhatsAppShardConfig
 } from "./utils/whatsappShard";
 
-const server = app.listen(process.env.PORT, async () => {
+const listenPort = Number(process.env.PORT) || 4000;
+const listenHost =
+  process.env.DEV_NETWORK === "true" || process.env.DEV_NETWORK === "1"
+    ? "0.0.0.0"
+    : undefined;
+
+const onListen = async () => {
+  if (listenHost) {
+    logger.info(`DEV_NETWORK ativo — backend escutando em 0.0.0.0:${listenPort}`);
+  }
   logWhatsAppShardConfig();
   let companies: Company[] = [];
   try {
@@ -91,8 +100,12 @@ const server = app.listen(process.env.PORT, async () => {
   server.timeout = 360_000;         // 6 min — prazo total do socket HTTP
   server.keepAliveTimeout = 365_000; // ligeiramente acima do timeout de pedido
 
-  logger.info(`Server started on port: ${process.env.PORT}`);
-});
+  logger.info(`Server started on port: ${listenPort}`);
+};
+
+const server = listenHost
+  ? app.listen(listenPort, listenHost, onListen)
+  : app.listen(listenPort, onListen);
 
 // Jobs por minuto unificados (transferência, lembretes, pedidos, impressão)
 cron.schedule("* * * * *", async () => {

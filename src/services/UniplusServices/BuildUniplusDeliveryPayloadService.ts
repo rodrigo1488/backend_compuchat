@@ -50,12 +50,18 @@ interface BuildRequest {
   contactName?: string | null;
   contactPhone?: string | null;
   fields?: FormField[];
-  answers?: Array<{ fieldId: number; answer: string }>;
+  answers?: Array<{ fieldId: number; answer: string | string[] }>;
 }
 
 const roundMoney = (n: number): number => Math.round(n * 100) / 100;
 
 const padHash = (uuid: string): string => uuid.replace(/-/g, "").padEnd(40, " ").slice(0, 40);
+
+function answerToString(answer: string | string[] | null | undefined): string {
+  if (answer == null) return "";
+  if (Array.isArray(answer)) return answer.map(String).filter(Boolean).join(", ").trim();
+  return String(answer).trim();
+}
 
 async function getSettingMap(companyId: number): Promise<Record<string, string>> {
   const rows = await Setting.findAll({
@@ -105,7 +111,7 @@ function normalizePaymentMethod(raw: string): string {
 
 function findAnswerByLabel(
   fields: FormField[] | undefined,
-  answers: Array<{ fieldId: number; answer: string }> | undefined,
+  answers: Array<{ fieldId: number; answer: string | string[] }> | undefined,
   patterns: RegExp[]
 ): string {
   if (!fields?.length || !answers?.length) return "";
@@ -113,9 +119,8 @@ function findAnswerByLabel(
     const label = String(field.label || "").toLowerCase();
     if (!patterns.some((p) => p.test(label))) continue;
     const ans = answers.find((a) => a.fieldId === field.id);
-    if (ans?.answer != null && String(ans.answer).trim() !== "") {
-      return String(ans.answer).trim();
-    }
+    const value = answerToString(ans?.answer);
+    if (value) return value;
   }
   return "";
 }

@@ -47,34 +47,50 @@ export const initIO = (httpServer: Server): SocketIO => {
     process.env.FRONTEND_URL
   ].filter(Boolean);
 
+  const isDevNetwork =
+    process.env.DEV_NETWORK === "true" ||
+    process.env.DEV_NETWORK === "1" ||
+    process.env.NODE_ENV === "development";
+
+  const isPrivateLanOrigin = (origin: string): boolean => {
+    try {
+      const { hostname } = new URL(origin);
+      if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+      if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+      if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+      if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
   logger.info(`🔧 Socket.IO CORS configurado com origins permitidas:`, allowedOrigins);
   logger.info(`🔧 FRONTEND_URL da env: ${process.env.FRONTEND_URL || "não definido"}`);
+  logger.info(`🔧 DEV_NETWORK: ${isDevNetwork ? "enabled" : "disabled"}`);
 
   io = new SocketIO(httpServer, {
     cors: {
-      origin: allowedOrigins.length > 0 
-        ? (origin, callback) => {
-            // Permitir requisições sem origin (mobile apps, Postman, etc)
-            if (!origin) {
-              return callback(null, true);
-            }
-            
-            // Verificar se a origin está na lista de permitidas
-            const isAllowed = allowedOrigins.some(allowed => {
-              return origin.includes(allowed) || origin === allowed;
-            });
-            
-            if (isAllowed) {
-              callback(null, true);
-            } else {
-              console.error(`❌ CORS bloqueado: ${origin} não está na lista de permitidas`);
-              console.error(`❌ Origins permitidas:`, allowedOrigins);
-              logger.warn(`❌ CORS bloqueado para origin: ${origin}`);
-              logger.warn(`❌ Origins permitidas: ${allowedOrigins.join(", ")}`);
-              callback(new Error("Not allowed by CORS"));
-            }
-          }
-        : true, // Se não houver origins configuradas, permitir todas (apenas para desenvolvimento)
+      origin: (origin, callback) => {
+        // Permitir requisições sem origin (mobile apps, Postman, etc)
+        if (!origin) {
+          return callback(null, true);
+        }
+
+        const isAllowed = allowedOrigins.some(allowed => {
+          return origin.includes(String(allowed)) || origin === allowed;
+        });
+
+        if (isAllowed || (isDevNetwork && isPrivateLanOrigin(origin))) {
+          return callback(null, true);
+        }
+
+        console.error(`❌ CORS bloqueado: ${origin} não está na lista de permitidas`);
+        console.error(`❌ Origins permitidas:`, allowedOrigins);
+        logger.warn(`❌ CORS bloqueado para origin: ${origin}`);
+        logger.warn(`❌ Origins permitidas: ${allowedOrigins.join(", ")}`);
+        callback(new Error("Not allowed by CORS"));
+      },
       credentials: true,
       methods: ["GET", "POST", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
