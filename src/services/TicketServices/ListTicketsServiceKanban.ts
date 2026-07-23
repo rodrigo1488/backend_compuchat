@@ -284,7 +284,7 @@ const ListTicketsServiceKanban = async ({
   });
 
   return {
-    tickets: tickets.map(t => sanitizeTicketContactPic(t)),
+    tickets: tickets.map(t => sanitizeTicketContactPic(t.toJSON() as Ticket)),
     count,
     hasMore: count > offset + tickets.length
   };

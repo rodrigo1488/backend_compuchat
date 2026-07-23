@@ -64,9 +64,15 @@ const UpdateQueueIntegrationService = async ({
     type,
     name,
     projectName,
-    jsonContent,
-    language,
-    urlN8N,
+    jsonContent:
+      jsonContent != null && String(jsonContent).trim() !== ""
+        ? String(jsonContent)
+        : integration.jsonContent || "{}",
+    language:
+      language && String(language).trim()
+        ? String(language).trim()
+        : integration.language || "pt-BR",
+    urlN8N: urlN8N != null ? urlN8N : integration.urlN8N,
     companyId,
     typebotExpires,
     typebotKeywordFinish,

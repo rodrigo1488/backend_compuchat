@@ -37,6 +37,23 @@ const CreateQueueIntegrationService = async ({
   typebotKeywordRestart,
   typebotRestartMessage
 }: Request): Promise<QueueIntegrations> => {
+  const resolvedLanguage =
+    language && String(language).trim() ? String(language).trim() : "pt-BR";
+
+  let resolvedJsonContent =
+    jsonContent != null && String(jsonContent).trim() !== ""
+      ? String(jsonContent)
+      : "";
+
+  // flowbuilder / n8n / webhook exigem jsonContent NOT NULL no Postgres
+  if (!resolvedJsonContent) {
+    if (type === "flowbuilder") {
+      resolvedJsonContent = JSON.stringify({});
+    } else {
+      resolvedJsonContent = "{}";
+    }
+  }
+
   const schema = Yup.object().shape({
     name: Yup.string()
       .required()
@@ -55,7 +72,15 @@ const CreateQueueIntegrationService = async ({
   });
 
   try {
-    await schema.validate({ type, name, projectName, jsonContent, language, urlN8N, companyId });
+    await schema.validate({
+      type,
+      name,
+      projectName,
+      jsonContent: resolvedJsonContent,
+      language: resolvedLanguage,
+      urlN8N,
+      companyId
+    });
   } catch (err) {
     throw new AppError(err.message);
   }
@@ -66,9 +91,9 @@ const CreateQueueIntegrationService = async ({
       type,
       name,
       projectName,
-      jsonContent,
-      language,
-      urlN8N,
+      jsonContent: resolvedJsonContent,
+      language: resolvedLanguage,
+      urlN8N: urlN8N || "",
       companyId,
       typebotExpires,
       typebotKeywordFinish,

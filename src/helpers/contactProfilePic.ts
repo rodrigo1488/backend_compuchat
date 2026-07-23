@@ -56,14 +56,20 @@ export { fallbackProfilePicUrl };
 export const sanitizeTicketContactPic = <T extends { contact?: { profilePicUrl?: string | null } }>(
   ticket: T
 ): T => {
-  if (!ticket?.contact?.profilePicUrl) {
-    return ticket;
+  const plain: any =
+    ticket && typeof (ticket as any).toJSON === "function"
+      ? (ticket as any).toJSON()
+      : ticket;
+
+  if (!plain?.contact?.profilePicUrl) {
+    return plain;
   }
+
   return {
-    ...ticket,
+    ...plain,
     contact: {
-      ...ticket.contact,
-      profilePicUrl: sanitizeContactProfilePicUrl(ticket.contact.profilePicUrl)
+      ...plain.contact,
+      profilePicUrl: sanitizeContactProfilePicUrl(plain.contact.profilePicUrl)
     }
   };
 };

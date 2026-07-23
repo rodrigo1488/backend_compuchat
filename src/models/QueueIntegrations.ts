@@ -31,12 +31,14 @@ class QueueIntegrations extends Model<QueueIntegrations> {
     @Column(DataType.TEXT)
     projectName: string;
     
+    @Default("{}")
     @Column(DataType.TEXT)
     jsonContent: string;
 
     @Column(DataType.TEXT)
     urlN8N: string;
 
+    @Default("pt-BR")
     @Column(DataType.TEXT)
     language: string;
 
