@@ -68,11 +68,21 @@ const FindOrCreateTicketService = async (
       // Compuchat (u200e/u200c) — não reabrir o ticket para evitar loop de bots B2B.
       return await ShowTicketService(ticket.id, companyId);
     }
+    // Resetar estado de integração/flow para o FlowBuilder poder iniciar de novo
     await ticket.update({
       queueId: null,
       userId: null,
       status: "pending",
-      sessionStartedAt: new Date()
+      sessionStartedAt: new Date(),
+      useIntegration: false,
+      integrationId: whatsapp?.integrationId || null,
+      promptId: whatsapp?.promptId || null,
+      flowWebhook: false,
+      lastFlowId: null,
+      hashFlowId: null,
+      flowStopped: null,
+      chatbot: false,
+      queueOptionId: null
     });
   }
 

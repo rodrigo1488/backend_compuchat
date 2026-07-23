@@ -9,6 +9,7 @@ import Contact from "../../models/Contact";
 import { SendMessage } from "../../helpers/SendMessage";
 import GetDefaultWhatsApp from "../../helpers/GetDefaultWhatsApp";
 import Ticket from "../../models/Ticket";
+import Whatsapp from "../../models/Whatsapp";
 import SendWhatsAppMediaFlow, {
   typeSimulation
 } from "../WbotServices/SendWhatsAppMediaFlow";
@@ -145,9 +146,40 @@ export const ActionsWebhookService = async (
     }
 
     const lengthLoop = nodes.length;
-    const whatsapp = await GetDefaultWhatsApp(companyId);
 
-    if (whatsapp.status !== "CONNECTED") {
+    // Usar a conexão do ticket/fluxo (whatsappId), não a default da empresa.
+    // GetDefaultWhatsApp fazia o flow "não startar" ou responder na conexão errada.
+    let whatsapp = whatsappId
+      ? await Whatsapp.findByPk(whatsappId)
+      : null;
+
+    if (!whatsapp || whatsapp.status !== "CONNECTED") {
+      logger.warn({
+        msg: "ActionsWebhookService: conexão do fluxo indisponível, tentando fallback",
+        whatsappId,
+        companyId,
+        status: whatsapp?.status
+      });
+      try {
+        whatsapp = await GetDefaultWhatsApp(companyId);
+      } catch (err) {
+        logger.error({
+          msg: "ActionsWebhookService: nenhuma conexão WhatsApp disponível",
+          whatsappId,
+          companyId,
+          err
+        });
+        return;
+      }
+    }
+
+    if (!whatsapp || whatsapp.status !== "CONNECTED") {
+      logger.warn({
+        msg: "ActionsWebhookService: WhatsApp não CONNECTED — fluxo abortado",
+        whatsappId: whatsapp?.id,
+        companyId,
+        status: whatsapp?.status
+      });
       return;
     }
 
@@ -156,6 +188,12 @@ export const ActionsWebhookService = async (
     let execFn = "";
 
     let ticket = null;
+
+    if (idTicket) {
+      ticket = await Ticket.findOne({
+        where: { id: idTicket, companyId }
+      });
+    }
 
     let noAlterNext = false;
 

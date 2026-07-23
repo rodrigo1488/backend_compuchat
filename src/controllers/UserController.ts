@@ -14,6 +14,7 @@ import SimpleListService from "../services/UserServices/SimpleListService";
 import ListContactsByUserService from "../services/ContactServices/ListContactsByUserService";
 import User from "../models/User";
 import SetLanguageCompanyService from "../services/UserServices/SetLanguageCompanyService";
+import CacheInvalidationService from "../services/CacheServices/CacheInvalidationService";
 
 type IndexQuery = {
   searchParam: string;
@@ -346,7 +347,11 @@ export const uploadAvatar = async (req: Request, res: Response): Promise<Respons
     throw new AppError("ERR_NO_FILE", 400);
   }
 
-  const user = await ShowUserService(userId);
+  const user = await User.findByPk(userId);
+
+  if (!user) {
+    throw new AppError("ERR_NO_USER_FOUND", 404);
+  }
 
   // Verificar se o usuário pertence à mesma empresa ou se é o próprio usuário
   if (user.companyId !== companyId && +requestUserId !== user.id) {
@@ -361,6 +366,8 @@ export const uploadAvatar = async (req: Request, res: Response): Promise<Respons
   const avatarPath = `users/${file.filename}`;
 
   await user.update({ avatar: avatarPath });
+
+  void CacheInvalidationService.onUserChanged(user.id, user.companyId);
 
   const io = getIO();
   io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-user`, {

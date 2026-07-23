@@ -1,10 +1,10 @@
 import * as Yup from "yup";
 
 import AppError from "../../errors/AppError";
-import ShowUserService from "./ShowUserService";
 import Company from "../../models/Company";
 import CacheInvalidationService from "../CacheServices/CacheInvalidationService";
 import User from "../../models/User";
+import Queue from "../../models/Queue";
 import { sanitizePageAccess } from "../../constants/pagePermissions";
 import ListCompanyModulesService from "../CompanyModuleServices/ListCompanyModulesService";
 import {
@@ -46,12 +46,35 @@ const UpdateUserService = async ({
   companyId,
   requestUserId
 }: Request): Promise<Response | undefined> => {
-  const user = await ShowUserService(userId);
+  // ShowUserService devolve objeto plano (cache) — para mutação precisamos do Model.
+  const user = await User.findByPk(userId, {
+    include: [
+      { model: Queue, as: "queues", attributes: ["id", "name", "color"] },
+      { model: Company, as: "company" }
+    ]
+  });
+
+  if (!user) {
+    throw new AppError("ERR_NO_USER_FOUND", 404);
+  }
 
   const requestUser = await User.findByPk(requestUserId);
 
-  if (requestUser.super === false && userData.companyId !== companyId) {
-    throw new AppError("O usuário não pertence à esta empresa");
+  if (!requestUser) {
+    throw new AppError("ERR_NO_PERMISSION", 403);
+  }
+
+  if (!requestUser.super) {
+    if (Number(user.companyId) !== Number(companyId)) {
+      throw new AppError("O usuário não pertence à esta empresa");
+    }
+    if (
+      userData.companyId !== undefined &&
+      userData.companyId !== null &&
+      Number(userData.companyId) !== Number(companyId)
+    ) {
+      throw new AppError("O usuário não pertence à esta empresa");
+    }
   }
 
   const schema = Yup.object().shape({
@@ -60,7 +83,7 @@ const UpdateUserService = async ({
     profile: Yup.string(),
     password: Yup.string(),
     allTicket: Yup.string(),
-    defaultRoute: Yup.string().nullable(),
+    defaultRoute: Yup.string().nullable()
   });
 
   const {
@@ -68,7 +91,7 @@ const UpdateUserService = async ({
     password,
     profile,
     name,
-    queueIds = [],
+    queueIds,
     whatsappId,
     allTicket,
     avatar,
@@ -83,39 +106,51 @@ const UpdateUserService = async ({
   }
 
   const nextProfile = profile !== undefined ? profile : user.profile;
-  const companyModules = await ListCompanyModulesService(companyId);
+  const companyModules = await ListCompanyModulesService(
+    Number(user.companyId) || companyId
+  );
   const moduleFlags = getModuleFlagsFromSlugs(companyModules);
 
   const sanitizePageAccessForCompany = (
     input: { granted?: string[]; denied?: string[] } | null | undefined
   ) => filterPageAccessForModules(sanitizePageAccess(input), moduleFlags);
 
-  const updateData: Record<string, unknown> = {
-    email,
-    password,
-    profile,
-    name,
-    whatsappId: whatsappId || null,
-    allTicket,
-    avatar: avatar !== undefined ? avatar : user.avatar,
-    defaultRoute:
-      defaultRoute !== undefined ? defaultRoute || null : user.defaultRoute
-  };
+  const updateData: Record<string, unknown> = {};
+
+  if (email !== undefined) updateData.email = email;
+  if (password) updateData.password = password;
+  if (profile !== undefined) updateData.profile = profile;
+  if (name !== undefined) updateData.name = name;
+  if (whatsappId !== undefined) {
+    updateData.whatsappId = whatsappId || null;
+  }
+  if (allTicket !== undefined) updateData.allTicket = allTicket;
+  if (avatar !== undefined) updateData.avatar = avatar;
+  if (defaultRoute !== undefined) {
+    updateData.defaultRoute = defaultRoute || null;
+  }
 
   if (pageAccessInput !== undefined) {
     updateData.pageAccess =
-      nextProfile === "admin" ? null : sanitizePageAccessForCompany(pageAccessInput);
+      nextProfile === "admin"
+        ? null
+        : sanitizePageAccessForCompany(pageAccessInput);
   } else if (profile === "admin") {
     updateData.pageAccess = null;
   }
 
   await user.update(updateData);
 
-  await user.$set("queues", queueIds);
+  if (Array.isArray(queueIds)) {
+    await user.$set("queues", queueIds);
+  }
 
-  await user.reload();
-
-  const company = await Company.findByPk(user.companyId);
+  await user.reload({
+    include: [
+      { model: Queue, as: "queues", attributes: ["id", "name", "color"] },
+      { model: Company, as: "company" }
+    ]
+  });
 
   const serializedUser = {
     id: user.id,
@@ -123,11 +158,11 @@ const UpdateUserService = async ({
     email: user.email,
     profile: user.profile,
     companyId: user.companyId,
-    company,
+    company: user.company,
     queues: user.queues,
     avatar: user.avatar,
     defaultRoute: user.defaultRoute ?? null,
-    pageAccess: user.pageAccess ?? null,
+    pageAccess: user.pageAccess ?? null
   };
 
   void CacheInvalidationService.onUserChanged(user.id, user.companyId);

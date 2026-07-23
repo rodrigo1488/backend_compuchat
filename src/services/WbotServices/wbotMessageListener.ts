@@ -109,7 +109,6 @@ import { IConnections, INodes } from "../WebhookService/DispatchWebHookService";
 import { ActionsWebhookService } from "../WebhookService/ActionsWebhookService";
 import { WebhookModel } from "../../models/Webhook";
 
-import { differenceInMilliseconds } from "date-fns";
 import Whatsapp from "../../models/Whatsapp";
 import fs from "node:fs";
 import request from "request";
@@ -2916,6 +2915,80 @@ const handleChartbot = async (
   }
 };
 
+const parseIntegrationFlowId = (
+  queueIntegration: QueueIntegrations
+): number | null => {
+  try {
+    const raw = queueIntegration?.jsonContent as unknown;
+    if (!raw) return null;
+    const parsed =
+      typeof raw === "string" ? JSON.parse(raw || "{}") : (raw as any);
+    const id = Number(parsed?.flowId);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+};
+
+const startFlowBuilderForTicket = async (
+  flowId: number | null | undefined,
+  whatsappId: number,
+  ticket: Ticket,
+  contact: Contact,
+  msg?: proto.IWebMessageInfo
+): Promise<boolean> => {
+  if (!flowId) {
+    return false;
+  }
+
+  const flow = await FlowBuilderModel.findOne({
+    where: { id: flowId }
+  });
+
+  if (!flow?.flow || !(flow.flow as any).nodes?.length) {
+    logger.warn({
+      msg: "FlowBuilder: fluxo não encontrado ou sem nodes",
+      flowId,
+      ticketId: ticket.id
+    });
+    return false;
+  }
+
+  const nodes: INodes[] = (flow.flow as any)["nodes"];
+  const connections: IConnections[] = (flow.flow as any)["connections"];
+  const mountDataContact = {
+    number: contact.number,
+    name: contact.name,
+    email: contact.email
+  };
+
+  logger.info({
+    msg: "FlowBuilder: iniciando fluxo",
+    flowId,
+    ticketId: ticket.id,
+    whatsappId,
+    firstNodeId: nodes[0]?.id
+  });
+
+  await ActionsWebhookService(
+    whatsappId,
+    flowId,
+    ticket.companyId,
+    nodes,
+    connections,
+    nodes[0].id,
+    null,
+    "",
+    "",
+    null,
+    ticket.id,
+    mountDataContact,
+    msg
+  );
+
+  return true;
+};
+
 const flowbuilderIntegration = async (
   msg: proto.IWebMessageInfo,
   wbot: Session,
@@ -2925,9 +2998,7 @@ const flowbuilderIntegration = async (
   contact: Contact,
   isFirstMsg?: Ticket,
   isTranfered?: boolean
-) => {
-  const io = getIO();
-  const quotedMsg = await verifyQuotedMessage(msg);
+): Promise<boolean> => {
   const body = getBodyMessage(msg);
 
   // 🔍 LOG DETALHADO - INÍCIO
@@ -2953,7 +3024,8 @@ const flowbuilderIntegration = async (
     flowIdWelcome: whatsappFlow?.flowIdWelcome,
     flowIdNotPhrase: whatsappFlow?.flowIdNotPhrase,
     hasFlowWelcome: !!whatsappFlow?.flowIdWelcome,
-    hasFlowNotPhrase: !!whatsappFlow?.flowIdNotPhrase
+    hasFlowNotPhrase: !!whatsappFlow?.flowIdNotPhrase,
+    integrationFlowId: parseIntegrationFlowId(queueIntegration)
   });
 
   /*
@@ -2985,12 +3057,12 @@ const flowbuilderIntegration = async (
   if (!msg.key.fromMe) {
     await ticket.reload({ attributes: ["status"] });
     if (ticket.status === "rating") {
-      return;
+      return false;
     }
   }
 
   if (msg.key.fromMe) {
-    return;
+    return false;
   }
 
   const whatsapp = await ShowWhatsAppService(wbot.id!, companyId);
@@ -3001,180 +3073,24 @@ const flowbuilderIntegration = async (
     }
   });
 
-  // Welcome flow
-  if (
-    !isFirstMsg &&
-    listPhrase.filter(item => item.phrase.toLowerCase() === body.toLowerCase()).length === 0
-  ) {
-    const flow = await FlowBuilderModel.findOne({
-      where: {
-        id: whatsapp.flowIdWelcome
-      }
-    });
-    if (flow) {
-      const nodes: INodes[] = flow.flow["nodes"];
-      const connections: IConnections[] = flow.flow["connections"];
-
-      const mountDataContact = {
-        number: contact.number,
-        name: contact.name,
-        email: contact.email
-      };
-
-      // const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
-
-      // // Enviar as variáveis como parte da mensagem para o Worker
-      // console.log('DISPARO1')
-      // const data = {
-      //   idFlowDb: flowUse.flowIdWelcome,
-      //   companyId: ticketUpdate.companyId,
-      //   nodes: nodes,
-      //   connects: connections,
-      //   nextStage: flow.flow["nodes"][0].id,
-      //   dataWebhook: null,
-      //   details: "",
-      //   hashWebhookId: "",
-      //   pressKey: null,
-      //   idTicket: ticketUpdate.id,
-      //   numberPhrase: mountDataContact
-      // };
-      // worker.postMessage(data);
-      // worker.on("message", message => {
-      //   console.log(`Mensagem do worker: ${message}`);
-      // });
-
-      await ActionsWebhookService(
-        whatsapp.id,
-        whatsapp.flowIdWelcome,
-        ticket.companyId,
-        nodes,
-        connections,
-        flow.flow["nodes"][0].id,
-        null,
-        "",
-        "",
-        null,
-        ticket.id,
-        mountDataContact,
-        msg
-      );
-    }
-  }
-
-  const dateTicket = new Date(
-    isFirstMsg?.updatedAt ? isFirstMsg.updatedAt : ""
+  const bodyNormalized = (body || "").toLowerCase();
+  const matchedCampaign = listPhrase.find(
+    item => (item.phrase || "").toLowerCase() === bodyNormalized
   );
 
-  const dateNow = new Date();
-  const diferencaEmMilissegundos = Math.abs(
-    differenceInMilliseconds(dateTicket, dateNow)
-  );
-  //const seisHorasEmMilissegundos = 21600000;
-  const seisHorasEmMilissegundos = 0;
-
-  logger.info(listPhrase.filter(item => item.phrase.toLowerCase()));
-  logger.info(isFirstMsg);
-
-  // Flow with not found phrase
-  if (
-    listPhrase.filter(item => item.phrase.toLowerCase() === body.toLowerCase()).length === 0 &&
-    diferencaEmMilissegundos >= seisHorasEmMilissegundos &&
-    isFirstMsg
-  ) {
-    console.log("2427", "handleMessageIntegration");
-
-    const flow = await FlowBuilderModel.findOne({
-      where: {
-        id: whatsapp.flowIdNotPhrase
-      }
-    });
-
-    if (flow) {
-      const nodes: INodes[] = flow.flow["nodes"];
-      const connections: IConnections[] = flow.flow["connections"];
-
-      const mountDataContact = {
-        number: contact.number,
-        name: contact.name,
-        email: contact.email
-      };
-
-      await ActionsWebhookService(
-        whatsapp.id,
-        whatsapp.flowIdNotPhrase,
-        ticket.companyId,
-        nodes,
-        connections,
-        flow.flow["nodes"][0].id,
-        null,
-        "",
-        "",
-        null,
-        ticket.id,
-        mountDataContact,
-        msg
-      );
-    }
-  }
-
-  // Campaign fluxo
-  if (listPhrase.filter(item => item.phrase.toLowerCase() === body.toLowerCase()).length !== 0) {
-
-    const flowDispar = listPhrase.filter(item => item.phrase.toLowerCase() === body.toLowerCase())[0];
-    const flow = await FlowBuilderModel.findOne({
-      where: {
-        id: flowDispar.flowId
-      }
-    });
-    const nodes: INodes[] = flow.flow["nodes"];
-    const connections: IConnections[] = flow.flow["connections"];
-
-    const mountDataContact = {
-      number: contact.number,
-      name: contact.name,
-      email: contact.email
-    };
-
-    //const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
-
-    //console.log('DISPARO3')
-    // Enviar as variáveis como parte da mensagem para o Worker
-    // const data = {
-    //   idFlowDb: flowDispar.flowId,
-    //   companyId: ticketUpdate.companyId,
-    //   nodes: nodes,
-    //   connects: connections,
-    //   nextStage: flow.flow["nodes"][0].id,
-    //   dataWebhook: null,
-    //   details: "",
-    //   hashWebhookId: "",
-    //   pressKey: null,
-    //   idTicket: ticketUpdate.id,
-    //   numberPhrase: mountDataContact
-    // };
-    // worker.postMessage(data);
-
-    // worker.on("message", message => {
-    //   console.log(`Mensagem do worker: ${message}`);
-    // });
-
-    await ActionsWebhookService(
+  // Campanha por frase tem prioridade
+  if (matchedCampaign) {
+    const started = await startFlowBuilderForTicket(
+      matchedCampaign.flowId,
       whatsapp.id,
-      flowDispar.flowId,
-      ticket.companyId,
-      nodes,
-      connections,
-      flow.flow["nodes"][0].id,
-      null,
-      "",
-      "",
-      null,
-      ticket.id,
-      mountDataContact
+      ticket,
+      contact,
+      msg
     );
-    return;
+    return started;
   }
 
+  // Continuação de fluxo já em andamento (resposta a pergunta / webhook)
   if (ticket.flowWebhook) {
     const webhook = await WebhookModel.findOne({
       where: {
@@ -3189,104 +3105,101 @@ const flowbuilderIntegration = async (
           id: webhook.config["details"].idFlow
         }
       });
-      const nodes: INodes[] = flow.flow["nodes"];
-      const connections: IConnections[] = flow.flow["connections"];
+      if (flow && (flow.flow as any)?.nodes?.length) {
+        const nodes: INodes[] = (flow.flow as any)["nodes"];
+        const connections: IConnections[] = (flow.flow as any)["connections"];
 
-      // const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
+        await ActionsWebhookService(
+          whatsapp.id,
+          webhook.config["details"].idFlow,
+          ticket.companyId,
+          nodes,
+          connections,
+          ticket.lastFlowId,
+          ticket.dataWebhook,
+          webhook.config["details"],
+          ticket.hashFlowId,
+          body,
+          ticket.id
+        );
+        return true;
+      }
+    }
 
-      // console.log('DISPARO4')
-      // // Enviar as variáveis como parte da mensagem para o Worker
-      // const data = {
-      //   idFlowDb: webhook.config["details"].idFlow,
-      //   companyId: ticketUpdate.companyId,
-      //   nodes: nodes,
-      //   connects: connections,
-      //   nextStage: ticketUpdate.lastFlowId,
-      //   dataWebhook: ticketUpdate.dataWebhook,
-      //   details: webhook.config["details"],
-      //   hashWebhookId: ticketUpdate.hashFlowId,
-      //   pressKey: body,
-      //   idTicket: ticketUpdate.id,
-      //   numberPhrase: ""
-      // };
-      // worker.postMessage(data);
-
-      // worker.on("message", message => {
-      //   console.log(`Mensagem do worker: ${message}`);
-      // });
-
-      await ActionsWebhookService(
-        whatsapp.id,
-        webhook.config["details"].idFlow,
-        ticket.companyId,
-        nodes,
-        connections,
-        ticket.lastFlowId,
-        ticket.dataWebhook,
-        webhook.config["details"],
-        ticket.hashFlowId,
-        body,
-        ticket.id
-      );
-    } else {
+    if (ticket.flowStopped && ticket.lastFlowId) {
       const flow = await FlowBuilderModel.findOne({
         where: {
           id: ticket.flowStopped
         }
       });
 
-      const nodes: INodes[] = flow.flow["nodes"];
-      const connections: IConnections[] = flow.flow["connections"];
+      if (flow && (flow.flow as any)?.nodes?.length) {
+        const nodes: INodes[] = (flow.flow as any)["nodes"];
+        const connections: IConnections[] = (flow.flow as any)["connections"];
 
-      if (!ticket.lastFlowId) {
-        return;
+        const mountDataContact = {
+          number: contact.number,
+          name: contact.name,
+          email: contact.email
+        };
+
+        await ActionsWebhookService(
+          whatsapp.id,
+          parseInt(ticket.flowStopped, 10),
+          ticket.companyId,
+          nodes,
+          connections,
+          ticket.lastFlowId,
+          null,
+          "",
+          "",
+          body,
+          ticket.id,
+          mountDataContact,
+          msg
+        );
+        return true;
       }
-
-      const mountDataContact = {
-        number: contact.number,
-        name: contact.name,
-        email: contact.email
-      };
-
-      // const worker = new Worker("./src/services/WebhookService/WorkerAction.ts");
-
-      // console.log('DISPARO5')
-      // // Enviar as variáveis como parte da mensagem para o Worker
-      // const data = {
-      //   idFlowDb: parseInt(ticketUpdate.flowStopped),
-      //   companyId: ticketUpdate.companyId,
-      //   nodes: nodes,
-      //   connects: connections,
-      //   nextStage: ticketUpdate.lastFlowId,
-      //   dataWebhook: null,
-      //   details: "",
-      //   hashWebhookId: "",
-      //   pressKey: body,
-      //   idTicket: ticketUpdate.id,
-      //   numberPhrase: mountDataContact
-      // };
-      // worker.postMessage(data);
-      // worker.on("message", message => {
-      //   console.log(`Mensagem do worker: ${message}`);
-      // });
-
-      await ActionsWebhookService(
-        whatsapp.id,
-        parseInt(ticket.flowStopped),
-        ticket.companyId,
-        nodes,
-        connections,
-        ticket.lastFlowId,
-        null,
-        "",
-        "",
-        body,
-        ticket.id,
-        mountDataContact,
-        msg
-      );
     }
   }
+
+  // Contato novo (sem ticket anterior além do atual) → preferir boas-vindas
+  const previousTickets = await Ticket.count({
+    where: {
+      contactId: ticket.contactId,
+      companyId: ticket.companyId,
+      whatsappId: whatsapp.id,
+      id: { [Op.ne]: ticket.id }
+    }
+  });
+  const isNewContactOnConnection = previousTickets === 0;
+
+  const integrationFlowId = parseIntegrationFlowId(queueIntegration);
+  const resolvedFlowId = isNewContactOnConnection
+    ? whatsapp.flowIdWelcome ||
+      whatsapp.flowIdNotPhrase ||
+      integrationFlowId
+    : whatsapp.flowIdNotPhrase ||
+      whatsapp.flowIdWelcome ||
+      integrationFlowId;
+
+  if (!resolvedFlowId) {
+    logger.warn({
+      msg: "FlowBuilder: nenhum flowId na conexão (Welcome/Padrão) nem em jsonContent da integração",
+      ticketId: ticket.id,
+      whatsappId: whatsapp.id,
+      integrationId: queueIntegration.id
+    });
+    return false;
+  }
+
+  return startFlowBuilderForTicket(
+    resolvedFlowId,
+    whatsapp.id,
+    ticket,
+    contact,
+    msg
+  );
 };
 
 export const handleMessageIntegration = async (
@@ -3299,7 +3212,7 @@ export const handleMessageIntegration = async (
   whatsapp: Whatsapp = null,
   contact: Contact = null,
   isFirstMsg: Ticket | null = null,
-): Promise<void> => {
+): Promise<boolean> => {
   const msgType = getTypeMessage(msg);
 
   logger.info('🔗 === HANDLE MESSAGE INTEGRATION ===', {
@@ -3334,10 +3247,12 @@ export const handleMessageIntegration = async (
         throw new Error(error);
       }
     }
+    return true;
   } else if (queueIntegration.type === "typebot") {
     logger.info('🤖 Processando integração Typebot');
     // await typebots(ticket, msg, wbot, queueIntegration);
     await typebotListener({ ticket, msg, wbot, typebot: queueIntegration });
+    return true;
   } else if (queueIntegration.type === "flowbuilder") {
     logger.info('🌊 Processando integração FlowBuilder', {
       isMenu,
@@ -3347,7 +3262,7 @@ export const handleMessageIntegration = async (
 
     if (!isMenu) {
       logger.info('✅ FlowBuilder: Modo DIRETO (não é menu)');
-      await flowbuilderIntegration(
+      return flowbuilderIntegration(
         msg,
         wbot,
         companyId,
@@ -3377,12 +3292,15 @@ export const handleMessageIntegration = async (
           contact,
           isFirstMsg
         );
+        return true;
       } else {
         logger.debug('FlowBuilderQueue não chamado - condições não atendidas');
+        return false;
       }
     }
   } else {
     logger.warn('⚠️ Tipo de integração desconhecido:', queueIntegration.type);
+    return false;
   }
 };
 
@@ -3962,7 +3880,7 @@ const handleMessage = async (
         companyId
       );
 
-      await handleMessageIntegration(
+      const flowStarted = await handleMessageIntegration(
         msg,
         wbot,
         integrations,
@@ -3971,11 +3889,12 @@ const handleMessage = async (
         isMenu
       );
 
-      // ✅ Marcar ticket como usando integração para evitar reexecução
-      await ticket.update({
-        useIntegration: true,
-        integrationId: integrations.id
-      });
+      if (flowStarted) {
+        await ticket.update({
+          useIntegration: true,
+          integrationId: integrations.id
+        });
+      }
 
       return;
     }
@@ -4141,7 +4060,7 @@ const handleMessage = async (
         integrationName: integrations.name
       });
 
-      await handleMessageIntegration(
+      const flowStarted = await handleMessageIntegration(
         msg,
         wbot,
         integrations,
@@ -4153,16 +4072,24 @@ const handleMessage = async (
         isFirstMsg
       );
 
-      // ✅ Marcar ticket como usando integração para evitar reexecução
-      await ticket.update({
-        useIntegration: true,
-        integrationId: integrations.id
-      });
+      // Só marca useIntegration se o fluxo realmente iniciou — senão a próxima
+      // mensagem ainda pode tentar (ex.: flowId ainda não configurado).
+      if (flowStarted) {
+        await ticket.update({
+          useIntegration: true,
+          integrationId: integrations.id
+        });
 
-      logger.info('✅ FlowBuilder executado! Ticket marcado como useIntegration: true', {
-        ticketId: ticket.id,
-        integrationId: integrations.id
-      });
+        logger.info('✅ FlowBuilder executado! Ticket marcado como useIntegration: true', {
+          ticketId: ticket.id,
+          integrationId: integrations.id
+        });
+      } else {
+        logger.warn('⚠️ FlowBuilder não iniciou — useIntegration permanece false', {
+          ticketId: ticket.id,
+          integrationId: integrations.id
+        });
+      }
     } else {
       logger.debug('FlowBuilder NAO foi acionado. Motivos:', {
         bloqueadoPor: {
