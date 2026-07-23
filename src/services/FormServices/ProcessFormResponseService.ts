@@ -12,10 +12,10 @@ import SendWhatsAppMessage from "../WbotServices/SendWhatsAppMessage";
 import AppError from "../../errors/AppError";
 import PrintDevice from "../../models/PrintDevice";
 import CreateAndDispatchPrintJobService from "../PrintJobService/CreateAndDispatchPrintJobService";
-import BuildUniplusDeliveryPayloadService, {
-  isUniplusEnabledForCompany,
-  getUniplusPrintDeviceId,
-} from "../UniplusServices/BuildUniplusDeliveryPayloadService";
+import BuildUniplusDeliveryPayloadService from "../UniplusServices/BuildUniplusDeliveryPayloadService";
+import ValidateUniplusPreflightService from "../UniplusServices/ValidateUniplusPreflightService";
+import CreateOrReuseUniplusJobService from "../UniplusServices/CreateOrReuseUniplusJobService";
+import { patchFormResponseUniplusMetadata } from "../UniplusServices/patchFormResponseUniplusMetadata";
 import OcuparMesaService from "../MesaServices/OcuparMesaService";
 import Mesa from "../../models/Mesa";
 import Contact from "../../models/Contact";
@@ -1004,63 +1004,67 @@ const ProcessFormResponseService = async ({
     }
   }
 
-  // UniPlus: despacha job irmão via PrintAgent (event uniplus_job)
+  // UniPlus: best-effort — nunca bloqueia o pedido Compuchat
   if (
     isMenuForm &&
     menuItems &&
     menuItems.length > 0 &&
-    ((response.metadata || metadata || {}) as any)?.orderType === "delivery"
+    ((response.metadata || metadata || {}) as any)?.orderType === "delivery" &&
+    (form.settings as any)?.uniplus?.enabled === true
   ) {
     try {
-      const formUniplus = (form.settings as any)?.uniplus;
-      if (formUniplus?.enabled === true) {
-        if (await isUniplusEnabledForCompany(form.companyId)) {
-          const devicePk = await getUniplusPrintDeviceId(form.companyId);
-          if (devicePk) {
-            const printDevice = await PrintDevice.findOne({
-              where: { id: devicePk, companyId: form.companyId },
-            });
-            if (printDevice) {
-              const allMenuItems =
-                normalizedMenuItems && normalizedMenuItems.length > 0
-                  ? normalizedMenuItems
-                  : menuItems;
-              const payload = await BuildUniplusDeliveryPayloadService({
-                companyId: form.companyId,
-                form,
-                response,
-                menuItems: allMenuItems,
-                contactName,
-                contactPhone,
-                fields,
-                answers,
-              });
-              await CreateAndDispatchPrintJobService({
-                companyId: form.companyId,
-                deviceId: printDevice.deviceId,
-                formId: form.id,
-                formResponseId: response.id,
-                conteudo: payload,
-                tipo: "uniplus",
-                externalRef: payload.protocol,
-              });
-            } else {
-              console.warn(
-                `ProcessFormResponseService: UniPlus PrintDevice not found id=${devicePk}`
-              );
-            }
-          } else {
-            console.warn(
-              "ProcessFormResponseService: UniPlus enabled but uniplusPrintDeviceId not set"
-            );
-          }
+      const allMenuItems =
+        normalizedMenuItems && normalizedMenuItems.length > 0
+          ? normalizedMenuItems
+          : menuItems;
+      const orderType = String(
+        ((response.metadata || metadata || {}) as any)?.orderType || ""
+      );
+      const metaNow = (response.metadata || {}) as Record<string, unknown>;
+      if (metaNow.uniplusContaId) {
+        // já sincronizado
+      } else {
+        const preflight = await ValidateUniplusPreflightService({
+          companyId: form.companyId,
+          form,
+          menuItems: allMenuItems,
+          orderType,
+        });
+        if (!preflight.ok) {
+          await patchFormResponseUniplusMetadata(response.id, {
+            uniplusStatus: "skipped_preflight",
+            uniplusLastError: `${preflight.code}: ${preflight.message}`,
+            uniplusLastErrorAt: new Date().toISOString(),
+          });
+        } else {
+          const payload = await BuildUniplusDeliveryPayloadService({
+            companyId: form.companyId,
+            form,
+            response,
+            menuItems: allMenuItems,
+            contactName,
+            contactPhone,
+            fields,
+            answers,
+          });
+          await CreateOrReuseUniplusJobService({
+            companyId: form.companyId,
+            deviceId: preflight.deviceId!,
+            formId: form.id,
+            formResponseId: response.id,
+            conteudo: payload,
+            externalRef: payload.protocol,
+          });
         }
       }
     } catch (err: any) {
-      console.error(
-        "Error creating UniPlus job:",
-        err?.message || err
-      );
+      const msg = err?.message || String(err);
+      console.error("Error creating UniPlus job:", msg);
+      await patchFormResponseUniplusMetadata(response.id, {
+        uniplusStatus: "error",
+        uniplusLastError: msg,
+        uniplusLastErrorAt: new Date().toISOString(),
+      });
     }
   }
 

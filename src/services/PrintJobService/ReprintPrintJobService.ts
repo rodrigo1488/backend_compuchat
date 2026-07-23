@@ -56,6 +56,18 @@ export async function reprintFromSourceJob(
     );
   }
 
+  // UniPlus já sincronizado: não cria job duplicado cego
+  if (
+    (source.tipo || "print") === "uniplus" &&
+    source.status === "done" &&
+    source.uniplusContaId
+  ) {
+    throw new AppError(
+      `Pedido já sincronizado no UniPlus (conta=${source.uniplusContaId}). Use reprocessar UniPlus se necessário.`,
+      409
+    );
+  }
+
   const form = await Form.findOne({
     where: { id: source.formId, companyId }
   });
@@ -153,10 +165,22 @@ export async function ReprintLastPrintJobForFormResponse({
     throw new AppError("Resposta não encontrada.", 404);
   }
 
-  const source = await PrintPedido.findOne({
-    where: { companyId, formId, formResponseId },
-    order: [["createdAt", "DESC"]]
+  // Preferir job de impressão física (não uniplus) para "reimprimir último"
+  let source = await PrintPedido.findOne({
+    where: {
+      companyId,
+      formId,
+      formResponseId,
+      [Op.or]: [{ tipo: "print" }, { tipo: null }],
+    },
+    order: [["createdAt", "DESC"]],
   });
+  if (!source) {
+    source = await PrintPedido.findOne({
+      where: { companyId, formId, formResponseId },
+      order: [["createdAt", "DESC"]],
+    });
+  }
 
   if (!source) {
     throw new AppError(

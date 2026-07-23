@@ -284,7 +284,10 @@ const BuildUniplusDeliveryPayloadService = async ({
     tipopedido: 0,
     status: 1,
     situacao: 0,
-    numeromesa: 1,
+    // UniPlus Delivery card = numeromesa. O agente aloca um número único por conta aberta.
+    numeromesa: null,
+    statusagendamento: 3,
+    pautaunica: 1,
     idfilial: idFilial,
     idusuario: idUsuario,
     idcliente: 0,

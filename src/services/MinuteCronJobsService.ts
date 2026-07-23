@@ -5,6 +5,7 @@ import CheckAgendamentoRemindersService from "./AppointmentServices/CheckAgendam
 import CheckWaitlistAndNotifyService from "./AppointmentServices/CheckWaitlistAndNotifyService";
 import CheckOrderAutoConfirmService from "./OrderServices/CheckOrderAutoConfirmService";
 import PrintPedido from "../models/PrintPedido";
+import RedispatchPendingUniplusJobsService from "./UniplusServices/RedispatchPendingUniplusJobsService";
 import {
   isDbUnavailableError,
   logCronDbUnavailable,
@@ -40,6 +41,12 @@ const runMinuteCronJobs = async (): Promise<void> => {
         if (affected > 0) {
           logger.info(`Reverted ${affected} stuck print job(s) to pending`);
         }
+      }
+    },
+    {
+      name: "RedispatchPendingUniplus",
+      run: async () => {
+        await RedispatchPendingUniplusJobsService();
       }
     }
   ];

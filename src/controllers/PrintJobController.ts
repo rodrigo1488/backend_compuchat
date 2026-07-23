@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import ReprintPrintJobService from "../services/PrintJobService/ReprintPrintJobService";
+import ReprocessUniplusFormResponseService from "../services/UniplusServices/ReprocessUniplusFormResponseService";
 
 export const reprint = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -21,4 +22,19 @@ export const reprint = async (req: Request, res: Response): Promise<Response> =>
       ? "Reimpressão enviada para o agente de impressão."
       : "Reimpressão registrada e ficará na fila até o agente conectar à impressora."
   });
+};
+
+export const reprocessUniplus = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { companyId } = req.user;
+  const formResponseId = Number(req.params.formResponseId);
+
+  const result = await ReprocessUniplusFormResponseService({
+    companyId,
+    formResponseId,
+  });
+
+  return res.status(200).json(result);
 };

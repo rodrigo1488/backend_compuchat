@@ -1,6 +1,6 @@
 import PrintPedido from "../../models/PrintPedido";
-import FormResponse from "../../models/FormResponse";
 import { logger } from "../../utils/logger";
+import { patchFormResponseUniplusMetadata } from "../UniplusServices/patchFormResponseUniplusMetadata";
 
 interface Request {
   jobId: number;
@@ -9,6 +9,29 @@ interface Request {
   companyId: number;
   deviceId: string;
   uniplusContaId?: number | null;
+  uniplusAction?: string | null;
+  uniplusNumeromesa?: number | null;
+  protocol?: string | null;
+  permanent?: boolean;
+}
+
+const PERMANENT_ERROR_MARKERS = [
+  "ERR_UNIPLUS_PRODUCT",
+  "ERR_UNIPLUS_PROTOCOL_CLOSED",
+  "ERR_UNIPLUS_PAYLOAD",
+  "ERR_UNIPLUS_CONFIG",
+  "Produto UniPlus não encontrado",
+  "Payload incompleto",
+  "Payload sem protocol",
+  "Item sem codigoproduto",
+  "UniPlus desabilitado",
+  "uniplus_connection_string",
+  "psycopg2 não instalado",
+];
+
+function isPermanentUniplusError(message?: string): boolean {
+  const m = String(message || "");
+  return PERMANENT_ERROR_MARKERS.some((marker) => m.includes(marker));
 }
 
 const HandlePrintJobAckService = async ({
@@ -18,6 +41,9 @@ const HandlePrintJobAckService = async ({
   companyId,
   deviceId,
   uniplusContaId,
+  uniplusAction,
+  uniplusNumeromesa,
+  permanent,
 }: Request): Promise<void> => {
   const job = await PrintPedido.findOne({
     where: {
@@ -33,45 +59,77 @@ const HandlePrintJobAckService = async ({
     return;
   }
 
+  const isUniplus = (job.tipo || "print") === "uniplus";
+
   if (status === "done") {
+    if (isUniplus && (uniplusContaId == null || !Number.isFinite(Number(uniplusContaId)))) {
+      // Sucesso sem contaId é inválido — trata como erro retryable
+      await job.update({
+        status: "pending",
+        errorMessage: message || "ERR_UNIPLUS_ACK_MISSING_CONTA_ID",
+      });
+      await patchFormResponseUniplusMetadata(job.formResponseId, {
+        uniplusStatus: "error",
+        uniplusLastError: "ERR_UNIPLUS_ACK_MISSING_CONTA_ID",
+        uniplusLastErrorAt: new Date().toISOString(),
+        uniplusJobId: job.id,
+      });
+      logger.warn(
+        `Print job ${jobId}: uniplus done sem uniplusContaId — voltando para pending`
+      );
+      return;
+    }
+
     const updates: Partial<PrintPedido> = {
       status: "done",
       printedAt: new Date(),
+      errorMessage: null,
     };
-    if (job.tipo === "uniplus" && uniplusContaId != null) {
+    if (isUniplus && uniplusContaId != null) {
       updates.uniplusContaId = Number(uniplusContaId);
     }
     await job.update(updates);
-    logger.info(`Print job ${jobId} completed successfully (tipo=${job.tipo || "print"})`);
+    logger.info(
+      `Print job ${jobId} completed successfully (tipo=${job.tipo || "print"})`
+    );
 
-    if (job.tipo === "uniplus" && job.formResponseId && uniplusContaId != null) {
-      try {
-        const response = await FormResponse.findByPk(job.formResponseId);
-        if (response) {
-          const meta = {
-            ...((response.metadata as Record<string, unknown>) || {}),
-            uniplusContaId: Number(uniplusContaId),
-            uniplusSyncedAt: new Date().toISOString(),
-          };
-          await response.update({ metadata: meta });
-        }
-      } catch (err: any) {
-        logger.warn(
-          `Print job ${jobId}: failed to update FormResponse metadata: ${err?.message}`
-        );
-      }
+    if (isUniplus && job.formResponseId && uniplusContaId != null) {
+      await patchFormResponseUniplusMetadata(job.formResponseId, {
+        uniplusStatus: "synced",
+        uniplusContaId: Number(uniplusContaId),
+        uniplusSyncedAt: new Date().toISOString(),
+        uniplusAction: uniplusAction || null,
+        uniplusNumeromesa:
+          uniplusNumeromesa != null ? Number(uniplusNumeromesa) : null,
+        uniplusJobId: job.id,
+        uniplusLastError: null,
+        uniplusLastErrorAt: null,
+      });
     }
   } else if (status === "error") {
-    const tentativas = job.tentativas + 1;
-    const newStatus = tentativas >= job.maxTentativas ? "error" : "pending";
+    // tentativas já foi incrementada no dispatchJob — não incrementar de novo
+    const tentativas = job.tentativas;
+    const permanentError =
+      permanent === true || (isUniplus && isPermanentUniplusError(message));
+    const newStatus =
+      permanentError || tentativas >= job.maxTentativas ? "error" : "pending";
+
     await job.update({
       status: newStatus,
-      tentativas,
       errorMessage: message || "Print failed",
     });
     logger.info(
-      `Print job ${jobId} failed (attempt ${tentativas}/${job.maxTentativas}): ${message || "unknown"}`
+      `Print job ${jobId} failed (attempt ${tentativas}/${job.maxTentativas}, permanent=${permanentError}): ${message || "unknown"}`
     );
+
+    if (isUniplus && job.formResponseId) {
+      await patchFormResponseUniplusMetadata(job.formResponseId, {
+        uniplusStatus: "error",
+        uniplusLastError: message || "UniPlus failed",
+        uniplusLastErrorAt: new Date().toISOString(),
+        uniplusJobId: job.id,
+      });
+    }
   }
 };
 

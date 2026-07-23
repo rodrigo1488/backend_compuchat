@@ -87,6 +87,10 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
           const status = msg.status;
           const message = msg.message;
           const uniplusContaId = msg.uniplusContaId ?? msg.uniplus_conta_id ?? null;
+          const uniplusAction = msg.uniplusAction ?? msg.uniplus_action ?? null;
+          const uniplusNumeromesa =
+            msg.uniplusNumeromesa ?? msg.uniplus_numeromesa ?? null;
+          const permanent = msg.permanent === true || msg.error_permanent === true;
 
           if (!jobId || !status) {
             logger.warn("Invalid ack received: missing job_id or status");
@@ -100,6 +104,10 @@ export function initPrintWebSocket(httpServer: HttpServer): void {
             companyId,
             deviceId,
             uniplusContaId,
+            uniplusAction,
+            uniplusNumeromesa,
+            protocol: msg.protocol ?? null,
+            permanent,
           });
         }
       } catch (err: any) {
