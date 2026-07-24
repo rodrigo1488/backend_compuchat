@@ -1,4 +1,5 @@
 import Product from "../../models/Product";
+import { Op } from "sequelize";
 import { logger } from "../../utils/logger";
 
 export interface UniplusProductUpsertItem {
@@ -19,8 +20,23 @@ interface Request {
   products: UniplusProductUpsertItem[];
 }
 
+function normalizeName(name: string): string {
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\b\d+\s*ml\b/g, " ")
+    .replace(/\b\d+\s*l\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 /**
- * Upsert de produtos UniPlus → Compuchat pela chave idUniplus (= produto.codigo).
+ * Upsert UniPlus → Compuchat.
+ * 1) por idUniplus (= codigo)
+ * 2) por nome (atualiza produto do cardápio existente e grava o codigo)
+ * 3) cria novo
  */
 const UpsertUniplusProductsService = async ({
   companyId,
@@ -60,12 +76,38 @@ const UpsertUniplusProductsService = async ({
     }
 
     try {
-      const existing = await Product.findOne({
+      const nextValue = Math.round(preco * 100) / 100;
+      let existing = await Product.findOne({
         where: { companyId, idUniplus: codigo },
       });
 
+      // Vincula produto já cadastrado no cardápio (mesmo nome, sem codigo)
+      if (!existing) {
+        const candidates = await Product.findAll({
+          where: {
+            companyId,
+            [Op.or]: [{ idUniplus: null }, { idUniplus: "" }],
+          },
+          attributes: ["id", "name", "value", "idUniplus"],
+          limit: 500,
+        });
+        const needle = normalizeName(nome);
+        let best: Product | null = null;
+        let bestLen = -1;
+        for (const p of candidates) {
+          const pname = normalizeName(p.name || "");
+          if (!pname) continue;
+          if (pname === needle || needle.includes(pname) || pname.includes(needle)) {
+            if (pname.length > bestLen) {
+              best = p;
+              bestLen = pname.length;
+            }
+          }
+        }
+        existing = best;
+      }
+
       if (existing) {
-        const nextValue = Math.round(preco * 100) / 100;
         let changed = false;
         if (existing.name !== nome) {
           existing.name = nome;
@@ -73,6 +115,10 @@ const UpsertUniplusProductsService = async ({
         }
         if (Number(existing.value) !== nextValue) {
           existing.value = nextValue;
+          changed = true;
+        }
+        if (String(existing.idUniplus || "").trim() !== codigo) {
+          existing.idUniplus = codigo;
           changed = true;
         }
         if (changed) {
@@ -87,7 +133,7 @@ const UpsertUniplusProductsService = async ({
         const created = await Product.create({
           name: nome,
           description: null,
-          value: Math.round(preco * 100) / 100,
+          value: nextValue,
           quantity: 0,
           isMenuProduct: true,
           variablePrice: false,

@@ -304,31 +304,38 @@ const ValidateUniplusPreflightService = async ({
 
   const missingIds: number[] = [];
   const missingNames: string[] = [];
+  const unnamed: string[] = [];
   for (const item of items) {
     const codigo = resolveItemUniplusCodigo(item, byId, catalogWithCode);
-    if (!codigo) {
+    const nome = String(
+      item.productName || item.name || byId.get(Number(item.productId))?.name || ""
+    ).trim();
+    if (!codigo && !nome) {
       const pid = Number(item.productId);
       if (Number.isFinite(pid) && pid > 0) missingIds.push(pid);
-      missingNames.push(
-        String(
-          item.productName || item.name || byId.get(pid)?.name || pid || "?"
-        )
-      );
+      unnamed.push(String(pid || "?"));
+      continue;
+    }
+    if (!codigo) {
+      missingNames.push(nome);
     }
   }
 
-  if (missingIds.length || missingNames.length) {
-    const uniqueNames = [...new Set(missingNames)];
-    logger.warn(
-      `Uniplus preflight: produtos sem código UniPlus (produto.codigo) companyId=${companyId}: ${uniqueNames.join(", ")}`
-    );
+  if (unnamed.length) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_PRODUCT_CODE_MISSING",
-      message: `Produtos sem código UniPlus (campo codigo, não o id): ${uniqueNames.join(", ")}`,
+      message: `Itens sem código e sem nome: ${[...new Set(unnamed)].join(", ")}`,
       missingProductIds: [...new Set(missingIds)],
-      missingProductNames: uniqueNames,
+      missingProductNames: [...new Set(unnamed)],
     };
+  }
+
+  // Sem codigo: ainda despacha — agent resolve por nome no UniPlus
+  if (missingNames.length) {
+    logger.warn(
+      `Uniplus preflight: itens sem idUniplus (agent resolve por nome) companyId=${companyId}: ${[...new Set(missingNames)].join(", ")}`
+    );
   }
 
   return {

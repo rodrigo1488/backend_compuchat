@@ -216,9 +216,9 @@ const BuildUniplusDeliveryPayloadService = async ({
     const nomeproduto = String(
       item.productName || product?.name || "Produto"
     ).slice(0, 120);
-    if (!codigo) {
+    if (!codigo && !nomeproduto.trim()) {
       throw new AppError(
-        `ERR_UNIPLUS_PRODUCT_CODE_MISSING:${nomeproduto || item.productId} (use produto.codigo do UniPlus, não o id)`,
+        `ERR_UNIPLUS_PRODUCT_CODE_MISSING:${item.productName || item.productId}`,
         400
       );
     }
@@ -226,7 +226,8 @@ const BuildUniplusDeliveryPayloadService = async ({
     const lineTotal = calcMenuItemLineTotal(item);
     const unit = roundMoney(lineTotal / qty);
     payloadItems.push({
-      codigoproduto: codigo.slice(0, 20),
+      // codigo pode vir vazio — agent resolve por nome no UniPlus
+      codigoproduto: (codigo || "").slice(0, 20),
       nomeproduto,
       quantidade: qty,
       precounitario: unit,
