@@ -96,22 +96,19 @@ const ValidateUniplusPreflightService = async ({
     };
   }
 
+  // Filial/usuário: não bloquear despacho — o builder usa fallback || 1
+  // (igual ao comportamento anterior às validações estritas).
   const idFilial = Number(settings.uniplusIdFilial);
   if (!Number.isFinite(idFilial) || idFilial <= 0) {
-    return {
-      ok: false,
-      code: "ERR_UNIPLUS_ID_FILIAL_INVALID",
-      message: "uniplusIdFilial inválido ou não configurado",
-    };
+    logger.warn(
+      `Uniplus preflight: uniplusIdFilial ausente/inválido companyId=${companyId} — seguirá com fallback 1`
+    );
   }
-
   const idUsuario = Number(settings.uniplusIdUsuario);
   if (!Number.isFinite(idUsuario) || idUsuario <= 0) {
-    return {
-      ok: false,
-      code: "ERR_UNIPLUS_ID_USUARIO_INVALID",
-      message: "uniplusIdUsuario inválido ou não configurado",
-    };
+    logger.warn(
+      `Uniplus preflight: uniplusIdUsuario ausente/inválido companyId=${companyId} — seguirá com fallback 1`
+    );
   }
 
   const devicePk = Number(settings.uniplusPrintDeviceId);

@@ -77,12 +77,24 @@ const CreateOrReuseUniplusJobService = async ({
       uniplusLastError: null,
     });
     let dispatched = false;
-    if (existingActive.status === "pending") {
+    // printing preso (agent caiu no meio) — libera para redispatch após 2 min
+    if (existingActive.status === "printing") {
+      const ageMs =
+        Date.now() - new Date(existingActive.updatedAt as Date).getTime();
+      if (ageMs > 2 * 60 * 1000) {
+        await existingActive.update({
+          status: "pending",
+          errorMessage: "stale_printing_reset",
+        });
+        dispatched = await dispatchJob(existingActive);
+        await existingActive.reload();
+      }
+    } else if (existingActive.status === "pending") {
       dispatched = await dispatchJob(existingActive);
       await existingActive.reload();
     }
     logger.info(
-      `Uniplus job reuse active externalRef=${ref} jobId=${existingActive.id} status=${existingActive.status}`
+      `Uniplus job reuse active externalRef=${ref} jobId=${existingActive.id} status=${existingActive.status} dispatched=${dispatched}`
     );
     return { job: existingActive, dispatched, reused: true };
   }

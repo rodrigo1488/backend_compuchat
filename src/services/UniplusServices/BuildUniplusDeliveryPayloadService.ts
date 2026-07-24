@@ -128,7 +128,14 @@ function findAnswerByLabel(
 function buildObservacao(item: any): string {
   const parts: string[] = [];
   if (item.type === "halfAndHalf") {
-    parts.push("Meio a meio");
+    const name = String(item.productName || "");
+    // Preferir o nome completo (já traz "Metade X / Metade Y"); senão flag genérico
+    if (/metade/i.test(name) || /meio\s*a\s*meio/i.test(name)) {
+      parts.push(name.slice(0, 200));
+    } else {
+      parts.push("Meio a meio");
+      if (name) parts.push(name.slice(0, 180));
+    }
   }
   if (Array.isArray(item.addons) && item.addons.length) {
     const addons = item.addons
