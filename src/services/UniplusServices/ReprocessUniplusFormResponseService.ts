@@ -4,14 +4,12 @@ import FormResponse from "../../models/FormResponse";
 import FormField from "../../models/FormField";
 import ResponseAnswer from "../../models/ResponseAnswer";
 import AppError from "../../errors/AppError";
-import ValidateUniplusPreflightService, {
-  extractFormPrintDevicePks,
-} from "./ValidateUniplusPreflightService";
-import BuildUniplusDeliveryPayloadService from "./BuildUniplusDeliveryPayloadService";
+import BuildUniplusDeliveryPayloadService, {
+  resolveUniplusDeviceId,
+} from "./BuildUniplusDeliveryPayloadService";
 import CreateOrReuseUniplusJobService from "./CreateOrReuseUniplusJobService";
 import { patchFormResponseUniplusMetadata } from "./patchFormResponseUniplusMetadata";
 import PrintPedido from "../../models/PrintPedido";
-import { logger } from "../../utils/logger";
 
 interface Request {
   companyId: number;
@@ -20,7 +18,7 @@ interface Request {
 
 /**
  * Reprocessa sync UniPlus após correção de config/produto.
- * Best-effort: não altera o pedido; só cria/reusa job se ainda não houver conta.
+ * Sem preflight: despacha direto se houver device.
  */
 const ReprocessUniplusFormResponseService = async ({
   companyId,
@@ -75,25 +73,18 @@ const ReprocessUniplusFormResponseService = async ({
   }
 
   const menuItems = Array.isArray(meta.menuItems) ? meta.menuItems : [];
-  const orderType = String(meta.orderType || "");
+  if (!menuItems.length) {
+    throw new AppError("Pedido sem itens para UniPlus", 422);
+  }
 
-  const preflight = await ValidateUniplusPreflightService({
-    companyId,
-    form,
-    menuItems,
-    orderType,
-    fallbackDevicePks: extractFormPrintDevicePks(form),
-  });
-  if (!preflight.ok) {
-    logger.warn(
-      `Uniplus reprocess skipped_preflight formResponseId=${response.id} companyId=${companyId} code=${preflight.code} message=${preflight.message}`
-    );
+  const deviceId = await resolveUniplusDeviceId(companyId, form);
+  if (!deviceId) {
     await patchFormResponseUniplusMetadata(response.id, {
-      uniplusStatus: "skipped_preflight",
-      uniplusLastError: `${preflight.code}: ${preflight.message}`,
+      uniplusStatus: "error",
+      uniplusLastError: "Sem PrintDevice UniPlus/delivery configurado",
       uniplusLastErrorAt: new Date().toISOString(),
     });
-    throw new AppError(`${preflight.code}: ${preflight.message}`, 422);
+    throw new AppError("Sem PrintDevice UniPlus/delivery configurado", 422);
   }
 
   const fields = await FormField.findAll({ where: { formId: form.id } });
@@ -118,7 +109,7 @@ const ReprocessUniplusFormResponseService = async ({
 
   const result = await CreateOrReuseUniplusJobService({
     companyId,
-    deviceId: preflight.deviceId!,
+    deviceId,
     formId: form.id,
     formResponseId: response.id,
     conteudo: payload,

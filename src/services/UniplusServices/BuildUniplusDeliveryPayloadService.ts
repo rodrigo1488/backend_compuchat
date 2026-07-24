@@ -1,13 +1,16 @@
 import { randomUUID } from "crypto";
 import Setting from "../../models/Setting";
 import Product from "../../models/Product";
+import PrintDevice from "../../models/PrintDevice";
 import FormResponse from "../../models/FormResponse";
 import Form from "../../models/Form";
 import FormField from "../../models/FormField";
 import { calcMenuItemLineTotal } from "../../helpers/gourmetOrderTotals";
 import AppError from "../../errors/AppError";
+import { isAgentConnected } from "../../libs/printWebSocket";
+import { logger } from "../../utils/logger";
 import {
-  isFormUniplusEnabled,
+  extractFormPrintDevicePks,
   isUniplusFlagEnabled,
   resolveItemUniplusCodigo,
 } from "./ValidateUniplusPreflightService";
@@ -166,6 +169,53 @@ export async function getUniplusPrintDeviceId(companyId: number): Promise<number
   return Number.isFinite(id) && id > 0 ? id : null;
 }
 
+/**
+ * Resolve deviceId (string do agente) sem preflight:
+ * prioriza impressoras de delivery do cardápio, depois uniplusPrintDeviceId.
+ * Prefere agent online; senão o primeiro encontrado.
+ */
+export async function resolveUniplusDeviceId(
+  companyId: number,
+  form: Form
+): Promise<string | null> {
+  const settings = await getSettingMap(companyId);
+  const configuredPk = Number(settings.uniplusPrintDeviceId);
+  const deliveryPks = extractFormPrintDevicePks(form);
+
+  const candidates: number[] = [];
+  for (const pk of deliveryPks) {
+    if (Number.isFinite(pk) && pk > 0 && !candidates.includes(pk)) {
+      candidates.push(pk);
+    }
+  }
+  if (Number.isFinite(configuredPk) && configuredPk > 0 && !candidates.includes(configuredPk)) {
+    candidates.push(configuredPk);
+  }
+
+  if (!candidates.length) return null;
+
+  const foundDevices: PrintDevice[] = [];
+  for (const pk of candidates) {
+    const found = await PrintDevice.findOne({
+      where: { id: pk, companyId },
+    });
+    if (found?.deviceId) foundDevices.push(found);
+  }
+  if (!foundDevices.length) return null;
+
+  const printDevice =
+    foundDevices.find((d) => isAgentConnected(companyId, d.deviceId)) ||
+    foundDevices[0];
+
+  if (deliveryPks.includes(printDevice.id) && Number(configuredPk) !== printDevice.id) {
+    logger.info(
+      `Uniplus: usando device de impressão do delivery companyId=${companyId} deviceId=${printDevice.deviceId} pk=${printDevice.id}`
+    );
+  }
+
+  return printDevice.deviceId;
+}
+
 const BuildUniplusDeliveryPayloadService = async ({
   companyId,
   form,
@@ -176,14 +226,9 @@ const BuildUniplusDeliveryPayloadService = async ({
   fields,
   answers,
 }: BuildRequest): Promise<UniplusDeliveryPayload> => {
+  // Sem validação de flags company/form — despacho best-effort; agent resolve produtos
   const settings = await getSettingMap(companyId);
-  if (!isUniplusFlagEnabled(settings.uniplusEnabled)) {
-    throw new AppError("ERR_UNIPLUS_DISABLED", 400);
-  }
-
-  if (!isFormUniplusEnabled(form)) {
-    throw new AppError("ERR_UNIPLUS_FORM_DISABLED", 400);
-  }
+  void form;
 
   const protocol = String(response.protocol || `FR-${response.id}`).slice(0, 40);
   const meta = (response.metadata || {}) as Record<string, any>;
@@ -216,12 +261,6 @@ const BuildUniplusDeliveryPayloadService = async ({
     const nomeproduto = String(
       item.productName || product?.name || "Produto"
     ).slice(0, 120);
-    if (!codigo && !nomeproduto.trim()) {
-      throw new AppError(
-        `ERR_UNIPLUS_PRODUCT_CODE_MISSING:${item.productName || item.productId}`,
-        400
-      );
-    }
     const qty = Number(item.quantity) || 1;
     const lineTotal = calcMenuItemLineTotal(item);
     const unit = roundMoney(lineTotal / qty);

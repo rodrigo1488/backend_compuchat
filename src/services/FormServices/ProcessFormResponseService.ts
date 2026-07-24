@@ -12,10 +12,9 @@ import SendWhatsAppMessage from "../WbotServices/SendWhatsAppMessage";
 import AppError from "../../errors/AppError";
 import PrintDevice from "../../models/PrintDevice";
 import CreateAndDispatchPrintJobService from "../PrintJobService/CreateAndDispatchPrintJobService";
-import BuildUniplusDeliveryPayloadService from "../UniplusServices/BuildUniplusDeliveryPayloadService";
-import ValidateUniplusPreflightService, {
-  extractFormPrintDevicePks,
-} from "../UniplusServices/ValidateUniplusPreflightService";
+import BuildUniplusDeliveryPayloadService, {
+  resolveUniplusDeviceId,
+} from "../UniplusServices/BuildUniplusDeliveryPayloadService";
 import CreateOrReuseUniplusJobService from "../UniplusServices/CreateOrReuseUniplusJobService";
 import { patchFormResponseUniplusMetadata } from "../UniplusServices/patchFormResponseUniplusMetadata";
 import { logger } from "../../utils/logger";
@@ -1007,9 +1006,7 @@ const ProcessFormResponseService = async ({
     }
   }
 
-  // UniPlus: best-effort — nunca bloqueia o pedido Compuchat
-  // Entra no fluxo para TODO delivery de cardápio (mesmo se form/company off),
-  // para gravar skipped_preflight visível em vez de silêncio.
+  // UniPlus: despacha job direto (sem preflight) — best-effort, nunca bloqueia o pedido
   if (
     isMenuForm &&
     menuItems &&
@@ -1021,27 +1018,16 @@ const ProcessFormResponseService = async ({
         normalizedMenuItems && normalizedMenuItems.length > 0
           ? normalizedMenuItems
           : menuItems;
-      const orderType = String(
-        ((response.metadata || metadata || {}) as any)?.orderType || ""
-      );
       const metaNow = (response.metadata || {}) as Record<string, unknown>;
-      if (metaNow.uniplusContaId) {
-        // já sincronizado
-      } else {
-        const preflight = await ValidateUniplusPreflightService({
-          companyId: form.companyId,
-          form,
-          menuItems: allMenuItems,
-          orderType,
-          fallbackDevicePks: extractFormPrintDevicePks(form),
-        });
-        if (!preflight.ok) {
+      if (!metaNow.uniplusContaId) {
+        const deviceId = await resolveUniplusDeviceId(form.companyId, form);
+        if (!deviceId) {
           logger.warn(
-            `Uniplus skipped_preflight formResponseId=${response.id} companyId=${form.companyId} code=${preflight.code} message=${preflight.message}`
+            `Uniplus: sem PrintDevice para despacho formResponseId=${response.id} companyId=${form.companyId}`
           );
           await patchFormResponseUniplusMetadata(response.id, {
-            uniplusStatus: "skipped_preflight",
-            uniplusLastError: `${preflight.code}: ${preflight.message}`,
+            uniplusStatus: "error",
+            uniplusLastError: "Sem PrintDevice UniPlus/delivery configurado",
             uniplusLastErrorAt: new Date().toISOString(),
           });
         } else {
@@ -1057,12 +1043,15 @@ const ProcessFormResponseService = async ({
           });
           await CreateOrReuseUniplusJobService({
             companyId: form.companyId,
-            deviceId: preflight.deviceId!,
+            deviceId,
             formId: form.id,
             formResponseId: response.id,
             conteudo: payload,
             externalRef: payload.protocol,
           });
+          logger.info(
+            `Uniplus job despachado formResponseId=${response.id} deviceId=${deviceId} protocol=${payload.protocol}`
+          );
         }
       }
     } catch (err: any) {
