@@ -63,7 +63,20 @@ interface BuildRequest {
 
 const roundMoney = (n: number): number => Math.round(n * 100) / 100;
 
-const padHash = (uuid: string): string => uuid.replace(/-/g, "").padEnd(40, " ").slice(0, 40);
+/**
+ * UniPlus (Java UUID.fromString) exige UUID com hífens (8-4-4-4-12).
+ * CHAR(40) no Postgres: preenche com espaços à direita.
+ * Não remover hífens — hash sem hífen vira null no ORM e NPE em existeOperacaoPendenteUnichef.
+ */
+const padHash = (uuid: string): string => {
+  const trimmed = String(uuid || "").trim();
+  const hex = trimmed.replace(/-/g, "").replace(/\s/g, "");
+  let withHyphens = trimmed;
+  if (/^[0-9a-fA-F]{32}$/.test(hex)) {
+    withHyphens = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return withHyphens.padEnd(40, " ").slice(0, 40);
+};
 
 function answerToString(answer: string | string[] | null | undefined): string {
   if (answer == null) return "";
