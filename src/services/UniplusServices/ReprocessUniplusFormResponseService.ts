@@ -4,11 +4,14 @@ import FormResponse from "../../models/FormResponse";
 import FormField from "../../models/FormField";
 import ResponseAnswer from "../../models/ResponseAnswer";
 import AppError from "../../errors/AppError";
-import ValidateUniplusPreflightService from "./ValidateUniplusPreflightService";
+import ValidateUniplusPreflightService, {
+  extractFormPrintDevicePks,
+} from "./ValidateUniplusPreflightService";
 import BuildUniplusDeliveryPayloadService from "./BuildUniplusDeliveryPayloadService";
 import CreateOrReuseUniplusJobService from "./CreateOrReuseUniplusJobService";
 import { patchFormResponseUniplusMetadata } from "./patchFormResponseUniplusMetadata";
 import PrintPedido from "../../models/PrintPedido";
+import { logger } from "../../utils/logger";
 
 interface Request {
   companyId: number;
@@ -79,8 +82,12 @@ const ReprocessUniplusFormResponseService = async ({
     form,
     menuItems,
     orderType,
+    fallbackDevicePks: extractFormPrintDevicePks(form),
   });
   if (!preflight.ok) {
+    logger.warn(
+      `Uniplus reprocess skipped_preflight formResponseId=${response.id} companyId=${companyId} code=${preflight.code} message=${preflight.message}`
+    );
     await patchFormResponseUniplusMetadata(response.id, {
       uniplusStatus: "skipped_preflight",
       uniplusLastError: `${preflight.code}: ${preflight.message}`,

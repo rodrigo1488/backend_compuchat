@@ -13,9 +13,12 @@ import AppError from "../../errors/AppError";
 import PrintDevice from "../../models/PrintDevice";
 import CreateAndDispatchPrintJobService from "../PrintJobService/CreateAndDispatchPrintJobService";
 import BuildUniplusDeliveryPayloadService from "../UniplusServices/BuildUniplusDeliveryPayloadService";
-import ValidateUniplusPreflightService from "../UniplusServices/ValidateUniplusPreflightService";
+import ValidateUniplusPreflightService, {
+  extractFormPrintDevicePks,
+} from "../UniplusServices/ValidateUniplusPreflightService";
 import CreateOrReuseUniplusJobService from "../UniplusServices/CreateOrReuseUniplusJobService";
 import { patchFormResponseUniplusMetadata } from "../UniplusServices/patchFormResponseUniplusMetadata";
+import { logger } from "../../utils/logger";
 import OcuparMesaService from "../MesaServices/OcuparMesaService";
 import Mesa from "../../models/Mesa";
 import Contact from "../../models/Contact";
@@ -1029,8 +1032,12 @@ const ProcessFormResponseService = async ({
           form,
           menuItems: allMenuItems,
           orderType,
+          fallbackDevicePks: extractFormPrintDevicePks(form),
         });
         if (!preflight.ok) {
+          logger.warn(
+            `Uniplus skipped_preflight formResponseId=${response.id} companyId=${form.companyId} code=${preflight.code} message=${preflight.message}`
+          );
           await patchFormResponseUniplusMetadata(response.id, {
             uniplusStatus: "skipped_preflight",
             uniplusLastError: `${preflight.code}: ${preflight.message}`,

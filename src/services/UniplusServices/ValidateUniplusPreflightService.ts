@@ -30,6 +30,8 @@ interface PreflightRequest {
   form: Form;
   menuItems: any[];
   orderType?: string | null;
+  /** PKs de PrintDevice do cardápio (delivery/print) usados se uniplusPrintDeviceId não estiver setado */
+  fallbackDevicePks?: number[];
 }
 
 async function getSettingMap(companyId: number): Promise<Record<string, string>> {
@@ -52,6 +54,37 @@ async function getSettingMap(companyId: number): Promise<Record<string, string>>
 }
 
 /**
+ * Extrai PrintDevice PKs configurados no cardápio para impressão delivery/mesa.
+ */
+export function extractFormPrintDevicePks(form: Form): number[] {
+  const settings = (form.settings || {}) as Record<string, any>;
+  const ids = new Set<number>();
+
+  const deliveryIds = settings.deliveryPrintDeviceIds;
+  if (Array.isArray(deliveryIds)) {
+    for (const id of deliveryIds) {
+      const n = Number(id);
+      if (Number.isFinite(n) && n > 0) ids.add(n);
+    }
+  }
+
+  const printDeviceId = Number(settings.printDeviceId);
+  if (Number.isFinite(printDeviceId) && printDeviceId > 0) {
+    ids.add(printDeviceId);
+  }
+
+  const mesaPrintConfig = settings.mesaPrintConfig;
+  if (Array.isArray(mesaPrintConfig)) {
+    for (const row of mesaPrintConfig) {
+      const n = Number(row?.printDeviceId);
+      if (Number.isFinite(n) && n > 0) ids.add(n);
+    }
+  }
+
+  return [...ids];
+}
+
+/**
  * Valida pré-requisitos UniPlus sem lançar erro ao cliente.
  * Pedido Compuchat nunca deve ser bloqueado por este serviço.
  */
@@ -60,6 +93,7 @@ const ValidateUniplusPreflightService = async ({
   form,
   menuItems,
   orderType,
+  fallbackDevicePks,
 }: PreflightRequest): Promise<UniplusPreflightResult> => {
   const formUniplus = (form.settings as any)?.uniplus;
   if (formUniplus?.enabled !== true) {
@@ -97,7 +131,6 @@ const ValidateUniplusPreflightService = async ({
   }
 
   // Filial/usuário: não bloquear despacho — o builder usa fallback || 1
-  // (igual ao comportamento anterior às validações estritas).
   const idFilial = Number(settings.uniplusIdFilial);
   if (!Number.isFinite(idFilial) || idFilial <= 0) {
     logger.warn(
@@ -111,24 +144,56 @@ const ValidateUniplusPreflightService = async ({
     );
   }
 
-  const devicePk = Number(settings.uniplusPrintDeviceId);
-  if (!Number.isFinite(devicePk) || devicePk <= 0) {
+  const configuredPk = Number(settings.uniplusPrintDeviceId);
+  const candidates: number[] = [];
+  if (Number.isFinite(configuredPk) && configuredPk > 0) {
+    candidates.push(configuredPk);
+  }
+  const fallbacks =
+    Array.isArray(fallbackDevicePks) && fallbackDevicePks.length
+      ? fallbackDevicePks
+      : extractFormPrintDevicePks(form);
+  for (const pk of fallbacks) {
+    if (Number.isFinite(pk) && pk > 0 && !candidates.includes(pk)) {
+      candidates.push(pk);
+    }
+  }
+
+  if (!candidates.length) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_DEVICE_NOT_SET",
-      message: "uniplusPrintDeviceId não configurado",
+      message:
+        "uniplusPrintDeviceId não configurado e cardápio sem impressora de delivery",
     };
   }
 
-  const printDevice = await PrintDevice.findOne({
-    where: { id: devicePk, companyId },
-  });
+  let printDevice: PrintDevice | null = null;
+  let usedFallback = false;
+  for (let i = 0; i < candidates.length; i++) {
+    const pk = candidates[i];
+    const found = await PrintDevice.findOne({
+      where: { id: pk, companyId },
+    });
+    if (found?.deviceId) {
+      printDevice = found;
+      usedFallback = i > 0 || !(Number.isFinite(configuredPk) && configuredPk > 0);
+      break;
+    }
+  }
+
   if (!printDevice?.deviceId) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_DEVICE_NOT_FOUND",
-      message: `PrintDevice UniPlus não encontrado id=${devicePk}`,
+      message: `Nenhum PrintDevice UniPlus válido entre candidatos=[${candidates.join(",")}]`,
     };
+  }
+
+  if (usedFallback) {
+    logger.warn(
+      `Uniplus preflight: usando device de impressão do cardápio como fallback companyId=${companyId} deviceId=${printDevice.deviceId} pk=${printDevice.id}`
+    );
   }
 
   const productIds = [
@@ -176,7 +241,9 @@ const ValidateUniplusPreflightService = async ({
   return {
     ok: true,
     code: "OK",
-    message: "preflight ok",
+    message: usedFallback
+      ? "preflight ok (device fallback do cardápio)"
+      : "preflight ok",
     deviceId: printDevice.deviceId,
   };
 };
