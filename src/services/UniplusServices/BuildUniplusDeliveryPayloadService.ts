@@ -40,6 +40,8 @@ export interface UniplusPayloadItem {
   unidademedida: string;
   observacao: string;
   orderidintegracao: string;
+  /** UUID com hífens — UNIQUE contamesitem_uk1; vazio colide no Unichef */
+  hash: string;
 }
 
 export interface UniplusDeliveryPayload {
@@ -287,6 +289,7 @@ const BuildUniplusDeliveryPayloadService = async ({
       unidademedida: "UN",
       observacao: buildObservacao(item),
       orderidintegracao: protocol,
+      hash: padHash(randomUUID()),
     });
   }
 
