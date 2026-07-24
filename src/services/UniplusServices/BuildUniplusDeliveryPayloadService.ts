@@ -6,6 +6,11 @@ import Form from "../../models/Form";
 import FormField from "../../models/FormField";
 import { calcMenuItemLineTotal } from "../../helpers/gourmetOrderTotals";
 import AppError from "../../errors/AppError";
+import {
+  isFormUniplusEnabled,
+  isUniplusFlagEnabled,
+  resolveItemUniplusCodigo,
+} from "./ValidateUniplusPreflightService";
 
 const DEFAULT_PAYMENT_MAP: Record<string, string> = {
   pix: "valorpix",
@@ -152,7 +157,7 @@ function buildObservacao(item: any): string {
 
 export async function isUniplusEnabledForCompany(companyId: number): Promise<boolean> {
   const settings = await getSettingMap(companyId);
-  return settings.uniplusEnabled === "enabled";
+  return isUniplusFlagEnabled(settings.uniplusEnabled);
 }
 
 export async function getUniplusPrintDeviceId(companyId: number): Promise<number | null> {
@@ -172,12 +177,11 @@ const BuildUniplusDeliveryPayloadService = async ({
   answers,
 }: BuildRequest): Promise<UniplusDeliveryPayload> => {
   const settings = await getSettingMap(companyId);
-  if (settings.uniplusEnabled !== "enabled") {
+  if (!isUniplusFlagEnabled(settings.uniplusEnabled)) {
     throw new AppError("ERR_UNIPLUS_DISABLED", 400);
   }
 
-  const formSettings = (form.settings || {}) as Record<string, any>;
-  if (formSettings?.uniplus?.enabled !== true) {
+  if (!isFormUniplusEnabled(form)) {
     throw new AppError("ERR_UNIPLUS_FORM_DISABLED", 400);
   }
 
@@ -199,12 +203,20 @@ const BuildUniplusDeliveryPayloadService = async ({
       })
     : [];
   const productById = new Map(products.map((p) => [p.id, p]));
+  const catalog = await Product.findAll({
+    where: { companyId },
+    attributes: ["id", "name", "idUniplus"],
+  });
+  const catalogWithCode = catalog.filter((p) => String(p.idUniplus || "").trim());
 
   const payloadItems: UniplusPayloadItem[] = [];
   for (const item of items) {
     const product = productById.get(Number(item.productId));
-    const codigo = String(product?.idUniplus || item.idUniplus || "").trim();
-    if (!codigo) {
+    const codigo = resolveItemUniplusCodigo(item, productById, catalogWithCode);
+    const nomeproduto = String(
+      item.productName || product?.name || "Produto"
+    ).slice(0, 120);
+    if (!codigo && !nomeproduto.trim()) {
       throw new AppError(
         `ERR_UNIPLUS_PRODUCT_CODE_MISSING:${item.productName || item.productId}`,
         400
@@ -214,8 +226,8 @@ const BuildUniplusDeliveryPayloadService = async ({
     const lineTotal = calcMenuItemLineTotal(item);
     const unit = roundMoney(lineTotal / qty);
     payloadItems.push({
-      codigoproduto: codigo.slice(0, 20),
-      nomeproduto: String(item.productName || product?.name || "Produto").slice(0, 120),
+      codigoproduto: (codigo || "").slice(0, 20),
+      nomeproduto,
       quantidade: qty,
       precounitario: unit,
       valortotal: lineTotal,

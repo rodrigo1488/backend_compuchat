@@ -2,6 +2,7 @@ import Setting from "../../models/Setting";
 import Product from "../../models/Product";
 import PrintDevice from "../../models/PrintDevice";
 import Form from "../../models/Form";
+import { isAgentConnected } from "../../libs/printWebSocket";
 import { logger } from "../../utils/logger";
 
 export type UniplusPreflightCode =
@@ -30,7 +31,7 @@ interface PreflightRequest {
   form: Form;
   menuItems: any[];
   orderType?: string | null;
-  /** PKs de PrintDevice do cardápio (delivery/print) usados se uniplusPrintDeviceId não estiver setado */
+  /** PKs de PrintDevice do cardápio (delivery/print) — prioridade sobre uniplusPrintDeviceId */
   fallbackDevicePks?: number[];
 }
 
@@ -51,6 +52,19 @@ async function getSettingMap(companyId: number): Promise<Record<string, string>>
     map[row.key] = row.value ?? "";
   }
   return map;
+}
+
+/** Aceita enabled/true/1/sim (string ou boolean). */
+export function isUniplusFlagEnabled(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  const s = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return s === "enabled" || s === "true" || s === "1" || s === "sim" || s === "yes";
+}
+
+export function isFormUniplusEnabled(form: Form): boolean {
+  return isUniplusFlagEnabled((form.settings as any)?.uniplus?.enabled);
 }
 
 /**
@@ -84,6 +98,74 @@ export function extractFormPrintDevicePks(form: Form): number[] {
   return [...ids];
 }
 
+function normalizeProductName(name: string): string {
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\b\d+\s*ml\b/g, " ")
+    .replace(/\b\d+\s*l\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function itemCodigoHint(item: any): string {
+  return String(
+    item?.idUniplus ||
+      item?.codigoproduto ||
+      item?.codigoProduto ||
+      item?.codigo ||
+      item?.productCode ||
+      ""
+  ).trim();
+}
+
+/**
+ * Resolve código UniPlus do item: campo do item → Product.idUniplus → match por nome.
+ */
+export function resolveItemUniplusCodigo(
+  item: any,
+  byId: Map<number, Product>,
+  catalog: Product[]
+): string {
+  const direct = itemCodigoHint(item);
+  if (direct) return direct;
+
+  const pid = Number(item?.productId);
+  const byProduct = byId.get(pid);
+  const fromProduct = String(byProduct?.idUniplus || "").trim();
+  if (fromProduct) return fromProduct;
+
+  const rawName = String(item?.productName || item?.name || byProduct?.name || "").trim();
+  if (!rawName || !catalog.length) return "";
+
+  const needle = normalizeProductName(rawName);
+  if (!needle) return "";
+
+  // 1) nome exato normalizado
+  for (const p of catalog) {
+    const code = String(p.idUniplus || "").trim();
+    if (!code) continue;
+    if (normalizeProductName(p.name || "") === needle) return code;
+  }
+
+  // 2) produto cujo nome está contido no item (ex.: "Brahma" em "brahma 350")
+  let best: { code: string; len: number } | null = null;
+  for (const p of catalog) {
+    const code = String(p.idUniplus || "").trim();
+    if (!code) continue;
+    const pname = normalizeProductName(p.name || "");
+    if (!pname || pname.length < 3) continue;
+    if (needle.includes(pname) || pname.includes(needle)) {
+      if (!best || pname.length > best.len) {
+        best = { code, len: pname.length };
+      }
+    }
+  }
+  return best?.code || "";
+}
+
 /**
  * Valida pré-requisitos UniPlus sem lançar erro ao cliente.
  * Pedido Compuchat nunca deve ser bloqueado por este serviço.
@@ -95,8 +177,7 @@ const ValidateUniplusPreflightService = async ({
   orderType,
   fallbackDevicePks,
 }: PreflightRequest): Promise<UniplusPreflightResult> => {
-  const formUniplus = (form.settings as any)?.uniplus;
-  if (formUniplus?.enabled !== true) {
+  if (!isFormUniplusEnabled(form)) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_FORM_DISABLED",
@@ -122,7 +203,7 @@ const ValidateUniplusPreflightService = async ({
   }
 
   const settings = await getSettingMap(companyId);
-  if (settings.uniplusEnabled !== "enabled") {
+  if (!isUniplusFlagEnabled(settings.uniplusEnabled)) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_COMPANY_DISABLED",
@@ -144,19 +225,21 @@ const ValidateUniplusPreflightService = async ({
     );
   }
 
+  // Prioridade: devices que JÁ imprimem o delivery (online comprovado), depois setting UniPlus
   const configuredPk = Number(settings.uniplusPrintDeviceId);
-  const candidates: number[] = [];
-  if (Number.isFinite(configuredPk) && configuredPk > 0) {
-    candidates.push(configuredPk);
-  }
-  const fallbacks =
+  const deliveryPks =
     Array.isArray(fallbackDevicePks) && fallbackDevicePks.length
       ? fallbackDevicePks
       : extractFormPrintDevicePks(form);
-  for (const pk of fallbacks) {
+
+  const candidates: number[] = [];
+  for (const pk of deliveryPks) {
     if (Number.isFinite(pk) && pk > 0 && !candidates.includes(pk)) {
       candidates.push(pk);
     }
+  }
+  if (Number.isFinite(configuredPk) && configuredPk > 0 && !candidates.includes(configuredPk)) {
+    candidates.push(configuredPk);
   }
 
   if (!candidates.length) {
@@ -164,25 +247,21 @@ const ValidateUniplusPreflightService = async ({
       ok: false,
       code: "ERR_UNIPLUS_DEVICE_NOT_SET",
       message:
-        "uniplusPrintDeviceId não configurado e cardápio sem impressora de delivery",
+        "Nenhuma impressora de delivery no cardápio e uniplusPrintDeviceId não configurado",
     };
   }
 
-  let printDevice: PrintDevice | null = null;
-  let usedFallback = false;
-  for (let i = 0; i < candidates.length; i++) {
-    const pk = candidates[i];
+  const foundDevices: PrintDevice[] = [];
+  for (const pk of candidates) {
     const found = await PrintDevice.findOne({
       where: { id: pk, companyId },
     });
     if (found?.deviceId) {
-      printDevice = found;
-      usedFallback = i > 0 || !(Number.isFinite(configuredPk) && configuredPk > 0);
-      break;
+      foundDevices.push(found);
     }
   }
 
-  if (!printDevice?.deviceId) {
+  if (!foundDevices.length) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_DEVICE_NOT_FOUND",
@@ -190,9 +269,12 @@ const ValidateUniplusPreflightService = async ({
     };
   }
 
-  if (usedFallback) {
+  let printDevice =
+    foundDevices.find((d) => isAgentConnected(companyId, d.deviceId)) || foundDevices[0];
+  const usedDeliveryDevice = deliveryPks.includes(printDevice.id);
+  if (usedDeliveryDevice && Number(configuredPk) !== printDevice.id) {
     logger.warn(
-      `Uniplus preflight: usando device de impressão do cardápio como fallback companyId=${companyId} deviceId=${printDevice.deviceId} pk=${printDevice.id}`
+      `Uniplus preflight: usando device de impressão do delivery companyId=${companyId} deviceId=${printDevice.deviceId} pk=${printDevice.id}`
     );
   }
 
@@ -212,38 +294,58 @@ const ValidateUniplusPreflightService = async ({
     : [];
   const byId = new Map(products.map((p) => [p.id, p]));
 
+  // Catálogo com código para match por nome (ex.: "Brahma" → "brahma 350")
+  const catalog = await Product.findAll({
+    where: { companyId },
+    attributes: ["id", "name", "idUniplus"],
+  });
+  const catalogWithCode = catalog.filter((p) => String(p.idUniplus || "").trim());
+
   const missingIds: number[] = [];
   const missingNames: string[] = [];
+  const unnamed: string[] = [];
   for (const item of items) {
-    const pid = Number(item.productId);
-    const product = byId.get(pid);
-    const codigo = String(product?.idUniplus || item.idUniplus || "").trim();
+    const codigo = resolveItemUniplusCodigo(item, byId, catalogWithCode);
+    const nome = String(
+      item.productName || item.name || byId.get(Number(item.productId))?.name || ""
+    ).trim();
+    if (!codigo && !nome) {
+      unnamed.push(String(item.productId || "?"));
+      continue;
+    }
     if (!codigo) {
+      const pid = Number(item.productId);
       if (Number.isFinite(pid) && pid > 0) missingIds.push(pid);
-      missingNames.push(String(item.productName || product?.name || pid || "?"));
+      missingNames.push(nome);
     }
   }
 
-  if (missingIds.length || missingNames.length) {
-    const uniqueNames = [...new Set(missingNames)];
-    logger.warn(
-      `Uniplus preflight: produtos sem idUniplus companyId=${companyId}: ${uniqueNames.join(", ")}`
-    );
+  if (unnamed.length) {
     return {
       ok: false,
       code: "ERR_UNIPLUS_PRODUCT_CODE_MISSING",
-      message: `Produtos sem código UniPlus: ${uniqueNames.join(", ")}`,
+      message: `Itens sem código e sem nome UniPlus: ${unnamed.join(", ")}`,
       missingProductIds: [...new Set(missingIds)],
-      missingProductNames: uniqueNames,
+      missingProductNames: unnamed,
     };
+  }
+
+  // Sem idUniplus no Compuchat: ainda despacha — o agent resolve por nome no Postgres UniPlus
+  if (missingNames.length) {
+    const uniqueNames = [...new Set(missingNames)];
+    logger.warn(
+      `Uniplus preflight: produtos sem idUniplus (seguirão por nome no agent) companyId=${companyId}: ${uniqueNames.join(", ")}`
+    );
   }
 
   return {
     ok: true,
     code: "OK",
-    message: usedFallback
-      ? "preflight ok (device fallback do cardápio)"
-      : "preflight ok",
+    message: usedDeliveryDevice
+      ? "preflight ok (device do delivery)"
+      : missingNames.length
+        ? "preflight ok (códigos via nome no agent)"
+        : "preflight ok",
     deviceId: printDevice.deviceId,
   };
 };

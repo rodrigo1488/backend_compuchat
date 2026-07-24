@@ -1008,12 +1008,13 @@ const ProcessFormResponseService = async ({
   }
 
   // UniPlus: best-effort — nunca bloqueia o pedido Compuchat
+  // Entra no fluxo para TODO delivery de cardápio (mesmo se form/company off),
+  // para gravar skipped_preflight visível em vez de silêncio.
   if (
     isMenuForm &&
     menuItems &&
     menuItems.length > 0 &&
-    ((response.metadata || metadata || {}) as any)?.orderType === "delivery" &&
-    (form.settings as any)?.uniplus?.enabled === true
+    ((response.metadata || metadata || {}) as any)?.orderType === "delivery"
   ) {
     try {
       const allMenuItems =
