@@ -122,7 +122,8 @@ function itemCodigoHint(item: any): string {
 }
 
 /**
- * Resolve código UniPlus do item: campo do item → Product.idUniplus → match por nome.
+ * Resolve código UniPlus do item (= produto.codigo visível no UniPlus, NÃO o id interno).
+ * Ordem: campo do item → Product.idUniplus → match por nome no catálogo com código.
  */
 export function resolveItemUniplusCodigo(
   item: any,
@@ -303,39 +304,31 @@ const ValidateUniplusPreflightService = async ({
 
   const missingIds: number[] = [];
   const missingNames: string[] = [];
-  const unnamed: string[] = [];
   for (const item of items) {
     const codigo = resolveItemUniplusCodigo(item, byId, catalogWithCode);
-    const nome = String(
-      item.productName || item.name || byId.get(Number(item.productId))?.name || ""
-    ).trim();
-    if (!codigo && !nome) {
-      unnamed.push(String(item.productId || "?"));
-      continue;
-    }
     if (!codigo) {
       const pid = Number(item.productId);
       if (Number.isFinite(pid) && pid > 0) missingIds.push(pid);
-      missingNames.push(nome);
+      missingNames.push(
+        String(
+          item.productName || item.name || byId.get(pid)?.name || pid || "?"
+        )
+      );
     }
   }
 
-  if (unnamed.length) {
+  if (missingIds.length || missingNames.length) {
+    const uniqueNames = [...new Set(missingNames)];
+    logger.warn(
+      `Uniplus preflight: produtos sem código UniPlus (produto.codigo) companyId=${companyId}: ${uniqueNames.join(", ")}`
+    );
     return {
       ok: false,
       code: "ERR_UNIPLUS_PRODUCT_CODE_MISSING",
-      message: `Itens sem código e sem nome UniPlus: ${unnamed.join(", ")}`,
+      message: `Produtos sem código UniPlus (campo codigo, não o id): ${uniqueNames.join(", ")}`,
       missingProductIds: [...new Set(missingIds)],
-      missingProductNames: unnamed,
+      missingProductNames: uniqueNames,
     };
-  }
-
-  // Sem idUniplus no Compuchat: ainda despacha — o agent resolve por nome no Postgres UniPlus
-  if (missingNames.length) {
-    const uniqueNames = [...new Set(missingNames)];
-    logger.warn(
-      `Uniplus preflight: produtos sem idUniplus (seguirão por nome no agent) companyId=${companyId}: ${uniqueNames.join(", ")}`
-    );
   }
 
   return {
@@ -343,9 +336,7 @@ const ValidateUniplusPreflightService = async ({
     code: "OK",
     message: usedDeliveryDevice
       ? "preflight ok (device do delivery)"
-      : missingNames.length
-        ? "preflight ok (códigos via nome no agent)"
-        : "preflight ok",
+      : "preflight ok",
     deviceId: printDevice.deviceId,
   };
 };

@@ -17,6 +17,7 @@ interface Request {
 
 const PERMANENT_ERROR_MARKERS = [
   "ERR_UNIPLUS_PRODUCT",
+  "ERR_UNIPLUS_USE_CODIGO_NOT_ID",
   "ERR_UNIPLUS_PROTOCOL_CLOSED",
   "ERR_UNIPLUS_PAYLOAD",
   "ERR_UNIPLUS_CONFIG",
@@ -24,6 +25,7 @@ const PERMANENT_ERROR_MARKERS = [
   "Payload incompleto",
   "Payload sem protocol",
   "Item sem codigoproduto",
+  "use o codigo visível",
   "UniPlus desabilitado",
   "uniplus_connection_string",
   "psycopg2 não instalado",
