@@ -12,12 +12,13 @@ const GetProfilePicUrl = async (
   const jid = `${number.replace(/\D/g, "")}@s.whatsapp.net`;
 
   try {
-    return await fetchAndPersistProfilePic(
+    const result = await fetchAndPersistProfilePic(
       wbot,
       jid,
       companyId,
       number.replace(/\D/g, "")
     );
+    return result.url;
   } catch {
     return fallbackProfilePicUrl();
   }

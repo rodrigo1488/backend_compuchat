@@ -84,22 +84,27 @@ const CreateOrUpdateContactService = async ({
   if (!created) {
     const updateData: any = {};
 
-    // Atualizar foto: sempre substituir URLs expiradas do CDN WhatsApp ou quando vier URL local nova
+    // Atualizar foto: nunca sobrescrever URL real (local/CDN) com nopicture
+    // vindo do caminho rápido do inbound — o refresh em background grava a local.
     const newPicIsReal = profilePicUrl && !profilePicUrl.includes("nopicture");
     const oldPicIsReal =
       contact.profilePicUrl && !contact.profilePicUrl.includes("nopicture");
     const oldPicIsStale = isWhatsAppCdnProfileUrl(contact.profilePicUrl);
 
     if (newPicIsReal && (profilePicUrl !== contact.profilePicUrl || oldPicIsStale)) {
+      // Preferir foto local nova; se a nova for CDN e já houver local, manter local.
+      if (
+        isLocalContactProfileUrl(contact.profilePicUrl) &&
+        isWhatsAppCdnProfileUrl(profilePicUrl)
+      ) {
+        // mantém a local existente
+      } else {
+        updateData.profilePicUrl = profilePicUrl;
+      }
+    } else if ((!oldPicIsReal || oldPicIsStale) && newPicIsReal) {
       updateData.profilePicUrl = profilePicUrl;
-    } else if ((!oldPicIsReal || oldPicIsStale) && profilePicUrl) {
-      updateData.profilePicUrl = profilePicUrl;
-    } else if (
-      isLocalContactProfileUrl(contact.profilePicUrl) &&
-      isWhatsAppCdnProfileUrl(profilePicUrl)
-    ) {
-      updateData.profilePicUrl = contact.profilePicUrl;
     }
+    // newPicIsReal === false (nopicture): não atualiza — preserva local/CDN no banco
 
     // Atualizar whatsappId apenas se não estiver definido
     if (isNil(contact.whatsappId) && whatsappId) {

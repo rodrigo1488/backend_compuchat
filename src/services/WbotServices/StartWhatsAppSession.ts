@@ -1,4 +1,5 @@
 import { initWASocket } from "../../libs/wbot";
+import { loadBaileys } from "../../libs/baileysModule";
 import Whatsapp from "../../models/Whatsapp";
 import { wbotMessageListener } from "./wbotMessageListener";
 import { getIO } from "../../libs/socket";
@@ -21,6 +22,9 @@ export const StartWhatsAppSession = async (
     }
     return;
   }
+
+  // Baileys 7 é ESM-only — carregar antes de qualquer uso via Proxy/getBaileys
+  await loadBaileys();
 
   // Verificar se já existe uma sessão ativa antes de iniciar nova
   // IMPORTANTE: Mesmo se a sessão existir, precisamos garantir que os listeners estão registrados

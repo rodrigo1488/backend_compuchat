@@ -1,4 +1,4 @@
-import {
+import type {
   WASocket,
   BinaryNode,
   Contact as BContact,
@@ -6,7 +6,7 @@ import {
 import * as Sentry from "@sentry/node";
 
 import { Op } from "sequelize";
-// import { getIO } from "../../libs/socket";
+import { getIO } from "../../libs/socket";
 import { Store } from "../../libs/store";
 import Contact from "../../models/Contact";
 import Setting from "../../models/Setting";
@@ -62,12 +62,53 @@ const wbotMonitor = async (
 
           if (consecutiveHealthCheckFailures >= MAX_CONSECUTIVE_FAILURES) {
             logger.error({
-              msg: "wbotMonitor: Conexão considerada morta após múltiplas falhas de health check. Limpando monitor.",
+              msg: "wbotMonitor: Conexão considerada morta após múltiplas falhas de health check. Marcando TIMEOUT e reiniciando sessão.",
               whatsappId: whatsapp.id,
               whatsappName: whatsapp.name,
               companyId
             });
             clearInterval(healthCheckInterval);
+
+            try {
+              await whatsapp.update({ status: "TIMEOUT" });
+              const io = getIO();
+              io.to(`company-${companyId}-mainchannel`).emit(
+                `company-${companyId}-whatsappSession`,
+                {
+                  action: "update",
+                  session: whatsapp
+                }
+              );
+            } catch (statusError) {
+              logger.error({
+                msg: "wbotMonitor: Erro ao marcar TIMEOUT após health check",
+                whatsappId: whatsapp.id,
+                error: statusError
+              });
+            }
+
+            try {
+              // Imports dinâmicos evitam ciclo wbot → StartWhatsAppSession → wbotMonitor
+              const { removeWbot } = await import("../../libs/wbot");
+              const { StartWhatsAppSession } = await import(
+                "./StartWhatsAppSession"
+              );
+              await removeWbot(whatsapp.id, false);
+              if (
+                whatsapp.type !== "instagram" &&
+                whatsapp.provider !== "gupshup"
+              ) {
+                setTimeout(() => {
+                  void StartWhatsAppSession(whatsapp, companyId);
+                }, 2000);
+              }
+            } catch (recoverError) {
+              logger.error({
+                msg: "wbotMonitor: Erro ao reiniciar sessão após health check",
+                whatsappId: whatsapp.id,
+                error: recoverError
+              });
+            }
             return;
           }
         } else {

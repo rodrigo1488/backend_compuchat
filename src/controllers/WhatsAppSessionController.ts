@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { getWbot } from "../libs/wbot";
+import { getIO } from "../libs/socket";
 import ShowWhatsAppService from "../services/WhatsappService/ShowWhatsAppService";
 import { StartWhatsAppSession } from "../services/WbotServices/StartWhatsAppSession";
 import UpdateWhatsAppService from "../services/WhatsappService/UpdateWhatsAppService";
@@ -66,6 +67,15 @@ const remove = async (req: Request, res: Response): Promise<Response> => {
 
   await whatsapp.update({ status: "DISCONNECTED", session: "" });
   await CloseTicketsByWhatsAppIdService(whatsapp.id);
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(
+    `company-${companyId}-whatsappSession`,
+    {
+      action: "update",
+      session: whatsapp
+    }
+  );
 
   return res.status(200).json({ message: "Session disconnected." });
 };

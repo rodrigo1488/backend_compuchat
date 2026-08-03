@@ -3,9 +3,9 @@ import type {
   AuthenticationState,
   SignalDataTypeMap
 } from "baileys";
-import { BufferJSON, initAuthCreds, proto } from "baileys";
 import Whatsapp from "../models/Whatsapp";
 import { logger } from "../utils/logger";
+import { loadBaileys } from "../libs/baileysModule";
 
 const KEY_MAP: { [T in keyof SignalDataTypeMap]: string } = {
   "pre-key": "preKeys",
@@ -26,6 +26,8 @@ const authSaveLocks = new Map<number, Promise<void>>();
 const authState = async (
   whatsapp: Whatsapp
 ): Promise<{ state: AuthenticationState; saveState: () => void }> => {
+  const { BufferJSON, initAuthCreds } = await loadBaileys();
+
   let creds: AuthenticationCreds;
   let keys: any = {};
 

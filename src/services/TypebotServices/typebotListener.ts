@@ -1,11 +1,14 @@
 import axios, { AxiosRequestConfig } from "axios";
 import Ticket from "../../models/Ticket";
 import QueueIntegrations from "../../models/QueueIntegrations";
-import { WASocket, delay, proto } from "baileys";
+import type { WASocket, proto } from "baileys";
+import { baileys } from "../../libs/baileysModule";
 import { getBodyMessage } from "../WbotServices/wbotMessageListener";
 import { logger } from "../../utils/logger";
 import { isNil } from "lodash";
 import UpdateTicketService from "../TicketServices/UpdateTicketService";
+
+const delay = (ms: number) => (baileys as any).delay(ms);
 
 
 type Session = WASocket & {

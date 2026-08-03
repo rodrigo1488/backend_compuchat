@@ -1,14 +1,5 @@
 import * as Sentry from "@sentry/node";
-import makeWASocket, {
-  WASocket,
-  WAVersion,
-  Browsers,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  // makeInMemoryStore,
-  isJidBroadcast
-} from "baileys";
+import type { WASocket, WAVersion } from "baileys";
 
 import Whatsapp from "../models/Whatsapp";
 import { logger } from "../utils/logger";
@@ -22,6 +13,7 @@ import { StartWhatsAppSession } from "../services/WbotServices/StartWhatsAppSess
 import DeleteBaileysService from "../services/BaileysServices/DeleteBaileysService";
 import CloseTicketsByWhatsAppIdService from "../services/TicketServices/CloseTicketsByWhatsAppIdService";
 import NodeCache from 'node-cache';
+import { loadBaileys } from "./baileysModule";
 
 // Usar pino diretamente ao invés de path interno do Baileys (compatível com Baileys 7.x)
 const loggerBaileys = pino({ 
@@ -53,6 +45,7 @@ let baileysVersionCache: { version: WAVersion; isLatest: boolean } | null = null
 
 const getBaileysVersion = async () => {
   if (baileysVersionCache) return baileysVersionCache;
+  const { fetchLatestBaileysVersion } = await loadBaileys();
   baileysVersionCache = await fetchLatestBaileysVersion();
   return baileysVersionCache;
 };
@@ -132,6 +125,14 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
 
         // Marcar como em inicialização
         initializingSessions.set(id, true);
+
+        const {
+          default: makeWASocket,
+          Browsers,
+          DisconnectReason,
+          makeCacheableSignalKeyStore,
+          isJidBroadcast
+        } = await loadBaileys();
 
         const { version, isLatest } = await getBaileysVersion();
         const isLegacy = provider === "stable" ? true : false;
@@ -226,6 +227,22 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                     timeConnectingMs: timeConnecting
                   });
                   connectionStartTime = null;
+                  try {
+                    await activeWhatsapp.update({ status: "TIMEOUT" });
+                    io.to(`company-${activeWhatsapp.companyId}-mainchannel`).emit(
+                      `company-${activeWhatsapp.companyId}-whatsappSession`,
+                      {
+                        action: "update",
+                        session: activeWhatsapp
+                      }
+                    );
+                  } catch (timeoutStatusError) {
+                    logger.error({
+                      msg: "Erro ao marcar TIMEOUT após connecting travado",
+                      whatsappId: id,
+                      error: timeoutStatusError
+                    });
+                  }
                   removeWbot(id, false);
                   // Aguardar antes de reconectar
                   setTimeout(() => {
@@ -284,7 +301,7 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                 }
                 removeWbot(id, false);
               } else if (disconnectStatusCode !== DisconnectReason.loggedOut) {
-                // Desconexão por rede/timeout/erro transitório — reconectar com backoff exponencial
+                // Desconexão por rede/timeout/erro transitório — avisar UI e reconectar com backoff
                 const nextAttempt = currentAttempts + 1;
                 reconnectAttemptsMap.set(id, nextAttempt);
                 // Backoff: min(2^n * 1000, 60000) ms → 2s, 4s, 8s, 16s, 32s, 60s (máx)
@@ -298,6 +315,22 @@ export const initWASocket = async (whatsapp: Whatsapp): Promise<Session> => {
                   reconnectAttempt: nextAttempt,
                   delayMs: delay
                 });
+                try {
+                  await activeWhatsapp.update({ status: "TIMEOUT" });
+                  io.to(`company-${activeWhatsapp.companyId}-mainchannel`).emit(
+                    `company-${activeWhatsapp.companyId}-whatsappSession`,
+                    {
+                      action: "update",
+                      session: activeWhatsapp
+                    }
+                  );
+                } catch (timeoutStatusError) {
+                  logger.error({
+                    msg: "Erro ao marcar TIMEOUT após desconexão transitória",
+                    whatsappId: id,
+                    error: timeoutStatusError
+                  });
+                }
                 removeWbot(id, false);
                 // Não reconectar se for Instagram ou Gupshup (não usam Baileys)
                 setTimeout(

@@ -22,6 +22,10 @@ type WbotProfile = {
 };
 
 const PROFILE_PIC_THROTTLE_SECONDS = 10 * 60;
+/** Evita flood em falhas transitórias sem bloquear retries por 10 min. */
+const PROFILE_PIC_RETRY_THROTTLE_SECONDS = 60;
+const PROFILE_PIC_QUERY_TIMEOUT_MS = 8000;
+const PROFILE_PIC_BACKGROUND_QUERY_TIMEOUT_MS = 5000;
 
 export const getProfilePicThrottleKey = (
   companyId: number,
@@ -215,10 +219,11 @@ const classifyProfilePicError = (err: any): ProfilePicFailReason => {
 const queryProfilePictureUrl = async (
   wbot: WbotProfile,
   jid: string,
-  number: string
+  number: string,
+  timeoutMs: number = PROFILE_PIC_QUERY_TIMEOUT_MS
 ): Promise<{ whatsappUrl?: string; reason?: ProfilePicFailReason }> => {
   try {
-    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 8000);
+    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", timeoutMs);
     if (!whatsappUrl) {
       return { reason: "no_photo" };
     }
@@ -236,7 +241,11 @@ const queryProfilePictureUrl = async (
     }
 
     try {
-      const previewUrl = await wbot.profilePictureUrl(jid, "preview", 8000);
+      const previewUrl = await wbot.profilePictureUrl(
+        jid,
+        "preview",
+        timeoutMs
+      );
       if (!previewUrl) {
         return { reason: "no_photo" };
       }
@@ -343,36 +352,71 @@ export const forceRefreshContactProfilePic = async (
   }
 };
 
+export type FetchProfilePicResult = {
+  url: string;
+  reason?: ProfilePicFailReason;
+};
+
 export const fetchAndPersistProfilePic = async (
   wbot: WbotProfile,
   jid: string,
   companyId: number,
-  number: string
-): Promise<string> => {
+  number: string,
+  options?: { timeoutMs?: number }
+): Promise<FetchProfilePicResult> => {
   const fallback = fallbackProfilePicUrl();
   const localPath = getLocalProfilePicPath(companyId, number);
   const publicUrl = getLocalProfilePicPublicUrl(companyId, number);
+  const timeoutMs =
+    options?.timeoutMs ?? PROFILE_PIC_BACKGROUND_QUERY_TIMEOUT_MS;
 
   if (fs.existsSync(localPath)) {
-    return publicUrl;
+    return { url: publicUrl };
   }
 
-  try {
-    const whatsappUrl = await wbot.profilePictureUrl(jid, "image", 5000);
-    if (!whatsappUrl) {
-      return fallback;
-    }
+  const { whatsappUrl, reason } = await queryProfilePictureUrl(
+    wbot,
+    jid,
+    number,
+    timeoutMs
+  );
 
-    return await persistProfilePictureFromUrl(whatsappUrl, companyId, number);
-  } catch (err: any) {
-    logger.debug(
-      `[profilePic] profilePictureUrl falhou (${jid}): ${err?.message || err}`
-    );
+  if (!whatsappUrl) {
     if (fs.existsSync(localPath)) {
-      return publicUrl;
+      return { url: publicUrl, reason };
     }
-    return fallback;
+    return { url: fallback, reason: reason || "error" };
   }
+
+  const url = await persistProfilePictureFromUrl(
+    whatsappUrl,
+    companyId,
+    number
+  );
+
+  if (url.includes("nopicture")) {
+    if (fs.existsSync(localPath)) {
+      return { url: publicUrl, reason: "error" };
+    }
+    return { url: fallback, reason: "error" };
+  }
+
+  return { url };
+};
+
+const applyProfilePicThrottle = async (
+  companyId: number,
+  number: string,
+  seconds: number
+): Promise<void> => {
+  try {
+    await cacheLayer.set(
+      getProfilePicThrottleKey(companyId, number),
+      "1",
+      "EX",
+      seconds
+    );
+  } catch (_) {}
 };
 
 const refreshContactProfilePicInBackground = async (
@@ -388,23 +432,57 @@ const refreshContactProfilePicInBackground = async (
     if (throttled) {
       return;
     }
-    await cacheLayer.set(throttleKey, "1", "EX", PROFILE_PIC_THROTTLE_SECONDS);
   } catch (_) {}
 
-  const url = await fetchAndPersistProfilePic(wbot, jid, companyId, number);
-  if (url.includes("nopicture")) {
+  const { url, reason } = await fetchAndPersistProfilePic(
+    wbot,
+    jid,
+    companyId,
+    number
+  );
+
+  if (!url.includes("nopicture")) {
+    if (contactId) {
+      await updateContactProfilePicInDb(contactId, companyId, url);
+    } else {
+      const contact = await Contact.findOne({ where: { companyId, number } });
+      if (contact) {
+        await updateContactProfilePicInDb(contact.id, companyId, url);
+      }
+    }
+    // Reaplica após updateContactProfilePicInDb (que limpa o throttle).
+    await applyProfilePicThrottle(
+      companyId,
+      number,
+      PROFILE_PIC_THROTTLE_SECONDS
+    );
     return;
   }
 
-  if (contactId) {
-    await updateContactProfilePicInDb(contactId, companyId, url);
+  // Sucesso definitivo negativo: não adianta retry imediato.
+  if (reason === "no_photo" || reason === "privacy") {
+    await applyProfilePicThrottle(
+      companyId,
+      number,
+      PROFILE_PIC_THROTTLE_SECONDS
+    );
+    logger.warn(
+      `[profilePic] background sem foto persistente (${number}, jid=${jid}, reason=${reason})`
+    );
     return;
   }
 
-  const contact = await Contact.findOne({ where: { companyId, number } });
-  if (contact) {
-    await updateContactProfilePicInDb(contact.id, companyId, url);
-  }
+  // timeout/error: throttle curto para evitar flood, mas permite retry logo.
+  await applyProfilePicThrottle(
+    companyId,
+    number,
+    PROFILE_PIC_RETRY_THROTTLE_SECONDS
+  );
+  logger.warn(
+    `[profilePic] background falhou de forma transitória (${number}, jid=${jid}, reason=${
+      reason || "error"
+    })`
+  );
 };
 
 /** Atualiza foto em background para não atrasar messages.upsert. */
@@ -423,8 +501,10 @@ export const scheduleContactProfilePicRefresh = (
       number,
       contactId
     ).catch(err => {
-      logger.debug(
-        `[profilePic] refresh em background falhou (${number}): ${err?.message || err}`
+      logger.warn(
+        `[profilePic] refresh em background falhou (${number}, jid=${jid}): ${
+          err?.message || err
+        }`
       );
     });
   });

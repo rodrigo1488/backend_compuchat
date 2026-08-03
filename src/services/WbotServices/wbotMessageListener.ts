@@ -6,20 +6,35 @@ import { isNil, head } from "lodash";
 import { Op } from "sequelize";
 import { extension as mimeExtension } from "mime-types";
 
-import {
-  downloadMediaMessage,
-  extractMessageContent,
-  getContentType,
-  jidNormalizedUser,
-  MessageUpsertType,
-  proto,
-  WAMessage,
-  WAMessageStubType,
-  WAMessageUpdate,
-  WASocket,
-  isPnUser,
-  WAMessageAddressingMode,
-} from "baileys";
+import type { MessageUpsertType, proto, WAMessage, WAMessageUpdate, WASocket } from "baileys";
+import { baileys } from "../../libs/baileysModule";
+
+// Runtime via import() dinâmico (Baileys 7 ESM-only; backend é CJS)
+const downloadMediaMessage = (...args: any[]) =>
+  (baileys as any).downloadMediaMessage(...args);
+const extractMessageContent = (...args: any[]) =>
+  (baileys as any).extractMessageContent(...args);
+const getContentType = (...args: any[]) =>
+  (baileys as any).getContentType(...args);
+const jidNormalizedUser = (...args: any[]) =>
+  (baileys as any).jidNormalizedUser(...args);
+const isPnUser = (...args: any[]) => (baileys as any).isPnUser(...args);
+const WAMessageStubType = new Proxy(
+  {},
+  {
+    get(_t, prop) {
+      return (baileys as any).WAMessageStubType[prop];
+    }
+  }
+) as any;
+const WAMessageAddressingMode = new Proxy(
+  {},
+  {
+    get(_t, prop) {
+      return (baileys as any).WAMessageAddressingMode[prop];
+    }
+  }
+) as any;
 import Contact from "../../models/Contact";
 import Ticket from "../../models/Ticket";
 import Message from "../../models/Message";
@@ -785,33 +800,12 @@ const verifyContact = async (
   wbot: Session,
   companyId: number
 ): Promise<Contact> => {
-  let profilePicUrl: string;
-
   // Normalizar o ID do contato para garantir formato correto
   const normalizedContactId = msgContact.id.includes("g.us")
     ? msgContact.id
     : jidNormalizedUser(msgContact.id);
 
-  // Verificar se o contato já existe no banco antes de buscar a foto.
-  // Para contatos já conhecidos que já têm foto, não fazemos chamada de rede.
-  // Isso elimina a principal causa de atraso: profilePictureUrl em cada msg.
   const isGroup = normalizedContactId.includes("g.us");
-  const existingNumberCheck = isGroup
-    ? normalizedContactId
-    : normalizedContactId.replace(/@.*$/, "").replace(/\D/g, "");
-
-  const existingForPic = !isGroup
-    ? await Contact.findOne({
-        where: { number: existingNumberCheck, companyId },
-        attributes: ["id", "profilePicUrl"]
-      })
-    : null;
-
-  profilePicUrl = resolveProfilePicForInboundMessage(
-    existingForPic?.profilePicUrl,
-    companyId,
-    existingNumberCheck
-  );
 
   // Extrair número do JID normalizado (remove @s.whatsapp.net ou @g.us)
   let contactNumber = isGroup
@@ -942,6 +936,21 @@ const verifyContact = async (
     logger.debug(`📞 Contato processado: ${contactNumber} | JID: ${normalizedContactId} | Empresa: ${companyId}`);
   }
 
+  // Foto: lookup e path em disco usam o número final (PN pós-LID), não o JID bruto.
+  // Download em background; aqui só reusa arquivo local se já existir.
+  const existingForPic = !isGroup
+    ? await Contact.findOne({
+        where: { number: contactNumber, companyId },
+        attributes: ["id", "profilePicUrl"]
+      })
+    : null;
+
+  const profilePicUrl = resolveProfilePicForInboundMessage(
+    existingForPic?.profilePicUrl,
+    companyId,
+    contactNumber
+  );
+
   const contactData = {
     name: msgContact?.name || contactNumber,
     number: contactNumber,
@@ -958,14 +967,14 @@ const verifyContact = async (
     shouldRefreshContactProfilePic(
       contact.profilePicUrl,
       companyId,
-      existingNumberCheck
+      contactNumber
     )
   ) {
     scheduleContactProfilePicRefresh(
       wbot,
       normalizedContactId,
       companyId,
-      existingNumberCheck,
+      contactNumber,
       contact.id
     );
   }
