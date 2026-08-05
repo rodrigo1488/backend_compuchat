@@ -1,5 +1,6 @@
 import Setting from "../../models/Setting";
 import Product from "../../models/Product";
+import ProductVariationOption from "../../models/ProductVariationOption";
 import PrintDevice from "../../models/PrintDevice";
 import Form from "../../models/Form";
 import { isAgentConnected } from "../../libs/printWebSocket";
@@ -121,17 +122,43 @@ function itemCodigoHint(item: any): string {
   ).trim();
 }
 
+type OptionLite = { id: number; idUniplus?: string | null };
+
 /**
  * Resolve código UniPlus do item (= produto.codigo visível no UniPlus, NÃO o id interno).
- * Ordem: campo do item → Product.idUniplus → match por nome no catálogo com código.
+ * Ordem: campo do item → option (variationOptionId / baseOptionId / half*OptionId)
+ * → Product.idUniplus → match por nome no catálogo com código.
  */
 export function resolveItemUniplusCodigo(
   item: any,
   byId: Map<number, Product>,
-  catalog: Product[]
+  catalog: Product[],
+  optionById: Map<number, OptionLite> = new Map()
 ): string {
   const direct = itemCodigoHint(item);
   if (direct) return direct;
+
+  // Meio a meio: prioriza tamanho do base; item normal: variationOptionId
+  const optionIds = (
+    item?.type === "halfAndHalf"
+      ? [
+          Number(item?.baseOptionId),
+          Number(item?.variationOptionId),
+          Number(item?.half1OptionId),
+          Number(item?.half2OptionId),
+        ]
+      : [
+          Number(item?.variationOptionId),
+          Number(item?.baseOptionId),
+          Number(item?.half1OptionId),
+          Number(item?.half2OptionId),
+        ]
+  ).filter((id) => Number.isFinite(id) && id > 0);
+
+  for (const oid of optionIds) {
+    const code = String(optionById.get(oid)?.idUniplus || "").trim();
+    if (code) return code;
+  }
 
   const pid = Number(item?.productId);
   const byProduct = byId.get(pid);
@@ -302,11 +329,36 @@ const ValidateUniplusPreflightService = async ({
   });
   const catalogWithCode = catalog.filter((p) => String(p.idUniplus || "").trim());
 
+  const optionIds = [
+    ...new Set(
+      items
+        .flatMap((it) => [
+          Number(it.variationOptionId),
+          Number(it.baseOptionId),
+          Number(it.half1OptionId),
+          Number(it.half2OptionId),
+        ])
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  const options = optionIds.length
+    ? await ProductVariationOption.findAll({
+        where: { id: optionIds },
+        attributes: ["id", "idUniplus"],
+      })
+    : [];
+  const optionById = new Map(options.map((o) => [o.id, o]));
+
   const missingIds: number[] = [];
   const missingNames: string[] = [];
   const unnamed: string[] = [];
   for (const item of items) {
-    const codigo = resolveItemUniplusCodigo(item, byId, catalogWithCode);
+    const codigo = resolveItemUniplusCodigo(
+      item,
+      byId,
+      catalogWithCode,
+      optionById
+    );
     const nome = String(
       item.productName || item.name || byId.get(Number(item.productId))?.name || ""
     ).trim();

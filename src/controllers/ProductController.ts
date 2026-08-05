@@ -96,6 +96,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
               Yup.object().shape({
                 label: Yup.string().required(),
                 value: Yup.number().min(0).required(),
+                idUniplus: Yup.string().max(20).nullable(),
               })
             )
             .min(1)
@@ -179,6 +180,7 @@ export const update = async (
               Yup.object().shape({
                 label: Yup.string().required(),
                 value: Yup.number().min(0).required(),
+                idUniplus: Yup.string().max(20).nullable(),
               })
             )
             .min(1)

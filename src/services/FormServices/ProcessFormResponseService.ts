@@ -186,6 +186,7 @@ const normalizeMenuItems = async (
         half2ProductId: item.half2ProductId,
         half1OptionId: (item as any).half1OptionId || null,
         half2OptionId: (item as any).half2OptionId || null,
+        baseOptionId: (item as any).baseOptionId || null,
         productName,
         productValue: Math.round(productValue * 100) / 100,
         grupo: item.grupo || (base as any).grupo,

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import Setting from "../../models/Setting";
 import Product from "../../models/Product";
+import ProductVariationOption from "../../models/ProductVariationOption";
 import PrintDevice from "../../models/PrintDevice";
 import FormResponse from "../../models/FormResponse";
 import Form from "../../models/Form";
@@ -50,6 +51,10 @@ export interface UniplusDeliveryPayload {
   formResponseId: number;
   contamesa: Record<string, unknown>;
   itens: UniplusPayloadItem[];
+  /** Avisos de resolução (ex.: match só por nome) — agent ignora se não consumir */
+  metadata?: {
+    warnings?: string[];
+  };
 }
 
 interface BuildRequest {
@@ -94,6 +99,7 @@ async function getSettingMap(companyId: number): Promise<Record<string, string>>
         "uniplusEnabled",
         "uniplusIdFilial",
         "uniplusIdUsuario",
+        "uniplusCnpjFilial",
         "uniplusPaymentMap",
         "uniplusPrintDeviceId",
       ],
@@ -148,16 +154,41 @@ function findAnswerByLabel(
   return "";
 }
 
-function buildObservacao(item: any): string {
+type ProductLite = { id: number; name?: string | null; idUniplus?: string | null };
+
+export function formatHalfFlavorLabel(
+  productId: number | null | undefined,
+  productById: Map<number, ProductLite>
+): string {
+  const id = Number(productId);
+  if (!Number.isFinite(id) || id <= 0) return "";
+  const p = productById.get(id);
+  if (!p) return "";
+  const codigo = String(p.idUniplus || "").trim();
+  const nome = String(p.name || "").trim();
+  if (codigo && nome) return `${codigo} ${nome}`;
+  return codigo || nome;
+}
+
+/** Exposta para testes do contrato meio a meio → CONTAMESAITEM.observacao */
+export function buildObservacao(
+  item: any,
+  productById: Map<number, ProductLite> = new Map()
+): string {
   const parts: string[] = [];
   if (item.type === "halfAndHalf") {
     const name = String(item.productName || "");
-    // Preferir o nome completo (já traz "Metade X / Metade Y"); senão flag genérico
+    const half1 = formatHalfFlavorLabel(item.half1ProductId, productById);
+    const half2 = formatHalfFlavorLabel(item.half2ProductId, productById);
+    if (half1 || half2) {
+      parts.push(`Meio a meio: ${half1 || "?"} / ${half2 || "?"}`);
+    }
+    // Nome completo (pode truncar em nomeproduto 120) — reforça na observação
     if (/metade/i.test(name) || /meio\s*a\s*meio/i.test(name)) {
-      parts.push(name.slice(0, 200));
-    } else {
+      parts.push(name.slice(0, 160));
+    } else if (name && !half1 && !half2) {
       parts.push("Meio a meio");
-      if (name) parts.push(name.slice(0, 180));
+      parts.push(name.slice(0, 160));
     }
   }
   if (Array.isArray(item.addons) && item.addons.length) {
@@ -249,10 +280,15 @@ const BuildUniplusDeliveryPayloadService = async ({
   const meta = (response.metadata || {}) as Record<string, any>;
   const items = Array.isArray(menuItems) ? menuItems : [];
 
+  // Inclui base + sabores do meio a meio (half1/half2) para observação com códigos UniPlus
   const productIds = [
     ...new Set(
       items
-        .map((it) => Number(it.productId))
+        .flatMap((it) => [
+          Number(it.productId),
+          Number(it.half1ProductId),
+          Number(it.half2ProductId),
+        ])
         .filter((id) => Number.isFinite(id) && id > 0)
     ),
   ];
@@ -269,16 +305,82 @@ const BuildUniplusDeliveryPayloadService = async ({
   });
   const catalogWithCode = catalog.filter((p) => String(p.idUniplus || "").trim());
 
+  const optionIds = [
+    ...new Set(
+      items
+        .flatMap((it) => [
+          Number(it.variationOptionId),
+          Number(it.baseOptionId),
+          Number(it.half1OptionId),
+          Number(it.half2OptionId),
+        ])
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  const options = optionIds.length
+    ? await ProductVariationOption.findAll({
+        where: { id: optionIds },
+        attributes: ["id", "idUniplus", "label"],
+      })
+    : [];
+  const optionById = new Map(options.map((o) => [o.id, o]));
+
   const payloadItems: UniplusPayloadItem[] = [];
+  const warnings: string[] = [];
   for (const item of items) {
     const product = productById.get(Number(item.productId));
-    const codigo = resolveItemUniplusCodigo(item, productById, catalogWithCode);
+    const codigo = resolveItemUniplusCodigo(
+      item,
+      productById,
+      catalogWithCode,
+      optionById
+    );
     const nomeproduto = String(
       item.productName || product?.name || "Produto"
     ).slice(0, 120);
     const qty = Number(item.quantity) || 1;
     const lineTotal = calcMenuItemLineTotal(item);
     const unit = roundMoney(lineTotal / qty);
+
+    const optionCodigo = [
+      Number(item.variationOptionId),
+      Number(item.baseOptionId),
+      Number(item.half1OptionId),
+      Number(item.half2OptionId),
+    ]
+      .filter((id) => Number.isFinite(id) && id > 0)
+      .some((id) => String(optionById.get(id)?.idUniplus || "").trim());
+    const baseHasCodigo = Boolean(String(product?.idUniplus || "").trim());
+    if (!codigo) {
+      const msg = `item productId=${item.productId} sem idUniplus — agent resolverá por nome (risco de ambiguidade): ${nomeproduto}`;
+      warnings.push(msg);
+      logger.warn(
+        {
+          protocol,
+          productId: item.productId,
+          type: item.type,
+          nomeproduto,
+        },
+        "Uniplus payload: item sem idUniplus — agent resolverá por nome (risco de ambiguidade)"
+      );
+    } else if (
+      item.type === "halfAndHalf" &&
+      !baseHasCodigo &&
+      !optionCodigo
+    ) {
+      const msg = `meio a meio productId=${item.productId} com codigo=${codigo} resolvido por nome longo (base sem idUniplus): ${nomeproduto}`;
+      warnings.push(msg);
+      logger.warn(
+        {
+          protocol,
+          productId: item.productId,
+          codigo,
+          nomeproduto,
+        },
+        "Uniplus payload: meio a meio com codigo resolvido por nome (base sem idUniplus)"
+      );
+    }
+
     payloadItems.push({
       // codigo pode vir vazio — agent resolve por nome no UniPlus
       codigoproduto: (codigo || "").slice(0, 20),
@@ -287,7 +389,7 @@ const BuildUniplusDeliveryPayloadService = async ({
       precounitario: unit,
       valortotal: lineTotal,
       unidademedida: "UN",
-      observacao: buildObservacao(item),
+      observacao: buildObservacao(item, productById),
       orderidintegracao: protocol,
       hash: padHash(randomUUID()),
     });
@@ -353,6 +455,7 @@ const BuildUniplusDeliveryPayloadService = async ({
   const now = new Date();
   const idFilial = Number(settings.uniplusIdFilial) || 1;
   const idUsuario = Number(settings.uniplusIdUsuario) || 1;
+  const cnpjFilial = String(settings.uniplusCnpjFilial || "").trim().slice(0, 18);
   const hash = padHash(randomUUID());
 
   const contamesa: Record<string, unknown> = {
@@ -363,10 +466,15 @@ const BuildUniplusDeliveryPayloadService = async ({
     numeromesa: null,
     statusagendamento: 3,
     pautaunica: 1,
+    // Alinhado à inserção nativa do UniPlus
+    abertaoffline: 1,
     idfilial: idFilial,
     idusuario: idUsuario,
+    cnpjfilial: cnpjFilial,
     idcliente: 0,
     codigocliente: "",
+    // Unico usa `nome` na listagem de delivery; `nomecliente` fica como espelho.
+    nome: String(contactName || response.responderName || "Cliente").slice(0, 60),
     nomecliente: String(contactName || response.responderName || "Cliente").slice(0, 60),
     telefone: String(contactPhone || response.responderPhone || "").slice(0, 20),
     documento: String(documento).slice(0, 18),
@@ -394,6 +502,7 @@ const BuildUniplusDeliveryPayloadService = async ({
     data: now.toISOString().slice(0, 10),
     horaabertura: now.toISOString(),
     horaultimoconsumo: now.toISOString(),
+    horapedidoefetuado: now.toISOString(),
     currenttimemillis: Date.now(),
     timestampalteracao: Date.now(),
   };
@@ -404,6 +513,7 @@ const BuildUniplusDeliveryPayloadService = async ({
     formResponseId: response.id,
     contamesa,
     itens: payloadItems,
+    ...(warnings.length ? { metadata: { warnings } } : {}),
   };
 };
 

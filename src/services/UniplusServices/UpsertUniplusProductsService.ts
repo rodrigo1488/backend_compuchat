@@ -1,4 +1,6 @@
 import Product from "../../models/Product";
+import ProductVariation from "../../models/ProductVariation";
+import ProductVariationOption from "../../models/ProductVariationOption";
 import { Op } from "sequelize";
 import { logger } from "../../utils/logger";
 
@@ -12,6 +14,7 @@ export interface UniplusProductUpsertResult {
   codigo: string;
   action: "created" | "updated" | "skipped";
   productId?: number;
+  optionId?: number;
   error?: string;
 }
 
@@ -32,8 +35,32 @@ function normalizeName(name: string): string {
     .replace(/\s+/g, " ");
 }
 
+async function findOptionByCodigo(
+  companyId: number,
+  codigo: string
+): Promise<ProductVariationOption | null> {
+  return ProductVariationOption.findOne({
+    where: { idUniplus: codigo },
+    include: [
+      {
+        model: ProductVariation,
+        required: true,
+        include: [
+          {
+            model: Product,
+            required: true,
+            where: { companyId },
+            attributes: ["id", "companyId"],
+          },
+        ],
+      },
+    ],
+  });
+}
+
 /**
  * Upsert UniPlus → Compuchat.
+ * 0) se codigo já está em ProductVariationOption → atualiza option (não cria Product)
  * 1) por idUniplus (= codigo)
  * 2) por nome (atualiza produto do cardápio existente e grava o codigo)
  * 3) cria novo
@@ -77,6 +104,28 @@ const UpsertUniplusProductsService = async ({
 
     try {
       const nextValue = Math.round(preco * 100) / 100;
+
+      // 0) Já anexado como variação de um produto pai
+      const asOption = await findOptionByCodigo(companyId, codigo);
+      if (asOption) {
+        let changed = false;
+        if (Number(asOption.value) !== nextValue) {
+          asOption.value = nextValue;
+          changed = true;
+        }
+        if (changed) {
+          await asOption.save();
+        }
+        const parentId = asOption.productVariation?.productId;
+        results.push({
+          codigo,
+          action: "updated",
+          productId: parentId,
+          optionId: asOption.id,
+        });
+        continue;
+      }
+
       let existing = await Product.findOne({
         where: { companyId, idUniplus: codigo },
       });

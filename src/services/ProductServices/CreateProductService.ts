@@ -6,7 +6,7 @@ import AppError from "../../errors/AppError";
 
 export interface ProductVariationInput {
   name: string;
-  options: Array<{ label: string; value: number }>;
+  options: Array<{ label: string; value: number; idUniplus?: string | null }>;
 }
 
 interface Request {
@@ -90,6 +90,7 @@ const CreateProductService = async ({
         productVariationId: variation.id,
         label: String(opt.label).trim(),
         value: Number(opt.value),
+        idUniplus: opt.idUniplus?.trim() || null,
       });
     }
   }
