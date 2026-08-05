@@ -2,6 +2,7 @@ import { Response } from "express";
 import UpsertUniplusProductsService from "../services/UniplusServices/UpsertUniplusProductsService";
 import AttachUniplusVariationService from "../services/UniplusServices/AttachUniplusVariationService";
 import ListAgentProductsService from "../services/UniplusServices/ListAgentProductsService";
+import LinkUniplusStandaloneService from "../services/UniplusServices/LinkUniplusStandaloneService";
 import { PrintDeviceAuthRequest } from "../middleware/isPrintDeviceAuth";
 
 export const upsert = async (
@@ -40,6 +41,26 @@ export const attachVariation = async (
     preco:
       req.body?.preco != null && req.body?.preco !== ""
         ? Number(req.body.preco)
+        : undefined,
+    parentGrupo: req.body?.parentGrupo,
+  });
+  return res.status(200).json(data);
+};
+
+export const linkStandalone = async (
+  req: PrintDeviceAuthRequest,
+  res: Response
+): Promise<Response> => {
+  const companyId = Number(req.companyId);
+  const data = await LinkUniplusStandaloneService({
+    companyId,
+    codigo: String(req.body?.codigo || ""),
+    nome: String(req.body?.nome || ""),
+    preco: Number(req.body?.preco) || 0,
+    grupo: req.body?.grupo,
+    productId:
+      req.body?.productId != null && req.body?.productId !== ""
+        ? Number(req.body.productId)
         : undefined,
   });
   return res.status(200).json(data);

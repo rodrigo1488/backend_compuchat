@@ -13,7 +13,7 @@ interface Request {
 const ListAgentProductsService = async ({
   companyId,
   q,
-  limit = 200,
+  limit = 1000,
 }: Request) => {
   const where: any = { companyId };
   const needle = String(q || "").trim();
@@ -40,7 +40,7 @@ const ListAgentProductsService = async ({
       },
     ],
     order: [["name", "ASC"]],
-    limit: Math.min(Math.max(Number(limit) || 200, 1), 500),
+    limit: Math.min(Math.max(Number(limit) || 1000, 1), 1000),
   });
 
   return {

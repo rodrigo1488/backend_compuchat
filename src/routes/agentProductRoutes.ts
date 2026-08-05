@@ -22,4 +22,10 @@ routes.post(
   AgentProductController.attachVariation
 );
 
+routes.post(
+  "/agent/products/link-standalone",
+  isPrintDeviceAuth,
+  AgentProductController.linkStandalone
+);
+
 export default routes;

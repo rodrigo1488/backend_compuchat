@@ -1,9 +1,12 @@
-import { Op } from "sequelize";
 import Product from "../../models/Product";
 import ProductVariation from "../../models/ProductVariation";
 import ProductVariationOption from "../../models/ProductVariationOption";
 import AppError from "../../errors/AppError";
-import { logger } from "../../utils/logger";
+import {
+  releaseUniplusCodigo,
+  findOptionByCodigo,
+  suggestLabelFromName,
+} from "./ReleaseUniplusCodigoService";
 
 export interface AttachUniplusVariationRequest {
   companyId: number;
@@ -12,6 +15,8 @@ export interface AttachUniplusVariationRequest {
   variationName?: string;
   optionLabel?: string;
   preco?: number;
+  /** Se enviado, atualiza o grupo/categoria do produto pai junto (corrige "Outros") */
+  parentGrupo?: string;
 }
 
 export interface AttachUniplusVariationResult {
@@ -21,45 +26,10 @@ export interface AttachUniplusVariationResult {
   removedProductId?: number;
 }
 
-async function findOptionByCodigo(
-  companyId: number,
-  codigo: string
-): Promise<ProductVariationOption | null> {
-  return ProductVariationOption.findOne({
-    where: { idUniplus: codigo },
-    include: [
-      {
-        model: ProductVariation,
-        required: true,
-        include: [
-          {
-            model: Product,
-            required: true,
-            where: { companyId },
-            attributes: ["id", "companyId", "name"],
-          },
-        ],
-      },
-    ],
-  });
-}
-
-function suggestLabelFromName(name: string, fallback: string): string {
-  const tokens = String(name || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  const last = tokens[tokens.length - 1] || "";
-  if (/^(p|m|g|gg|pp|xg|xp)$/i.test(last)) {
-    return last.toUpperCase();
-  }
-  if (name.trim()) return name.trim().slice(0, 40);
-  return fallback;
-}
-
 /**
  * Anexa um codigo UniPlus como opção de variação de um Product pai.
- * Remove o Product standalone com o mesmo codigo (folha sync), se existir.
+ * Remove o Product standalone com o mesmo codigo (folha sync), se existir,
+ * e desvincula de qualquer outra opção que já o usasse.
  */
 const AttachUniplusVariationService = async ({
   companyId,
@@ -68,6 +38,7 @@ const AttachUniplusVariationService = async ({
   variationName: rawVariationName,
   optionLabel: rawOptionLabel,
   preco,
+  parentGrupo,
 }: AttachUniplusVariationRequest): Promise<AttachUniplusVariationResult> => {
   const codigo = String(rawCodigo || "").trim().slice(0, 20);
   if (!codigo) {
@@ -93,6 +64,8 @@ const AttachUniplusVariationService = async ({
       ? Math.round(Number(preco) * 100) / 100
       : null;
 
+  // Se o código já está numa opção de OUTRO pai, bloqueia com erro amigável
+  // (o Print Agent resolve o nome do produto conflitante a partir do id).
   const existingOption = await findOptionByCodigo(companyId, codigo);
   if (
     existingOption?.productVariation &&
@@ -104,53 +77,17 @@ const AttachUniplusVariationService = async ({
     );
   }
 
-  let removedProductId: number | undefined;
-  let priceFromStandalone = 0;
-
-  const standalone = await Product.findOne({
-    where: {
-      companyId,
-      idUniplus: codigo,
-      id: { [Op.ne]: parent.id },
-    },
-    include: [
-      { association: "variations", include: [{ association: "options" }] },
-    ],
+  const released = await releaseUniplusCodigo(companyId, codigo, {
+    exceptProductId: parent.id,
+    exceptOptionId: existingOption?.id,
   });
 
-  if (standalone) {
-    const vars = (standalone as any).variations || [];
-    const optionCount = vars.reduce(
-      (n: number, v: any) => n + (v.options?.length || 0),
-      0
-    );
-    if (optionCount > 0) {
-      throw new AppError(
-        "ERR_UNIPLUS_ATTACH_NOT_LEAF: produto com o codigo já tem variações; remova manualmente",
-        409
-      );
-    }
-    if (!optionLabel) {
-      optionLabel = suggestLabelFromName(standalone.name || "", codigo);
-    }
-    priceFromStandalone = Number.isFinite(Number(standalone.value))
-      ? Math.round(Number(standalone.value) * 100) / 100
-      : 0;
-    await standalone.destroy();
-    removedProductId = standalone.id;
-    logger.info(
-      `Uniplus attach-variation: removed standalone productId=${standalone.id} codigo=${codigo} → parent=${parent.id}`
-    );
+  if (released.removedProductId && !optionLabel) {
+    optionLabel = suggestLabelFromName(released.removedProductName || "", codigo);
   }
-
   if (!optionLabel) {
     optionLabel = codigo;
   }
-
-  await Product.update(
-    { idUniplus: null },
-    { where: { companyId, idUniplus: codigo } }
-  );
 
   let variation =
     ((parent as any).variations || []).find(
@@ -169,8 +106,8 @@ const AttachUniplusVariationService = async ({
   const optionValue =
     nextValue != null
       ? nextValue
-      : priceFromStandalone > 0
-        ? priceFromStandalone
+      : released.removedProductValue
+        ? released.removedProductValue
         : Number(parent.value) || 0;
 
   let option =
@@ -195,8 +132,17 @@ const AttachUniplusVariationService = async ({
     });
   }
 
+  let parentChanged = false;
   if (!parent.variablePrice) {
     parent.variablePrice = true;
+    parentChanged = true;
+  }
+  const trimmedGrupo = parentGrupo?.trim();
+  if (trimmedGrupo && trimmedGrupo !== parent.grupo) {
+    parent.grupo = trimmedGrupo;
+    parentChanged = true;
+  }
+  if (parentChanged) {
     await parent.save();
   }
 
@@ -204,7 +150,7 @@ const AttachUniplusVariationService = async ({
     parentProductId: parent.id,
     variationId: variation.id,
     optionId: option.id,
-    removedProductId,
+    removedProductId: released.removedProductId,
   };
 };
 
