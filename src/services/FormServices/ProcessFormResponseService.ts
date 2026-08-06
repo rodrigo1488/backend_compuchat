@@ -177,7 +177,7 @@ const normalizeMenuItems = async (
       else productValue = Math.max(v1, v2);
       const productName =
         item.productName ||
-        `${(base as any).name} - Metade ${(half1 as any).name} / Metade ${(half2 as any).name}`;
+        `Meio a meio: ${(half1 as any).name} / ${(half2 as any).name}`;
       result.push({
         type: "halfAndHalf",
         productId: item.productId,
@@ -191,6 +191,45 @@ const normalizeMenuItems = async (
         productValue: Math.round(productValue * 100) / 100,
         grupo: item.grupo || (base as any).grupo,
       });
+
+      // Adicionais do meio a meio (grupo do produto base / categoria)
+      const halfResult = result[result.length - 1];
+      if (Array.isArray((item as any).addons) && (item as any).addons.length > 0) {
+        const product = await Product.findOne({
+          where: { id: item.productId, companyId },
+          attributes: ["id", "addOnGroupId", "grupo"],
+        });
+        let addOnGroupId: number | null = product ? (product as any).addOnGroupId : null;
+        if (addOnGroupId == null && product && (product as any).grupo) {
+          const ga = await GrupoAddOn.findOne({
+            where: { companyId, grupo: (product as any).grupo },
+            attributes: ["addOnGroupId"],
+          });
+          if (ga) addOnGroupId = ga.addOnGroupId;
+        }
+        if (addOnGroupId) {
+          const validItems = await AddOnItem.findAll({
+            where: { addOnGroupId },
+            attributes: ["id", "label", "value"],
+          });
+          const validMap = new Map(validItems.map((i) => [i.id, i]));
+          const validatedAddons: Array<{ addOnItemId: number; label: string; value: number }> = [];
+          let addonsTotal = 0;
+          for (const a of (item as any).addons) {
+            const v = validMap.get(a.addOnItemId);
+            if (v) {
+              validatedAddons.push({
+                addOnItemId: v.id,
+                label: a.label ?? v.label,
+                value: Number(a.value ?? v.value) || 0,
+              });
+              addonsTotal += Number(v.value) || 0;
+            }
+          }
+          halfResult.addons = validatedAddons;
+          halfResult.addonsTotal = Math.round(addonsTotal * 100) / 100;
+        }
+      }
     } else {
       const normalItem = { ...item } as any;
       if (Array.isArray((item as any).addons) && (item as any).addons.length > 0 && item.productId) {

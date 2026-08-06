@@ -191,13 +191,11 @@ export function buildObservacao(
     const half2 = formatHalfFlavorLabel(item.half2ProductId, productById);
     if (half1 || half2) {
       parts.push(`Meio a meio: ${half1 || "?"} / ${half2 || "?"}`);
-    }
-    // Nome completo (pode truncar em nomeproduto 120) — reforça na observação
-    if (/metade/i.test(name) || /meio\s*a\s*meio/i.test(name)) {
+    } else if (name) {
+      // Fallback quando não há half1/half2 resolvidos no catálogo
       parts.push(name.slice(0, 160));
-    } else if (name && !half1 && !half2) {
+    } else {
       parts.push("Meio a meio");
-      parts.push(name.slice(0, 160));
     }
   }
   const addonSource = addonsOverride ?? item.addons;
