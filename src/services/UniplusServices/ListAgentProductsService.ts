@@ -1,5 +1,8 @@
 import { Op } from "sequelize";
 import Product from "../../models/Product";
+import AddOnGroup from "../../models/AddOnGroup";
+import AddOnSubgroup from "../../models/AddOnSubgroup";
+import AddOnItem from "../../models/AddOnItem";
 
 interface Request {
   companyId: number;
@@ -7,8 +10,61 @@ interface Request {
   limit?: number;
 }
 
+async function listAddOns(companyId: number) {
+  const groups = await AddOnGroup.findAll({
+    where: { companyId },
+    order: [["name", "ASC"]],
+    include: [
+      {
+        model: AddOnSubgroup,
+        as: "subgroups",
+        include: [{ model: AddOnItem, as: "items" }],
+      },
+      { model: AddOnItem, as: "items" },
+    ],
+  });
+
+  const flat: Array<{
+    id: number;
+    label: string;
+    value: number;
+    idUniplus: string | null;
+    groupName: string;
+    subgroupName: string | null;
+  }> = [];
+
+  for (const group of groups) {
+    for (const item of (group as any).items || []) {
+      flat.push({
+        id: item.id,
+        label: item.label,
+        value: Number(item.value),
+        idUniplus: item.idUniplus || null,
+        groupName: group.name,
+        subgroupName: null,
+      });
+    }
+    for (const subgroup of (group as any).subgroups || []) {
+      for (const item of subgroup.items || []) {
+        flat.push({
+          id: item.id,
+          label: item.label,
+          value: Number(item.value),
+          idUniplus: item.idUniplus || null,
+          groupName: group.name,
+          subgroupName: subgroup.name,
+        });
+      }
+    }
+  }
+
+  flat.sort((a, b) => a.label.localeCompare(b.label));
+  return flat;
+}
+
 /**
- * Lista produtos Compuchat para o Print Agent escolher o pai de uma variação UniPlus.
+ * Lista produtos Compuchat para o Print Agent escolher o pai de uma variação UniPlus,
+ * e adicionais (AddOnItem) pra vincular como item próprio no pedido UniPlus.
  */
 const ListAgentProductsService = async ({
   companyId,
@@ -43,7 +99,10 @@ const ListAgentProductsService = async ({
     limit: Math.min(Math.max(Number(limit) || 1000, 1), 1000),
   });
 
+  const addOns = await listAddOns(companyId);
+
   return {
+    addOns,
     products: products.map((p) => ({
       id: p.id,
       name: p.name,

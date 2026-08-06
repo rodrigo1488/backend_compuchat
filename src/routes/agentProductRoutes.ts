@@ -40,4 +40,10 @@ routes.post(
   AgentProductController.createParent
 );
 
+routes.post(
+  "/agent/products/link-addon",
+  isPrintDeviceAuth,
+  AgentProductController.linkAddOn
+);
+
 export default routes;

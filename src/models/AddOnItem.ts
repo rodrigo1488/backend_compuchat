@@ -49,6 +49,13 @@ class AddOnItem extends Model<AddOnItem> {
   })
   order: number;
 
+  /** Código do produto no UniPlus (adicional vinculado) — único por company no service */
+  @Column({
+    type: DataType.STRING(20),
+    allowNull: true,
+  })
+  idUniplus: string | null;
+
   @CreatedAt
   createdAt: Date;
 

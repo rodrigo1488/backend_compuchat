@@ -4,6 +4,7 @@ import AttachUniplusVariationService from "../services/UniplusServices/AttachUni
 import ListAgentProductsService from "../services/UniplusServices/ListAgentProductsService";
 import LinkUniplusStandaloneService from "../services/UniplusServices/LinkUniplusStandaloneService";
 import CreateAgentParentProductService from "../services/UniplusServices/CreateAgentParentProductService";
+import LinkUniplusAddOnService from "../services/UniplusServices/LinkUniplusAddOnService";
 import { releaseUniplusCodigo } from "../services/UniplusServices/ReleaseUniplusCodigoService";
 import AppError from "../errors/AppError";
 import { PrintDeviceAuthRequest } from "../middleware/isPrintDeviceAuth";
@@ -79,6 +80,19 @@ export const createParent = async (
     nome: String(req.body?.nome || ""),
     grupo: req.body?.grupo,
     preco: Number(req.body?.preco) || 0,
+  });
+  return res.status(200).json(data);
+};
+
+export const linkAddOn = async (
+  req: PrintDeviceAuthRequest,
+  res: Response
+): Promise<Response> => {
+  const companyId = Number(req.companyId);
+  const data = await LinkUniplusAddOnService({
+    companyId,
+    codigo: String(req.body?.codigo || ""),
+    addOnItemId: Number(req.body?.addOnItemId),
   });
   return res.status(200).json(data);
 };

@@ -2,12 +2,15 @@ import { Op } from "sequelize";
 import Product from "../../models/Product";
 import ProductVariation from "../../models/ProductVariation";
 import ProductVariationOption from "../../models/ProductVariationOption";
+import AddOnItem from "../../models/AddOnItem";
+import AddOnGroup from "../../models/AddOnGroup";
 import AppError from "../../errors/AppError";
 import { logger } from "../../utils/logger";
 
 export interface ReleaseUniplusCodigoOptions {
   exceptProductId?: number;
   exceptOptionId?: number;
+  exceptAddOnItemId?: number;
 }
 
 export interface ReleaseUniplusCodigoResult {
@@ -17,6 +20,9 @@ export interface ReleaseUniplusCodigoResult {
   clearedOptionIds: number[];
   /** Opção desvinculada (se houver) — útil pra reaproveitar label sugerida */
   clearedOptionLabel?: string;
+  /** Adicional desvinculado (se houver) */
+  clearedAddOnItemId?: number;
+  clearedAddOnLabel?: string;
 }
 
 function suggestLabelFromName(name: string, fallback: string): string {
@@ -55,6 +61,23 @@ export async function findOptionByCodigo(
   });
 }
 
+export async function findAddOnByCodigo(
+  companyId: number,
+  codigo: string
+): Promise<AddOnItem | null> {
+  return AddOnItem.findOne({
+    where: { idUniplus: codigo },
+    include: [
+      {
+        model: AddOnGroup,
+        required: true,
+        where: { companyId },
+        attributes: ["id", "companyId"],
+      },
+    ],
+  });
+}
+
 /**
  * Libera um codigo UniPlus de qualquer vínculo anterior na company (Product
  * standalone ou ProductVariationOption), para poder ser reatribuído.
@@ -81,6 +104,20 @@ export async function releaseUniplusCodigo(
     clearedOptionIds.push(existingOption.id);
     logger.info(
       `Uniplus release: desvinculado optionId=${existingOption.id} codigo=${codigo} companyId=${companyId}`
+    );
+  }
+
+  let clearedAddOnItemId: number | undefined;
+  let clearedAddOnLabel: string | undefined;
+
+  const existingAddOn = await findAddOnByCodigo(companyId, codigo);
+  if (existingAddOn && existingAddOn.id !== opts.exceptAddOnItemId) {
+    clearedAddOnLabel = existingAddOn.label;
+    existingAddOn.idUniplus = null;
+    await existingAddOn.save();
+    clearedAddOnItemId = existingAddOn.id;
+    logger.info(
+      `Uniplus release: desvinculado addOnItemId=${existingAddOn.id} codigo=${codigo} companyId=${companyId}`
     );
   }
 
@@ -140,6 +177,8 @@ export async function releaseUniplusCodigo(
     removedProductValue,
     clearedOptionIds,
     clearedOptionLabel,
+    clearedAddOnItemId,
+    clearedAddOnLabel,
   };
 }
 

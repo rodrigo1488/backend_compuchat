@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import Setting from "../../models/Setting";
 import Product from "../../models/Product";
 import ProductVariationOption from "../../models/ProductVariationOption";
+import AddOnItem from "../../models/AddOnItem";
 import PrintDevice from "../../models/PrintDevice";
 import FormResponse from "../../models/FormResponse";
 import Form from "../../models/Form";
@@ -170,10 +171,18 @@ export function formatHalfFlavorLabel(
   return codigo || nome;
 }
 
-/** Exposta para testes do contrato meio a meio → CONTAMESAITEM.observacao */
+/**
+ * Exposta para testes do contrato meio a meio → CONTAMESAITEM.observacao.
+ *
+ * `addonsOverride` permite listar só um subconjunto dos adicionais do item
+ * (ex.: só os que NÃO ganharam linha própria de CONTAMESAITEM porque ainda
+ * não têm idUniplus vinculado). Se omitido, usa `item.addons` inteiro —
+ * comportamento de sempre.
+ */
 export function buildObservacao(
   item: any,
-  productById: Map<number, ProductLite> = new Map()
+  productById: Map<number, ProductLite> = new Map(),
+  addonsOverride?: Array<{ label?: string; name?: string }>
 ): string {
   const parts: string[] = [];
   if (item.type === "halfAndHalf") {
@@ -191,8 +200,9 @@ export function buildObservacao(
       parts.push(name.slice(0, 160));
     }
   }
-  if (Array.isArray(item.addons) && item.addons.length) {
-    const addons = item.addons
+  const addonSource = addonsOverride ?? item.addons;
+  if (Array.isArray(addonSource) && addonSource.length) {
+    const addons = addonSource
       .map((a: any) => a.label || a.name)
       .filter(Boolean)
       .join(", ");
@@ -202,6 +212,54 @@ export function buildObservacao(
     parts.push(String(item.observacao || item.observation));
   }
   return parts.join(" | ").slice(0, 255);
+}
+
+type AddOnLite = { id: number; idUniplus?: string | null; label?: string | null; value?: number | null };
+
+export interface LinkedAddonGroup {
+  addOnItemId: number;
+  codigo: string;
+  nome: string;
+  qty: number;
+  unit: number;
+}
+
+/**
+ * Separa os adicionais já expandidos de um menuItem (`item.addons`, uma
+ * entrada por unidade vendida) entre os que têm idUniplus vinculado (ganham
+ * linha própria de CONTAMESAITEM, agrupados por addOnItemId) e os que não
+ * têm (continuam só embutidos no item pai). Exposta pra testes unitários.
+ */
+export function groupLinkedAddons(
+  addonEntries: Array<{ addOnItemId?: number; label?: string; value?: number }>,
+  addOnById: Map<number, AddOnLite>
+): { linkedGroups: LinkedAddonGroup[]; unlinkedAddons: typeof addonEntries } {
+  const groups = new Map<number, LinkedAddonGroup>();
+  const unlinkedAddons: typeof addonEntries = [];
+
+  for (const addon of addonEntries || []) {
+    const addOnItem = addOnById.get(Number(addon?.addOnItemId));
+    const addonCodigo = String(addOnItem?.idUniplus || "").trim();
+    if (!addOnItem || !addonCodigo) {
+      unlinkedAddons.push(addon);
+      continue;
+    }
+    const unit = Number(addon.value ?? addOnItem.value) || 0;
+    const existing = groups.get(addOnItem.id);
+    if (existing) {
+      existing.qty += 1;
+    } else {
+      groups.set(addOnItem.id, {
+        addOnItemId: addOnItem.id,
+        codigo: addonCodigo,
+        nome: String(addon.label || addOnItem.label || "Adicional"),
+        qty: 1,
+        unit,
+      });
+    }
+  }
+
+  return { linkedGroups: [...groups.values()], unlinkedAddons };
 }
 
 export async function isUniplusEnabledForCompany(companyId: number): Promise<boolean> {
@@ -325,6 +383,25 @@ const BuildUniplusDeliveryPayloadService = async ({
     : [];
   const optionById = new Map(options.map((o) => [o.id, o]));
 
+  const addOnItemIds = [
+    ...new Set(
+      items
+        .flatMap((it) =>
+          Array.isArray(it.addons)
+            ? it.addons.map((a: any) => Number(a.addOnItemId))
+            : []
+        )
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
+  const addOnItems = addOnItemIds.length
+    ? await AddOnItem.findAll({
+        where: { id: addOnItemIds },
+        attributes: ["id", "idUniplus", "label"],
+      })
+    : [];
+  const addOnById = new Map(addOnItems.map((a) => [a.id, a]));
+
   const payloadItems: UniplusPayloadItem[] = [];
   const warnings: string[] = [];
   for (const item of items) {
@@ -340,7 +417,6 @@ const BuildUniplusDeliveryPayloadService = async ({
     ).slice(0, 120);
     const qty = Number(item.quantity) || 1;
     const lineTotal = calcMenuItemLineTotal(item);
-    const unit = roundMoney(lineTotal / qty);
 
     const optionCodigo = [
       Number(item.variationOptionId),
@@ -381,18 +457,52 @@ const BuildUniplusDeliveryPayloadService = async ({
       );
     }
 
+    // Adicionais com idUniplus vinculado ganham linha própria de CONTAMESAITEM
+    // (pra o UniPlus movimentar o estoque deles); os demais continuam só
+    // embutidos no preço/observação do item pai, como sempre.
+    const { linkedGroups, unlinkedAddons } = groupLinkedAddons(
+      Array.isArray(item.addons) ? item.addons : [],
+      addOnById
+    );
+
+    let parentValortotal = lineTotal;
+    let parentObservacao = buildObservacao(item, productById);
+    if (linkedGroups.length) {
+      const linkedRawValue = linkedGroups.reduce(
+        (sum, g) => sum + g.unit * g.qty,
+        0
+      );
+      parentValortotal = Math.max(0, roundMoney(lineTotal - linkedRawValue));
+      parentObservacao = buildObservacao(item, productById, unlinkedAddons);
+    }
+    const parentUnit = roundMoney(parentValortotal / qty);
+
     payloadItems.push({
       // codigo pode vir vazio — agent resolve por nome no UniPlus
       codigoproduto: (codigo || "").slice(0, 20),
       nomeproduto,
       quantidade: qty,
-      precounitario: unit,
-      valortotal: lineTotal,
+      precounitario: parentUnit,
+      valortotal: parentValortotal,
       unidademedida: "UN",
-      observacao: buildObservacao(item, productById),
+      observacao: parentObservacao,
       orderidintegracao: protocol,
       hash: padHash(randomUUID()),
     });
+
+    for (const group of linkedGroups) {
+      payloadItems.push({
+        codigoproduto: group.codigo.slice(0, 20),
+        nomeproduto: group.nome.slice(0, 120),
+        quantidade: group.qty,
+        precounitario: roundMoney(group.unit),
+        valortotal: roundMoney(group.unit * group.qty),
+        unidademedida: "UN",
+        observacao: `Adicional de ${nomeproduto}`.slice(0, 255),
+        orderidintegracao: protocol,
+        hash: padHash(randomUUID()),
+      });
+    }
   }
 
   if (!payloadItems.length) {
