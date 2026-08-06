@@ -3,6 +3,9 @@ import UpsertUniplusProductsService from "../services/UniplusServices/UpsertUnip
 import AttachUniplusVariationService from "../services/UniplusServices/AttachUniplusVariationService";
 import ListAgentProductsService from "../services/UniplusServices/ListAgentProductsService";
 import LinkUniplusStandaloneService from "../services/UniplusServices/LinkUniplusStandaloneService";
+import CreateAgentParentProductService from "../services/UniplusServices/CreateAgentParentProductService";
+import { releaseUniplusCodigo } from "../services/UniplusServices/ReleaseUniplusCodigoService";
+import AppError from "../errors/AppError";
 import { PrintDeviceAuthRequest } from "../middleware/isPrintDeviceAuth";
 
 export const upsert = async (
@@ -63,5 +66,32 @@ export const linkStandalone = async (
         ? Number(req.body.productId)
         : undefined,
   });
+  return res.status(200).json(data);
+};
+
+export const createParent = async (
+  req: PrintDeviceAuthRequest,
+  res: Response
+): Promise<Response> => {
+  const companyId = Number(req.companyId);
+  const data = await CreateAgentParentProductService({
+    companyId,
+    nome: String(req.body?.nome || ""),
+    grupo: req.body?.grupo,
+    preco: Number(req.body?.preco) || 0,
+  });
+  return res.status(200).json(data);
+};
+
+export const unlink = async (
+  req: PrintDeviceAuthRequest,
+  res: Response
+): Promise<Response> => {
+  const companyId = Number(req.companyId);
+  const codigo = String(req.body?.codigo || "").trim().slice(0, 20);
+  if (!codigo) {
+    throw new AppError("ERR_UNIPLUS_ATTACH_CODIGO_REQUIRED", 400);
+  }
+  const data = await releaseUniplusCodigo(companyId, codigo, {});
   return res.status(200).json(data);
 };

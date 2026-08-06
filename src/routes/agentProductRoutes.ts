@@ -28,4 +28,16 @@ routes.post(
   AgentProductController.linkStandalone
 );
 
+routes.post(
+  "/agent/products/unlink",
+  isPrintDeviceAuth,
+  AgentProductController.unlink
+);
+
+routes.post(
+  "/agent/products/create-parent",
+  isPrintDeviceAuth,
+  AgentProductController.createParent
+);
+
 export default routes;
