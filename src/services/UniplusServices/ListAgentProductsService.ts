@@ -10,31 +10,43 @@ interface Request {
   limit?: number;
 }
 
-async function listAddOns(companyId: number) {
-  const groups = await AddOnGroup.findAll({
-    where: { companyId },
-    order: [["name", "ASC"]],
-    include: [
-      {
-        model: AddOnSubgroup,
-        as: "subgroups",
-        include: [{ model: AddOnItem, as: "items" }],
-      },
-      { model: AddOnItem, as: "items" },
-    ],
-  });
+export interface FlatAddOn {
+  id: number;
+  label: string;
+  value: number;
+  idUniplus: string | null;
+  groupName: string;
+  subgroupName: string | null;
+}
 
-  const flat: Array<{
-    id: number;
-    label: string;
-    value: number;
-    idUniplus: string | null;
-    groupName: string;
-    subgroupName: string | null;
-  }> = [];
+type AddOnItemLite = {
+  id: number;
+  label: string;
+  value: number | string;
+  idUniplus?: string | null;
+  addOnSubgroupId?: number | null;
+};
+type AddOnSubgroupLite = { name: string; items?: AddOnItemLite[] | null };
+type AddOnGroupLite = {
+  name: string;
+  items?: AddOnItemLite[] | null;
+  subgroups?: AddOnSubgroupLite[] | null;
+};
+
+/**
+ * Achata grupos/subgrupos/itens de adicional numa lista única. Exposta pra
+ * testes unitários (sem precisar mockar o Sequelize).
+ */
+export function flattenAddOnGroups(groups: AddOnGroupLite[]): FlatAddOn[] {
+  const flat: FlatAddOn[] = [];
 
   for (const group of groups) {
-    for (const item of (group as any).items || []) {
+    // group.items (FK addOnGroupId) inclui TAMBÉM os itens que pertencem a um
+    // subgrupo (addOnGroupId fica preenchido nos dois casos) — sem esse filtro
+    // cada item de subgrupo apareceria duplicado na lista (uma vez "solto" no
+    // grupo, outra vez dentro do subgrupo correto).
+    for (const item of group.items || []) {
+      if (item.addOnSubgroupId) continue;
       flat.push({
         id: item.id,
         label: item.label,
@@ -44,7 +56,7 @@ async function listAddOns(companyId: number) {
         subgroupName: null,
       });
     }
-    for (const subgroup of (group as any).subgroups || []) {
+    for (const subgroup of group.subgroups || []) {
       for (const item of subgroup.items || []) {
         flat.push({
           id: item.id,
@@ -60,6 +72,23 @@ async function listAddOns(companyId: number) {
 
   flat.sort((a, b) => a.label.localeCompare(b.label));
   return flat;
+}
+
+async function listAddOns(companyId: number): Promise<FlatAddOn[]> {
+  const groups = await AddOnGroup.findAll({
+    where: { companyId },
+    order: [["name", "ASC"]],
+    include: [
+      {
+        model: AddOnSubgroup,
+        as: "subgroups",
+        include: [{ model: AddOnItem, as: "items" }],
+      },
+      { model: AddOnItem, as: "items" },
+    ],
+  });
+
+  return flattenAddOnGroups(groups as unknown as AddOnGroupLite[]);
 }
 
 /**
