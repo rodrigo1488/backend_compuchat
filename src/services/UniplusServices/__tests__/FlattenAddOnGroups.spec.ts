@@ -1,4 +1,4 @@
-import { flattenAddOnGroups } from "../ListAgentProductsService";
+import { flattenAddOnGroups, structureAddOnGroups } from "../ListAgentProductsService";
 
 describe("flattenAddOnGroups", () => {
   it("lista itens soltos do grupo (sem subgrupo)", () => {
@@ -35,9 +35,6 @@ describe("flattenAddOnGroups", () => {
   });
 
   it("NÃO duplica item de subgrupo (group.items também traz o addOnGroupId denormalizado)", () => {
-    // Reflete o formato real retornado pelo Sequelize: o item de subgrupo tem
-    // addOnGroupId preenchido, então aparece tanto em group.items quanto em
-    // subgroup.items — o filtro por addOnSubgroupId evita a duplicação.
     const catupiryItem = { id: 2, label: "Catupiry", value: 8, idUniplus: null, addOnSubgroupId: 10 };
     const flat = flattenAddOnGroups([
       {
@@ -86,17 +83,64 @@ describe("flattenAddOnGroups", () => {
     });
   });
 
-  it("ordena por label", () => {
+  it("ordena por groupName e depois label", () => {
     const flat = flattenAddOnGroups([
       {
-        name: "Adicionais",
+        id: 2,
+        name: "Bordas",
         items: [
           { id: 1, label: "Zebra", value: 1, idUniplus: null, addOnSubgroupId: null },
-          { id: 2, label: "Abacate", value: 1, idUniplus: null, addOnSubgroupId: null },
+        ],
+        subgroups: [],
+      },
+      {
+        id: 1,
+        name: "Adicionais",
+        items: [
+          { id: 2, label: "Zebra", value: 1, idUniplus: null, addOnSubgroupId: null },
+          { id: 3, label: "Abacate", value: 1, idUniplus: null, addOnSubgroupId: null },
         ],
         subgroups: [],
       },
     ]);
-    expect(flat.map((f) => f.label)).toEqual(["Abacate", "Zebra"]);
+    expect(flat.map((f) => `${f.groupName}:${f.label}`)).toEqual([
+      "Adicionais:Abacate",
+      "Adicionais:Zebra",
+      "Bordas:Zebra",
+    ]);
+  });
+});
+
+describe("structureAddOnGroups", () => {
+  it("inclui grupos vazios e itens ordenados por label", () => {
+    const structured = structureAddOnGroups([
+      {
+        id: 10,
+        name: "Vazio",
+        items: [],
+        subgroups: [],
+      },
+      {
+        id: 11,
+        name: "Bordas",
+        items: [
+          { id: 2, label: "Zebra", value: 1, idUniplus: null, addOnSubgroupId: null },
+          { id: 1, label: "Abacate", value: 2, idUniplus: "9", addOnSubgroupId: null },
+        ],
+        subgroups: [],
+      },
+    ]);
+
+    expect(structured).toEqual([
+      { id: 10, name: "Vazio", items: [] },
+      {
+        id: 11,
+        name: "Bordas",
+        items: [
+          { id: 1, label: "Abacate", value: 2, idUniplus: "9", subgroupName: null },
+          { id: 2, label: "Zebra", value: 1, idUniplus: null, subgroupName: null },
+        ],
+      },
+    ]);
   });
 });

@@ -92,7 +92,21 @@ export const linkAddOn = async (
   const data = await LinkUniplusAddOnService({
     companyId,
     codigo: String(req.body?.codigo || ""),
-    addOnItemId: Number(req.body?.addOnItemId),
+    addOnItemId:
+      req.body?.addOnItemId != null && req.body?.addOnItemId !== ""
+        ? Number(req.body.addOnItemId)
+        : undefined,
+    addOnGroupId:
+      req.body?.addOnGroupId != null && req.body?.addOnGroupId !== ""
+        ? Number(req.body.addOnGroupId)
+        : undefined,
+    label: req.body?.label != null ? String(req.body.label) : undefined,
+    value:
+      req.body?.value != null && req.body?.value !== ""
+        ? Number(req.body.value)
+        : req.body?.preco != null && req.body?.preco !== ""
+          ? Number(req.body.preco)
+          : undefined,
   });
   return res.status(200).json(data);
 };

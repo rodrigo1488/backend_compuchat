@@ -2,12 +2,15 @@ jest.mock("../../../models/AddOnItem", () => ({
   __esModule: true,
   default: {
     findOne: jest.fn(),
+    create: jest.fn(),
   },
 }));
 
 jest.mock("../../../models/AddOnGroup", () => ({
   __esModule: true,
-  default: class {},
+  default: {
+    findOne: jest.fn(),
+  },
 }));
 
 jest.mock("../ReleaseUniplusCodigoService", () => ({
@@ -18,6 +21,7 @@ jest.mock("../ReleaseUniplusCodigoService", () => ({
 import LinkUniplusAddOnService from "../LinkUniplusAddOnService";
 
 const AddOnItem = require("../../../models/AddOnItem").default;
+const AddOnGroup = require("../../../models/AddOnGroup").default;
 const { releaseUniplusCodigo } = require("../ReleaseUniplusCodigoService");
 
 describe("LinkUniplusAddOnService", () => {
@@ -48,6 +52,49 @@ describe("LinkUniplusAddOnService", () => {
     expect(result).toEqual({
       addOnItemId: 5,
       label: "Bacon extra",
+      created: false,
+      removedProductId: undefined,
+      clearedOptionIds: [],
+    });
+  });
+
+  it("cria item novo no grupo e vincula o codigo", async () => {
+    AddOnGroup.findOne.mockResolvedValue({ id: 3, companyId: 1 });
+    const save = jest.fn().mockResolvedValue(undefined);
+    const created = {
+      id: 99,
+      label: "Borda Catupiry",
+      idUniplus: null,
+      save,
+    };
+    AddOnItem.create.mockResolvedValue(created);
+
+    const result = await LinkUniplusAddOnService({
+      companyId: 1,
+      codigo: "555",
+      addOnGroupId: 3,
+      label: "Borda Catupiry",
+      value: 8.5,
+    });
+
+    expect(AddOnGroup.findOne).toHaveBeenCalledWith({
+      where: { id: 3, companyId: 1 },
+      attributes: ["id", "companyId"],
+    });
+    expect(AddOnItem.create).toHaveBeenCalledWith({
+      addOnGroupId: 3,
+      addOnSubgroupId: null,
+      label: "Borda Catupiry",
+      value: 8.5,
+      order: 0,
+      idUniplus: null,
+    });
+    expect(created.idUniplus).toBe("555");
+    expect(save).toHaveBeenCalled();
+    expect(result).toEqual({
+      addOnItemId: 99,
+      label: "Borda Catupiry",
+      created: true,
       removedProductId: undefined,
       clearedOptionIds: [],
     });
@@ -68,6 +115,24 @@ describe("LinkUniplusAddOnService", () => {
     }
     expect(caught).not.toBeNull();
     expect(String(caught.message)).toContain("ERR_UNIPLUS_ADDON_NOT_FOUND");
+  });
+
+  it("lança erro quando o grupo não existe no modo criar", async () => {
+    AddOnGroup.findOne.mockResolvedValue(null);
+
+    let caught: any = null;
+    try {
+      await LinkUniplusAddOnService({
+        companyId: 1,
+        codigo: "9101",
+        addOnGroupId: 999,
+        label: "Novo",
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).not.toBeNull();
+    expect(String(caught.message)).toContain("ERR_UNIPLUS_ADDON_GROUP_NOT_FOUND");
   });
 
   it("reatribui codigo que estava vinculado a um produto avulso (propaga removedProductId)", async () => {

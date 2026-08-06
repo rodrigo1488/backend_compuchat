@@ -19,6 +19,20 @@ export interface FlatAddOn {
   subgroupName: string | null;
 }
 
+export interface HierarchicalAddOnItem {
+  id: number;
+  label: string;
+  value: number;
+  idUniplus: string | null;
+  subgroupName: string | null;
+}
+
+export interface HierarchicalAddOnGroup {
+  id: number;
+  name: string;
+  items: HierarchicalAddOnItem[];
+}
+
 type AddOnItemLite = {
   id: number;
   label: string;
@@ -28,10 +42,43 @@ type AddOnItemLite = {
 };
 type AddOnSubgroupLite = { name: string; items?: AddOnItemLite[] | null };
 type AddOnGroupLite = {
+  id?: number;
   name: string;
   items?: AddOnItemLite[] | null;
   subgroups?: AddOnSubgroupLite[] | null;
 };
+
+function collectGroupItems(group: AddOnGroupLite): HierarchicalAddOnItem[] {
+  const items: HierarchicalAddOnItem[] = [];
+
+  // group.items (FK addOnGroupId) inclui TAMBÉM os itens que pertencem a um
+  // subgrupo (addOnGroupId fica preenchido nos dois casos) — sem esse filtro
+  // cada item de subgrupo apareceria duplicado.
+  for (const item of group.items || []) {
+    if (item.addOnSubgroupId) continue;
+    items.push({
+      id: item.id,
+      label: item.label,
+      value: Number(item.value),
+      idUniplus: item.idUniplus || null,
+      subgroupName: null,
+    });
+  }
+  for (const subgroup of group.subgroups || []) {
+    for (const item of subgroup.items || []) {
+      items.push({
+        id: item.id,
+        label: item.label,
+        value: Number(item.value),
+        idUniplus: item.idUniplus || null,
+        subgroupName: subgroup.name,
+      });
+    }
+  }
+
+  items.sort((a, b) => a.label.localeCompare(b.label));
+  return items;
+}
 
 /**
  * Achata grupos/subgrupos/itens de adicional numa lista única. Exposta pra
@@ -41,54 +88,82 @@ export function flattenAddOnGroups(groups: AddOnGroupLite[]): FlatAddOn[] {
   const flat: FlatAddOn[] = [];
 
   for (const group of groups) {
-    // group.items (FK addOnGroupId) inclui TAMBÉM os itens que pertencem a um
-    // subgrupo (addOnGroupId fica preenchido nos dois casos) — sem esse filtro
-    // cada item de subgrupo apareceria duplicado na lista (uma vez "solto" no
-    // grupo, outra vez dentro do subgrupo correto).
-    for (const item of group.items || []) {
-      if (item.addOnSubgroupId) continue;
+    for (const item of collectGroupItems(group)) {
       flat.push({
         id: item.id,
         label: item.label,
-        value: Number(item.value),
-        idUniplus: item.idUniplus || null,
+        value: item.value,
+        idUniplus: item.idUniplus,
         groupName: group.name,
-        subgroupName: null,
+        subgroupName: item.subgroupName,
       });
-    }
-    for (const subgroup of group.subgroups || []) {
-      for (const item of subgroup.items || []) {
-        flat.push({
-          id: item.id,
-          label: item.label,
-          value: Number(item.value),
-          idUniplus: item.idUniplus || null,
-          groupName: group.name,
-          subgroupName: subgroup.name,
-        });
-      }
     }
   }
 
-  flat.sort((a, b) => a.label.localeCompare(b.label));
+  // groupName primeiro pra Jinja groupby / selects por grupo ficarem contíguos
+  flat.sort((a, b) => {
+    const byGroup = a.groupName.localeCompare(b.groupName);
+    if (byGroup !== 0) return byGroup;
+    return a.label.localeCompare(b.label);
+  });
   return flat;
 }
 
-async function listAddOns(companyId: number): Promise<FlatAddOn[]> {
+/**
+ * Monta grupos hierárquicos (id + name + items). Grupos sem itens entram
+ * vazios — o agent precisa listá-los pra permitir criar item no grupo.
+ */
+export function structureAddOnGroups(
+  groups: AddOnGroupLite[]
+): HierarchicalAddOnGroup[] {
+  return groups.map((group) => ({
+    id: Number(group.id) || 0,
+    name: group.name,
+    items: collectGroupItems(group),
+  }));
+}
+
+async function loadAddOnGroups(companyId: number): Promise<AddOnGroupLite[]> {
   const groups = await AddOnGroup.findAll({
     where: { companyId },
+    attributes: ["id", "name", "companyId"],
     order: [["name", "ASC"]],
     include: [
       {
         model: AddOnSubgroup,
         as: "subgroups",
-        include: [{ model: AddOnItem, as: "items" }],
+        attributes: ["id", "name"],
+        include: [
+          {
+            model: AddOnItem,
+            as: "items",
+            attributes: [
+              "id",
+              "label",
+              "value",
+              "idUniplus",
+              "addOnSubgroupId",
+              "addOnGroupId",
+            ],
+          },
+        ],
       },
-      { model: AddOnItem, as: "items" },
+      {
+        model: AddOnItem,
+        as: "items",
+        attributes: [
+          "id",
+          "label",
+          "value",
+          "idUniplus",
+          "addOnSubgroupId",
+          "addOnGroupId",
+        ],
+      },
     ],
   });
 
-  return flattenAddOnGroups(groups as unknown as AddOnGroupLite[]);
+  return groups as unknown as AddOnGroupLite[];
 }
 
 /**
@@ -128,10 +203,13 @@ const ListAgentProductsService = async ({
     limit: Math.min(Math.max(Number(limit) || 1000, 1), 1000),
   });
 
-  const addOns = await listAddOns(companyId);
+  const groups = await loadAddOnGroups(companyId);
+  const addOns = flattenAddOnGroups(groups);
+  const addOnGroups = structureAddOnGroups(groups);
 
   return {
     addOns,
+    addOnGroups,
     products: products.map((p) => ({
       id: p.id,
       name: p.name,
