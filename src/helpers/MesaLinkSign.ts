@@ -125,6 +125,54 @@ export function verifyDeliveryScanToken(token: string): DecodedDeliveryScanToken
   };
 }
 
+// --- Token para acompanhamento público do pedido (página /pedido/:token) ---
+const ORDER_TRACKING_TOKEN_EXPIRY_DAYS = 7;
+
+export interface DecodedOrderTrackingToken {
+  companyId: number;
+  formId: number;
+  formResponseId: number;
+}
+
+/** Gera token para o cliente acompanhar o status do pedido. */
+export function createOrderTrackingToken(companyId: number, formId: number, formResponseId: number): string {
+  const payload = JSON.stringify({
+    t: "track",
+    companyId,
+    formId,
+    formResponseId,
+    exp: Math.floor(Date.now() / 1000) + ORDER_TRACKING_TOKEN_EXPIRY_DAYS * 24 * 60 * 60,
+  });
+  const base = Buffer.from(payload, "utf8").toString("base64url");
+  const sig = crypto.createHmac("sha256", getSecret()).update(base).digest("base64url");
+  return `${base}.${sig}`;
+}
+
+/** Valida token de acompanhamento. Retorna { companyId, formId, formResponseId } ou null. */
+export function verifyOrderTrackingToken(token: string): DecodedOrderTrackingToken | null {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [base, sig] = parts;
+  const expectedSig = crypto.createHmac("sha256", getSecret()).update(base).digest("base64url");
+  const a = Buffer.from(expectedSig, "utf8");
+  const b = Buffer.from(sig, "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  let payload: { t: string; companyId: number; formId: number; formResponseId: number; exp: number };
+  try {
+    payload = JSON.parse(Buffer.from(base, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (payload.t !== "track" || !payload.companyId || !payload.formId || !payload.formResponseId || !payload.exp) return null;
+  if (Date.now() / 1000 > payload.exp) return null;
+  return {
+    companyId: payload.companyId,
+    formId: payload.formId,
+    formResponseId: payload.formResponseId,
+  };
+}
+
 // --- Token para cancelar/reagendar agendamento (link no WhatsApp) ---
 const APPOINTMENT_TOKEN_EXPIRY_DAYS = 365;
 

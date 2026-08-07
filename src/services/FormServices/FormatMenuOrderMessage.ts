@@ -6,6 +6,7 @@ interface MenuItem {
   productName?: string;
   productValue?: number;
   grupo?: string;
+  observation?: string;
   addons?: Array<{ label: string; value: number }>;
   addonsTotal?: number;
 }
@@ -27,8 +28,12 @@ interface Request {
   garcomName?: string;
   /** Taxa de entrega (se houver) */
   deliveryFee?: number;
-  /** Total já calculado (incluindo taxa de entrega) */
+  /** Total já calculado (incluindo taxa de entrega e desconto) */
   total?: number;
+  /** Código do cupom aplicado (se houver) */
+  couponCode?: string;
+  /** Valor do desconto do cupom (se houver) */
+  couponDiscount?: number;
 }
 
 const FormatMenuOrderMessage = async ({
@@ -41,6 +46,8 @@ const FormatMenuOrderMessage = async ({
   garcomName,
   deliveryFee = 0,
   total,
+  couponCode,
+  couponDiscount = 0,
 }: Request): Promise<string> => {
   // Buscar informações completas dos produtos se não estiverem no menuItem
   const productIds = menuItems.map((item) => item.productId);
@@ -116,15 +123,23 @@ const FormatMenuOrderMessage = async ({
           message += `  └ ${a.label} + R$ ${Number(a.value).toFixed(2).replace(".", ",")}\n`;
         });
       }
+      if (item.observation && String(item.observation).trim()) {
+        message += `  📝 Obs: ${String(item.observation).trim()}\n`;
+      }
     });
     message += "\n";
   });
 
-  // Mostrar subtotal, taxa de entrega (se houver) e total
-  const itemsSubtotal = calculatedTotal - (deliveryFee || 0);
-  if (deliveryFee && deliveryFee > 0) {
+  // Mostrar subtotal, taxa de entrega, desconto (se houver) e total
+  const itemsSubtotal = calculatedTotal - (deliveryFee || 0) + (couponDiscount || 0);
+  if ((deliveryFee && deliveryFee > 0) || (couponDiscount && couponDiscount > 0)) {
     message += `💰 *Subtotal:* R$ ${itemsSubtotal.toFixed(2).replace(".", ",")}\n`;
+  }
+  if (deliveryFee && deliveryFee > 0) {
     message += `🚚 *Taxa de entrega:* R$ ${deliveryFee.toFixed(2).replace(".", ",")}\n`;
+  }
+  if (couponDiscount && couponDiscount > 0) {
+    message += `🎟️ *Cupom${couponCode ? ` (${couponCode})` : ""}:* - R$ ${couponDiscount.toFixed(2).replace(".", ",")}\n`;
   }
   message += `💰 *TOTAL:* R$ ${calculatedTotal.toFixed(2).replace(".", ",")}\n`;
 

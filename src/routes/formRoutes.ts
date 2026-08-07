@@ -67,5 +67,6 @@ routes.get("/public/forms/:publicId", FormController.getPublicForm);
 routes.get("/public/forms/:publicId/most-ordered", FormController.getPublicMostOrdered);
 routes.get("/public/forms/:publicId/repeat-data", FormController.getPublicRepeatData);
 routes.post("/public/forms/:publicId/submit", optionalAuth, FormResponseController.store);
+routes.get("/public/orders/:token", FormResponseController.getPublicOrderStatus);
 
 export default routes;

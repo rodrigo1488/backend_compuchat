@@ -57,6 +57,7 @@ import AddOnGroup from "../models/AddOnGroup";
 import AddOnSubgroup from "../models/AddOnSubgroup";
 import AddOnItem from "../models/AddOnItem";
 import GrupoAddOn from "../models/GrupoAddOn";
+import Coupon from "../models/Coupon";
 import PrintDevice from "../models/PrintDevice";
 import PrintPedido from "../models/PrintPedido";
 import Module from "../models/Module";
@@ -134,6 +135,7 @@ const models = [
   AddOnSubgroup,
   AddOnItem,
   GrupoAddOn,
+  Coupon,
   PrintDevice,
   PrintPedido,
   Module,

@@ -23,7 +23,10 @@ import Mesa from "../../models/Mesa";
 import Contact from "../../models/Contact";
 import ContactCustomField from "../../models/ContactCustomField";
 import Ticket from "../../models/Ticket";
-import { verifyOrderToken, createDeliveryScanToken } from "../../helpers/MesaLinkSign";
+import { verifyOrderToken, createDeliveryScanToken, createOrderTrackingToken } from "../../helpers/MesaLinkSign";
+import ValidateCouponService from "../CouponServices/ValidateCouponService";
+import AddOnGroup from "../../models/AddOnGroup";
+import AddOnSubgroup from "../../models/AddOnSubgroup";
 import Product from "../../models/Product";
 import Appointment from "../../models/Appointment";
 import AppointmentService from "../../models/AppointmentService";
@@ -60,6 +63,7 @@ interface Request {
     productName?: string;
     productValue?: number;
     grupo?: string;
+    observation?: string;
     addons?: Array<{ addOnItemId: number; label?: string; value?: number }>;
   }>;
   responderPhone?: string;
@@ -85,7 +89,106 @@ type MenuItemInput = {
   half2ProductId?: number;
   half1OptionId?: number | null;
   half2OptionId?: number | null;
+  observation?: string;
   addons?: Array<{ addOnItemId: number; label?: string; value?: number }>;
+};
+
+/** Observação do cliente por item: texto simples, limitado. */
+const sanitizeObservation = (value: unknown): string =>
+  String(value ?? "").trim().slice(0, 200);
+
+/** Resolve o addOnGroupId de um produto (próprio ou herdado da categoria). */
+const resolveAddOnGroupIdForProduct = async (
+  productId: number,
+  companyId: number
+): Promise<number | null> => {
+  const product = await Product.findOne({
+    where: { id: productId, companyId },
+    attributes: ["id", "addOnGroupId", "grupo"],
+  });
+  if (!product) return null;
+  let addOnGroupId: number | null = (product as any).addOnGroupId;
+  if (addOnGroupId == null && (product as any).grupo) {
+    const ga = await GrupoAddOn.findOne({
+      where: { companyId, grupo: (product as any).grupo },
+      attributes: ["addOnGroupId"],
+    });
+    if (ga) addOnGroupId = ga.addOnGroupId;
+  }
+  return addOnGroupId;
+};
+
+/**
+ * Valida regras de adicionais obrigatórios (min/max) por subgrupo e no grupo raiz.
+ * `addons` chega expandido (uma entrada por unidade), então a contagem por unidade
+ * é o total do subgrupo dividido pela quantidade do item.
+ */
+const validateAddonRules = async (
+  addOnGroupId: number,
+  addons: Array<{ addOnItemId: number }>,
+  quantity: number,
+  productName: string
+): Promise<void> => {
+  const group = await AddOnGroup.findByPk(addOnGroupId, {
+    include: [
+      { model: AddOnSubgroup, as: "subgroups", include: [{ model: AddOnItem, as: "items" }] },
+      { model: AddOnItem, as: "items" },
+    ],
+  });
+  if (!group) return;
+
+  const qty = Math.max(1, quantity || 1);
+  const countByItemId = new Map<number, number>();
+  for (const a of addons || []) {
+    countByItemId.set(a.addOnItemId, (countByItemId.get(a.addOnItemId) || 0) + 1);
+  }
+  const countForItems = (items: Array<{ id: number }>) =>
+    (items || []).reduce((sum, it) => sum + (countByItemId.get(it.id) || 0), 0) / qty;
+
+  const checkRules = (
+    label: string,
+    perUnit: number,
+    required: boolean,
+    minItems: number,
+    maxItems: number | null
+  ) => {
+    const min = required ? Math.max(1, minItems || 0) : minItems || 0;
+    if (min > 0 && perUnit < min) {
+      throw new AppError(
+        `${productName}: escolha pelo menos ${min} em "${label}".`,
+        400
+      );
+    }
+    if (maxItems != null && maxItems > 0 && perUnit > maxItems) {
+      throw new AppError(
+        `${productName}: escolha no máximo ${maxItems} em "${label}".`,
+        400
+      );
+    }
+  };
+
+  for (const sg of (group.subgroups || []) as any[]) {
+    if (!sg.required && !(Number(sg.minItems) > 0) && sg.maxItems == null) continue;
+    checkRules(
+      sg.name,
+      countForItems(sg.items || []),
+      sg.required === true,
+      Number(sg.minItems) || 0,
+      sg.maxItems != null ? Number(sg.maxItems) : null
+    );
+  }
+
+  const rootItems = ((group.items || []) as any[]).filter((it) => !it.addOnSubgroupId);
+  const g = group as any;
+  if (rootItems.length > 0 && (g.required === true || Number(g.minItems) > 0 || g.maxItems != null)) {
+    checkRules(
+      group.name,
+      countForItems(rootItems),
+      g.required === true,
+      Number(g.minItems) || 0,
+      g.maxItems != null ? Number(g.maxItems) : null
+    );
+  }
 };
 
 /** Normaliza menuItems: para itens tipo halfAndHalf, calcula productValue e productName no backend. */
@@ -178,6 +281,7 @@ const normalizeMenuItems = async (
       const productName =
         item.productName ||
         `Meio a meio: ${(half1 as any).name} / ${(half2 as any).name}`;
+      const halfObservation = sanitizeObservation(item.observation);
       result.push({
         type: "halfAndHalf",
         productId: item.productId,
@@ -190,32 +294,24 @@ const normalizeMenuItems = async (
         productName,
         productValue: Math.round(productValue * 100) / 100,
         grupo: item.grupo || (base as any).grupo,
+        ...(halfObservation && { observation: halfObservation }),
       });
 
       // Adicionais do meio a meio (grupo do produto base / categoria)
       const halfResult = result[result.length - 1];
-      if (Array.isArray((item as any).addons) && (item as any).addons.length > 0) {
-        const product = await Product.findOne({
-          where: { id: item.productId, companyId },
-          attributes: ["id", "addOnGroupId", "grupo"],
-        });
-        let addOnGroupId: number | null = product ? (product as any).addOnGroupId : null;
-        if (addOnGroupId == null && product && (product as any).grupo) {
-          const ga = await GrupoAddOn.findOne({
-            where: { companyId, grupo: (product as any).grupo },
-            attributes: ["addOnGroupId"],
-          });
-          if (ga) addOnGroupId = ga.addOnGroupId;
-        }
-        if (addOnGroupId) {
+      const halfAddOnGroupId = await resolveAddOnGroupIdForProduct(item.productId, companyId);
+      if (halfAddOnGroupId) {
+        const itemAddons = Array.isArray((item as any).addons) ? (item as any).addons : [];
+        await validateAddonRules(halfAddOnGroupId, itemAddons, item.quantity, productName);
+        if (itemAddons.length > 0) {
           const validItems = await AddOnItem.findAll({
-            where: { addOnGroupId },
+            where: { addOnGroupId: halfAddOnGroupId },
             attributes: ["id", "label", "value"],
           });
           const validMap = new Map(validItems.map((i) => [i.id, i]));
           const validatedAddons: Array<{ addOnItemId: number; label: string; value: number }> = [];
           let addonsTotal = 0;
-          for (const a of (item as any).addons) {
+          for (const a of itemAddons) {
             const v = validMap.get(a.addOnItemId);
             if (v) {
               validatedAddons.push({
@@ -232,40 +328,41 @@ const normalizeMenuItems = async (
       }
     } else {
       const normalItem = { ...item } as any;
-      if (Array.isArray((item as any).addons) && (item as any).addons.length > 0 && item.productId) {
-        const product = await Product.findOne({
-          where: { id: item.productId, companyId },
-          attributes: ["id", "addOnGroupId", "grupo"],
-        });
-        let addOnGroupId: number | null = product ? (product as any).addOnGroupId : null;
-        if (addOnGroupId == null && product && (product as any).grupo) {
-          const ga = await GrupoAddOn.findOne({
-            where: { companyId, grupo: (product as any).grupo },
-            attributes: ["addOnGroupId"],
-          });
-          if (ga) addOnGroupId = ga.addOnGroupId;
-        }
+      const normalObservation = sanitizeObservation(item.observation);
+      if (normalObservation) normalItem.observation = normalObservation;
+      else delete normalItem.observation;
+      if (item.productId) {
+        const addOnGroupId = await resolveAddOnGroupIdForProduct(item.productId, companyId);
         if (addOnGroupId) {
-          const validItems = await AddOnItem.findAll({
-            where: { addOnGroupId },
-            attributes: ["id", "label", "value"],
-          });
-          const validMap = new Map(validItems.map((i) => [i.id, i]));
-          const validatedAddons: Array<{ addOnItemId: number; label: string; value: number }> = [];
-          let addonsTotal = 0;
-          for (const a of (item as any).addons) {
-            const v = validMap.get(a.addOnItemId);
-            if (v) {
-              validatedAddons.push({
-                addOnItemId: v.id,
-                label: a.label ?? v.label,
-                value: Number(a.value ?? v.value) || 0,
-              });
-              addonsTotal += Number(v.value) || 0;
+          const itemAddons = Array.isArray((item as any).addons) ? (item as any).addons : [];
+          await validateAddonRules(
+            addOnGroupId,
+            itemAddons,
+            item.quantity,
+            item.productName || "Item"
+          );
+          if (itemAddons.length > 0) {
+            const validItems = await AddOnItem.findAll({
+              where: { addOnGroupId },
+              attributes: ["id", "label", "value"],
+            });
+            const validMap = new Map(validItems.map((i) => [i.id, i]));
+            const validatedAddons: Array<{ addOnItemId: number; label: string; value: number }> = [];
+            let addonsTotal = 0;
+            for (const a of itemAddons) {
+              const v = validMap.get(a.addOnItemId);
+              if (v) {
+                validatedAddons.push({
+                  addOnItemId: v.id,
+                  label: a.label ?? v.label,
+                  value: Number(a.value ?? v.value) || 0,
+                });
+                addonsTotal += Number(v.value) || 0;
+              }
             }
+            normalItem.addons = validatedAddons;
+            normalItem.addonsTotal = Math.round(addonsTotal * 100) / 100;
           }
-          normalItem.addons = validatedAddons;
-          normalItem.addonsTotal = Math.round(addonsTotal * 100) / 100;
         }
       }
       result.push(normalItem);
@@ -431,6 +528,7 @@ const ProcessFormResponseService = async ({
   }
   
   let normalizedMenuItems: any[] | null = null;
+  let appliedCouponDiscount = 0;
   if (isMenuForm && menuItems && menuItems.length > 0) {
     normalizedMenuItems = await normalizeMenuItems(menuItems, form.companyId);
     responseMetadata.menuItems = normalizedMenuItems;
@@ -441,8 +539,42 @@ const ProcessFormResponseService = async ({
       const addonsTotal = Number(it.addonsTotal) || 0;
       subtotal += (pv + addonsTotal) * (it.quantity || 0);
     }
-    responseMetadata.subtotal = Math.round(subtotal * 100) / 100;
-    responseMetadata.total = Math.round((subtotal + deliveryFeeFromMeta) * 100) / 100;
+    subtotal = Math.round(subtotal * 100) / 100;
+
+    // Pedido mínimo (aplica-se a pedidos delivery)
+    const minOrderValue = Number(formSettings?.minOrderValue) || 0;
+    const orderTypeMeta = (metadata as any)?.orderType || (responseMetadata as any)?.orderType;
+    if (
+      minOrderValue > 0 &&
+      orderTypeMeta === "delivery" &&
+      subtotal < minOrderValue &&
+      !orderHoursBypass
+    ) {
+      throw new AppError(
+        `Pedido mínimo de R$ ${minOrderValue.toFixed(2).replace(".", ",")} para delivery.`,
+        400
+      );
+    }
+
+    // Cupom de desconto: revalida no servidor e incrementa uso
+    const couponCode = String((metadata as any)?.couponCode || "").trim();
+    if (couponCode) {
+      const couponResult = await ValidateCouponService({
+        companyId: form.companyId,
+        code: couponCode,
+        subtotal,
+      });
+      if (!couponResult.valid) {
+        throw new AppError(couponResult.reason || "Cupom inválido.", 400);
+      }
+      appliedCouponDiscount = couponResult.discount;
+      responseMetadata.couponCode = couponResult.coupon!.code;
+      responseMetadata.couponDiscount = appliedCouponDiscount;
+      await couponResult.coupon!.increment("usageCount");
+    }
+
+    responseMetadata.subtotal = subtotal;
+    responseMetadata.total = Math.round((subtotal + deliveryFeeFromMeta - appliedCouponDiscount) * 100) / 100;
     responseMetadata.deliveryFee = deliveryFeeFromMeta;
     console.log("ProcessFormResponseService: Saving menuItems:", responseMetadata.menuItems);
   } else if (isMenuForm) {
@@ -1186,6 +1318,8 @@ const ProcessFormResponseService = async ({
         const garcomNameMsg = (meta?.garcomName as string) || undefined;
         const deliveryFee = meta?.deliveryFee != null ? Number(meta.deliveryFee) : undefined;
         const total = meta?.total != null ? Number(meta.total) : undefined;
+        const couponCodeMsg = (meta?.couponCode as string) || undefined;
+        const couponDiscountMsg = meta?.couponDiscount != null ? Number(meta.couponDiscount) : undefined;
         const orderMessage = await FormatMenuOrderMessage({
           menuItems: normalizedMenuItems && normalizedMenuItems.length > 0 ? normalizedMenuItems : menuItems,
           customerName: contactName || "Cliente",
@@ -1196,6 +1330,8 @@ const ProcessFormResponseService = async ({
           garcomName: garcomNameMsg,
           deliveryFee: deliveryFee,
           total: total,
+          couponCode: couponCodeMsg,
+          couponDiscount: couponDiscountMsg,
         });
         const sentMessage = await SendWhatsAppMessage({ body: orderMessage, ticket });
         if (sentMessage) {
@@ -1283,6 +1419,12 @@ const ProcessFormResponseService = async ({
   // Envio WhatsApp é em segundo plano; frontend não deve bloquear (ou desabilitado por configuração)
   if (isMenuForm) {
     (response as any).whatsappSent = disableWhatsAppMessages ? false : "pending";
+    // Token para página pública de acompanhamento do pedido (/pedido/:token)
+    (response as any).trackingToken = createOrderTrackingToken(
+      form.companyId,
+      form.id,
+      response.id
+    );
   }
 
   // For agendamento form, attach token so frontend can show success page links (reagendar, ical)

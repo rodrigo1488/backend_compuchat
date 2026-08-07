@@ -293,12 +293,23 @@ export const getPublicMenuProducts = async (
         id: sg.id,
         name: sg.name,
         order: sg.order,
+        required: sg.required === true,
+        minItems: Number(sg.minItems) || 0,
+        maxItems: sg.maxItems != null ? Number(sg.maxItems) : null,
         items: (sg.items || []).slice().sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)).map((it: any) => ({ id: it.id, label: it.label, value: Number(it.value), order: it.order })),
       }));
       const rootItems = (g.items || []).filter((it: any) => !it.addOnSubgroupId).sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0)).map((it: any) => ({ id: it.id, label: it.label, value: Number(it.value), order: it.order }));
       return [
         g.id,
-        { id: g.id, name: g.name, subgroups, items: rootItems },
+        {
+          id: g.id,
+          name: g.name,
+          required: (g as any).required === true,
+          minItems: Number((g as any).minItems) || 0,
+          maxItems: (g as any).maxItems != null ? Number((g as any).maxItems) : null,
+          subgroups,
+          items: rootItems,
+        },
       ];
     })
   );

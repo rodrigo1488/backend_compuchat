@@ -6,6 +6,7 @@ import sequelize from "../../database";
 import {
   AddOnItemInput,
   AddOnSubgroupInput,
+  normalizeMinMax,
 } from "./CreateAddOnGroupService";
 
 interface Request {
@@ -14,6 +15,9 @@ interface Request {
   name?: string;
   subgroups?: AddOnSubgroupInput[];
   items?: AddOnItemInput[];
+  required?: boolean;
+  minItems?: number;
+  maxItems?: number | null;
 }
 
 const UpdateAddOnGroupService = async ({
@@ -22,6 +26,9 @@ const UpdateAddOnGroupService = async ({
   name,
   subgroups = [],
   items = [],
+  required,
+  minItems,
+  maxItems,
 }: Request): Promise<AddOnGroup> => {
   const group = await AddOnGroup.findOne({
     where: { id: addOnGroupId, companyId },
@@ -32,9 +39,14 @@ const UpdateAddOnGroupService = async ({
 
   const t = await sequelize.transaction();
   try {
-    if (name != null && name.trim() !== "") {
-      await group.update({ name: name.trim() }, { transaction: t });
-    }
+    const groupRules = normalizeMinMax({ required, minItems, maxItems });
+    await group.update(
+      {
+        ...(name != null && name.trim() !== "" && { name: name.trim() }),
+        ...groupRules,
+      } as any,
+      { transaction: t }
+    );
 
     await AddOnItem.destroy({
       where: { addOnGroupId: group.id },
@@ -47,12 +59,14 @@ const UpdateAddOnGroupService = async ({
 
     for (let i = 0; i < subgroups.length; i++) {
       const sg = subgroups[i];
+      const sgRules = normalizeMinMax(sg);
       const subgroup = await AddOnSubgroup.create(
         {
           addOnGroupId: group.id,
           name: sg.name.trim(),
           order: sg.order ?? i,
-        },
+          ...sgRules,
+        } as any,
         { transaction: t }
       );
       for (let j = 0; j < (sg.items || []).length; j++) {

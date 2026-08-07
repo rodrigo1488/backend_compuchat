@@ -37,6 +37,15 @@ class AddOnSubgroup extends Model<AddOnSubgroup> {
   })
   order: number;
 
+  @Column({ type: DataType.BOOLEAN, defaultValue: false })
+  required: boolean;
+
+  @Column({ type: DataType.INTEGER, defaultValue: 0 })
+  minItems: number;
+
+  @Column({ type: DataType.INTEGER, allowNull: true })
+  maxItems: number | null;
+
   @HasMany(() => AddOnItem)
   items: AddOnItem[];
 

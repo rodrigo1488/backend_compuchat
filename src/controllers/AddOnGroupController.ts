@@ -16,12 +16,15 @@ export const index = async (req: Request, res: Response): Promise<Response> => {
 
 export const store = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
-  const { name, subgroups, items } = req.body;
+  const { name, subgroups, items, required, minItems, maxItems } = req.body;
   const group = await CreateAddOnGroupService({
     companyId,
     name,
     subgroups: subgroups || [],
     items: items || [],
+    required,
+    minItems,
+    maxItems,
   });
   return res.status(201).json(group);
 };
@@ -42,13 +45,16 @@ export const update = async (req: Request, res: Response): Promise<Response> => 
   if (isNaN(id)) {
     return res.status(400).json({ error: "ERR_INVALID_ID" });
   }
-  const { name, subgroups, items } = req.body;
+  const { name, subgroups, items, required, minItems, maxItems } = req.body;
   const group = await UpdateAddOnGroupService({
     addOnGroupId: id,
     companyId,
     name,
     subgroups: subgroups ?? [],
     items: items ?? [],
+    required,
+    minItems,
+    maxItems,
   });
   return res.json(group);
 };

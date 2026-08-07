@@ -10,7 +10,7 @@ import ProcessFormResponseService from "../services/FormServices/ProcessFormResp
 import UpdateOrderStatusService from "../services/OrderServices/UpdateOrderStatusService";
 import { ReprintLastPrintJobForFormResponse } from "../services/PrintJobService/ReprintPrintJobService";
 import AppError from "../errors/AppError";
-import { verifyOrderToken } from "../helpers/MesaLinkSign";
+import { verifyOrderToken, verifyOrderTrackingToken } from "../helpers/MesaLinkSign";
 import {
   findPublicFormById,
   findPublicFormBySlug,
@@ -382,8 +382,72 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     ...payload,
     whatsappSent: (response as any).whatsappSent,
     whatsappError: (response as any).whatsappError,
+    trackingToken: (response as any).trackingToken,
   };
   return res.status(200).json(body);
+};
+
+/** Público: status do pedido para a página de acompanhamento (/pedido/:token). */
+export const getPublicOrderStatus = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { token } = req.params as any;
+  const decoded = verifyOrderTrackingToken(String(token || ""));
+  if (!decoded) {
+    throw new AppError("ERR_ORDER_TRACKING_INVALID", 404);
+  }
+
+  const response = await FormResponse.findOne({
+    where: { id: decoded.formResponseId, formId: decoded.formId },
+    attributes: ["id", "protocol", "orderStatus", "submittedAt", "metadata"],
+    include: [
+      {
+        model: Form,
+        as: "form",
+        required: true,
+        where: { companyId: decoded.companyId },
+        attributes: ["id", "name", "settings", "primaryColor", "logoUrl"],
+      },
+    ],
+  });
+
+  if (!response) {
+    throw new AppError("ERR_ORDER_NOT_FOUND", 404);
+  }
+
+  const meta = (response.metadata || {}) as any;
+  const formSettings = ((response as any).form?.settings || {}) as any;
+  const items = Array.isArray(meta.menuItems)
+    ? meta.menuItems.map((it: any) => ({
+        productName: it.productName || "Item",
+        quantity: it.quantity || 1,
+        productValue: Number(it.productValue) || 0,
+        addonsTotal: Number(it.addonsTotal) || 0,
+        addons: Array.isArray(it.addons)
+          ? it.addons.map((a: any) => ({ label: a.label, value: Number(a.value) || 0 }))
+          : [],
+        observation: it.observation || "",
+      }))
+    : [];
+
+  return res.json({
+    protocol: response.protocol,
+    orderStatus: response.orderStatus || "novo",
+    submittedAt: response.submittedAt,
+    orderType: meta.orderType || null,
+    tableNumber: meta.tableNumber || null,
+    subtotal: meta.subtotal != null ? Number(meta.subtotal) : null,
+    deliveryFee: meta.deliveryFee != null ? Number(meta.deliveryFee) : null,
+    couponCode: meta.couponCode || null,
+    couponDiscount: meta.couponDiscount != null ? Number(meta.couponDiscount) : null,
+    total: meta.total != null ? Number(meta.total) : null,
+    items,
+    storeName: (response as any).form?.name || "",
+    primaryColor: (response as any).form?.primaryColor || null,
+    logoUrl: (response as any).form?.logoUrl || null,
+    averageDeliveryTime: formSettings.averageDeliveryTime || "",
+  });
 };
 
 export const destroy = async (
