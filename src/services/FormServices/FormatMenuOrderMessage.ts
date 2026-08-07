@@ -6,9 +6,16 @@ interface MenuItem {
   productName?: string;
   productValue?: number;
   grupo?: string;
+  type?: string;
   observation?: string;
   addons?: Array<{ label: string; value: number }>;
   addonsTotal?: number;
+  comboItems?: Array<{
+    productId?: number;
+    productName?: string;
+    value?: number;
+    quantity?: number;
+  }>;
 }
 
 interface CustomField {
@@ -117,7 +124,16 @@ const FormatMenuOrderMessage = async ({
     message += `*${grupo}*\n`;
     itemsByGroup[grupo].forEach((item) => {
       const itemTotal = lineTotal(item);
-      message += `• ${item.productName} - Qtd: ${item.quantity} - R$ ${itemTotal.toFixed(2).replace(".", ",")}\n`;
+      const comboLabel = item.type === "combo" ? " (Combo)" : "";
+      message += `• ${item.productName}${comboLabel} - Qtd: ${item.quantity} - R$ ${itemTotal.toFixed(2).replace(".", ",")}\n`;
+      if (item.type === "combo" && Array.isArray(item.comboItems) && item.comboItems.length > 0) {
+        item.comboItems.forEach((ci) => {
+          const q = Number(ci.quantity) || 1;
+          const name = ci.productName || `Produto #${ci.productId || "?"}`;
+          const val = Number(ci.value) || 0;
+          message += `  └ ${q > 1 ? `${q}x ` : ""}${name} — R$ ${val.toFixed(2).replace(".", ",")}\n`;
+        });
+      }
       if (item.addons && item.addons.length > 0) {
         item.addons.forEach((a) => {
           message += `  └ ${a.label} + R$ ${Number(a.value).toFixed(2).replace(".", ",")}\n`;

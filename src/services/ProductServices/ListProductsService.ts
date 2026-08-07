@@ -1,9 +1,8 @@
 import Product from "../../models/Product";
 import { Op } from "sequelize";
+import { productDetailInclude } from "./SyncProductComboItems";
 
-const productInclude = [
-  { association: "variations" as const, include: [{ association: "options" as const }] },
-];
+const productInclude = productDetailInclude;
 
 interface Request {
   companyId: number;

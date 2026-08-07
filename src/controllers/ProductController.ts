@@ -65,14 +65,15 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
     name: Yup.string().required("Nome do produto é obrigatório"),
     description: Yup.string().nullable(),
     value: Yup.number()
-      .required("Valor é obrigatório")
-      .min(0, "Valor deve ser maior ou igual a zero"),
+      .min(0, "Valor deve ser maior ou igual a zero")
+      .nullable(),
     quantity: Yup.number()
       .integer("Quantidade deve ser um número inteiro")
       .min(0, "Quantidade deve ser maior ou igual a zero")
       .nullable(),
     isMenuProduct: Yup.boolean().nullable(),
     variablePrice: Yup.boolean().nullable(),
+    isCombo: Yup.boolean().nullable(),
     allowsHalfAndHalf: Yup.boolean().nullable(),
     halfAndHalfPriceRule: Yup.string()
       .transform((v) => (v === "" || v == null || v === "null" ? null : v))
@@ -104,14 +105,34 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
         })
       )
       .nullable(),
+    comboItems: Yup.array()
+      .of(
+        Yup.object().shape({
+          productId: Yup.number().required(),
+          value: Yup.number().min(0).required(),
+          quantity: Yup.number().integer().min(1).nullable(),
+          order: Yup.number().integer().min(0).nullable(),
+        })
+      )
+      .nullable(),
   }).test(
     "halfAndHalfRule",
     "Regra de cobrança é obrigatória quando 'Permitir meio a meio' está ativo",
     (obj: any) => {
+      if (obj?.isCombo === true) return true;
       if (obj?.allowsHalfAndHalf === true) {
         return obj?.halfAndHalfPriceRule != null && ["max", "fixed", "average"].includes(obj.halfAndHalfPriceRule);
       }
       return true;
+    }
+  ).test(
+    "comboOrValue",
+    "Valor é obrigatório",
+    (obj: any) => {
+      if (obj?.isCombo === true) {
+        return Array.isArray(obj?.comboItems) && obj.comboItems.length > 0;
+      }
+      return obj?.value != null && Number(obj.value) >= 0;
     }
   );
 
@@ -123,6 +144,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
 
   const product = await CreateProductService({
     ...data,
+    value: data.isCombo ? 0 : data.value,
     companyId,
   });
 
@@ -157,6 +179,7 @@ export const update = async (
       .min(0, "Quantidade deve ser maior ou igual a zero")
       .nullable(),
     isMenuProduct: Yup.boolean().nullable(),
+    isCombo: Yup.boolean().nullable(),
     allowsHalfAndHalf: Yup.boolean().nullable(),
     halfAndHalfPriceRule: Yup.string()
       .transform((v) => (v === "" || v == null || v === "null" ? null : v))
@@ -188,12 +211,32 @@ export const update = async (
         })
       )
       .nullable(),
+    comboItems: Yup.array()
+      .of(
+        Yup.object().shape({
+          productId: Yup.number().required(),
+          value: Yup.number().min(0).required(),
+          quantity: Yup.number().integer().min(1).nullable(),
+          order: Yup.number().integer().min(0).nullable(),
+        })
+      )
+      .nullable(),
   }).test(
     "halfAndHalfRule",
     "Regra de cobrança é obrigatória quando 'Permitir meio a meio' está ativo",
     (obj: any) => {
+      if (obj?.isCombo === true) return true;
       if (obj?.allowsHalfAndHalf === true) {
         return obj?.halfAndHalfPriceRule != null && ["max", "fixed", "average"].includes(obj.halfAndHalfPriceRule);
+      }
+      return true;
+    }
+  ).test(
+    "comboItemsWhenCombo",
+    "Combo precisa de pelo menos um produto integrante",
+    (obj: any) => {
+      if (obj?.isCombo === true && obj?.comboItems !== undefined) {
+        return Array.isArray(obj.comboItems) && obj.comboItems.length > 0;
       }
       return true;
     }
@@ -252,16 +295,25 @@ export const getPublicMenuProducts = async (
     attributes: ["id", "companyId"],
   });
 
-  // Buscar todos os produtos de cardápio da empresa (com variações e addOnGroupId)
+  // Buscar todos os produtos de cardápio da empresa (com variações, combos e addOnGroupId)
   const products = await Product.findAll({
     where: {
       companyId: form.companyId,
       isMenuProduct: true,
     },
     order: [["grupo", "ASC"], ["name", "ASC"]],
-    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo", "addOnGroupId"],
+    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "isCombo", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo", "addOnGroupId"],
     include: [
       { association: "variations", include: [{ association: "options" }] },
+      {
+        association: "comboItems",
+        include: [
+          {
+            association: "product",
+            attributes: ["id", "name", "value", "grupo"],
+          },
+        ],
+      },
     ],
   });
 
@@ -315,7 +367,17 @@ export const getPublicMenuProducts = async (
   );
 
   const productsWithAddOn = products.map((p) => {
-    const po = p.toJSON() as Record<string, unknown> & { addOnGroupId?: number | null; grupo?: string };
+    const po = p.toJSON() as Record<string, unknown> & {
+      addOnGroupId?: number | null;
+      grupo?: string;
+      isCombo?: boolean;
+    };
+    // Combo não usa adicionais no pedido
+    if (po.isCombo) {
+      po.addOnGroup = null;
+      po.addOnGroupId = null;
+      return po;
+    }
     const resolvedAddOnId = po.addOnGroupId ?? (po.grupo ? grupoToAddOnId.get(po.grupo) : undefined);
     po.addOnGroup = resolvedAddOnId ? addOnGroupMap.get(resolvedAddOnId) ?? null : null;
     return po;

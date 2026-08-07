@@ -1,5 +1,6 @@
 import Product from "../../models/Product";
 import AppError from "../../errors/AppError";
+import { productDetailInclude } from "./SyncProductComboItems";
 
 interface Request {
   productId: number;
@@ -12,9 +13,7 @@ const ShowProductService = async ({
 }: Request): Promise<Product> => {
   const product = await Product.findOne({
     where: { id: productId, companyId },
-    include: [
-      { association: "variations", include: [{ association: "options" }] },
-    ],
+    include: productDetailInclude,
   });
 
   if (!product) {

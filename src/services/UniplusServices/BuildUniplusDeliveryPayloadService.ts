@@ -336,7 +336,7 @@ const BuildUniplusDeliveryPayloadService = async ({
   const meta = (response.metadata || {}) as Record<string, any>;
   const items = Array.isArray(menuItems) ? menuItems : [];
 
-  // Inclui base + sabores do meio a meio (half1/half2) para observação com códigos UniPlus
+  // Inclui base + sabores do meio a meio + integrantes de combo
   const productIds = [
     ...new Set(
       items
@@ -344,6 +344,9 @@ const BuildUniplusDeliveryPayloadService = async ({
           Number(it.productId),
           Number(it.half1ProductId),
           Number(it.half2ProductId),
+          ...(Array.isArray(it.comboItems)
+            ? it.comboItems.map((ci: any) => Number(ci.productId))
+            : []),
         ])
         .filter((id) => Number.isFinite(id) && id > 0)
     ),
@@ -403,6 +406,65 @@ const BuildUniplusDeliveryPayloadService = async ({
   const payloadItems: UniplusPayloadItem[] = [];
   const warnings: string[] = [];
   for (const item of items) {
+    // Combo: não envia o produto-pai; explode cada integrante com o valor do combo
+    if (item.type === "combo") {
+      const comboName = String(item.productName || "Combo").slice(0, 80);
+      const comboQty = Number(item.quantity) || 1;
+      const comboObs = String(item.observation || item.observacao || "").trim();
+      const constituents = Array.isArray(item.comboItems) ? item.comboItems : [];
+
+      if (!constituents.length) {
+        const msg = `combo productId=${item.productId} sem integrantes no snapshot`;
+        warnings.push(msg);
+        logger.warn({ protocol, productId: item.productId }, "Uniplus payload: combo sem comboItems");
+        continue;
+      }
+
+      for (const ci of constituents) {
+        const childProduct = productById.get(Number(ci.productId));
+        const codigo =
+          String(ci.idUniplus || childProduct?.idUniplus || "").trim() ||
+          resolveItemUniplusCodigo(
+            { productId: ci.productId, productName: ci.productName },
+            productById,
+            catalogWithCode,
+            optionById
+          );
+        const nomeproduto = String(
+          ci.productName || childProduct?.name || "Produto"
+        ).slice(0, 120);
+        const unitQty = Math.max(1, Number(ci.quantity) || 1);
+        const quantidade = unitQty * comboQty;
+        const precounitario = roundMoney(Number(ci.value) || 0);
+        const valortotal = roundMoney(precounitario * quantidade);
+        const obsParts = [`Combo: ${comboName}`];
+        if (comboObs) obsParts.push(comboObs);
+        const observacao = obsParts.join(" | ").slice(0, 255);
+
+        if (!codigo) {
+          const msg = `integrante de combo productId=${ci.productId} sem idUniplus — agent resolverá por nome: ${nomeproduto}`;
+          warnings.push(msg);
+          logger.warn(
+            { protocol, productId: ci.productId, comboProductId: item.productId, nomeproduto },
+            "Uniplus payload: integrante de combo sem idUniplus"
+          );
+        }
+
+        payloadItems.push({
+          codigoproduto: (codigo || "").slice(0, 20),
+          nomeproduto,
+          quantidade,
+          precounitario,
+          valortotal,
+          unidademedida: "UN",
+          observacao,
+          orderidintegracao: protocol,
+          hash: padHash(randomUUID()),
+        });
+      }
+      continue;
+    }
+
     const product = productById.get(Number(item.productId));
     const codigo = resolveItemUniplusCodigo(
       item,

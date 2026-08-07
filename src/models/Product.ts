@@ -14,6 +14,7 @@ import {
 } from "sequelize-typescript";
 import Company from "./Company";
 import ProductVariation from "./ProductVariation";
+import ProductComboItem from "./ProductComboItem";
 import AddOnGroup from "./AddOnGroup";
 
 @Table
@@ -51,6 +52,10 @@ class Product extends Model<Product> {
 
   @Default(false)
   @Column
+  isCombo: boolean;
+
+  @Default(false)
+  @Column
   allowsHalfAndHalf: boolean;
 
   @Column(DataType.STRING)
@@ -84,6 +89,9 @@ class Product extends Model<Product> {
 
   @HasMany(() => ProductVariation)
   variations: ProductVariation[];
+
+  @HasMany(() => ProductComboItem, "comboProductId")
+  comboItems: ProductComboItem[];
 
   @CreatedAt
   createdAt: Date;

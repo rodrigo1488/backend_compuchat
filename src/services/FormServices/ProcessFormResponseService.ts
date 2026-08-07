@@ -34,6 +34,7 @@ import FormatAppointmentConfirmationMessage from "./FormatAppointmentConfirmatio
 import { createAppointmentToken } from "../../helpers/MesaLinkSign";
 import ProductVariation from "../../models/ProductVariation";
 import ProductVariationOption from "../../models/ProductVariationOption";
+import ProductComboItem from "../../models/ProductComboItem";
 import AddOnItem from "../../models/AddOnItem";
 import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
@@ -91,6 +92,13 @@ type MenuItemInput = {
   half2OptionId?: number | null;
   observation?: string;
   addons?: Array<{ addOnItemId: number; label?: string; value?: number }>;
+  comboItems?: Array<{
+    productId: number;
+    productName?: string;
+    value: number;
+    quantity: number;
+    idUniplus?: string | null;
+  }>;
 };
 
 /** Observação do cliente por item: texto simples, limitado. */
@@ -191,13 +199,78 @@ const validateAddonRules = async (
   }
 };
 
-/** Normaliza menuItems: para itens tipo halfAndHalf, calcula productValue e productName no backend. */
+/** Normaliza menuItems: halfAndHalf / combo recalculam productValue e snapshot no backend. */
 const normalizeMenuItems = async (
   items: MenuItemInput[],
   companyId: number
 ): Promise<any[]> => {
   const result: any[] = [];
   for (const item of items) {
+    // Combo: snapshot dos integrantes com valores cadastrados no combo
+    if ((item as any).type === "combo" && item.productId) {
+      const product = await Product.findOne({
+        where: { id: item.productId, companyId },
+        attributes: ["id", "name", "value", "grupo", "isCombo"],
+        include: [
+          {
+            model: ProductComboItem,
+            as: "comboItems",
+            include: [
+              {
+                model: Product,
+                as: "product",
+                attributes: ["id", "name", "idUniplus"],
+              },
+            ],
+          },
+        ],
+      });
+
+      if (!product || !(product as any).isCombo) {
+        result.push({
+          ...item,
+          type: "combo",
+          productName: item.productName || "Combo (produto não encontrado)",
+          productValue: 0,
+          comboItems: [],
+        });
+        continue;
+      }
+
+      const rawItems = ((product as any).comboItems || [])
+        .slice()
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
+
+      const comboItemsSnapshot = rawItems.map((ci: any) => ({
+        productId: ci.productId,
+        productName: ci.product?.name || `Produto #${ci.productId}`,
+        value: Math.round((Number(ci.value) || 0) * 100) / 100,
+        quantity: Math.max(1, Number(ci.quantity) || 1),
+        idUniplus: ci.product?.idUniplus || null,
+      }));
+
+      const productValue =
+        Math.round(
+          comboItemsSnapshot.reduce(
+            (sum: number, ci: any) => sum + ci.value * ci.quantity,
+            0
+          ) * 100
+        ) / 100;
+
+      const comboObservation = sanitizeObservation(item.observation);
+      result.push({
+        type: "combo",
+        productId: item.productId,
+        quantity: item.quantity,
+        productName: item.productName || (product as any).name,
+        productValue,
+        grupo: item.grupo || (product as any).grupo || "Outros",
+        comboItems: comboItemsSnapshot,
+        ...(comboObservation && { observation: comboObservation }),
+      });
+      continue;
+    }
+
     if ((item as any).type === "halfAndHalf" && item.productId && item.half1ProductId && item.half2ProductId) {
       const [base, half1, half2] = await Promise.all([
         Product.findOne({ 

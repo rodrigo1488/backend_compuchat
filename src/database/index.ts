@@ -53,6 +53,7 @@ import UserAppointment from "../models/UserAppointment";
 import Product from "../models/Product";
 import ProductVariation from "../models/ProductVariation";
 import ProductVariationOption from "../models/ProductVariationOption";
+import ProductComboItem from "../models/ProductComboItem";
 import AddOnGroup from "../models/AddOnGroup";
 import AddOnSubgroup from "../models/AddOnSubgroup";
 import AddOnItem from "../models/AddOnItem";
@@ -131,6 +132,7 @@ const models = [
   Product,
   ProductVariation,
   ProductVariationOption,
+  ProductComboItem,
   AddOnGroup,
   AddOnSubgroup,
   AddOnItem,
