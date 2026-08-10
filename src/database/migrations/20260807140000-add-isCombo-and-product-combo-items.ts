@@ -29,6 +29,13 @@ module.exports = {
         onDelete: "RESTRICT",
         allowNull: false,
       },
+      variationOptionId: {
+        type: DataTypes.INTEGER,
+        references: { model: "ProductVariationOptions", key: "id" },
+        onUpdate: "CASCADE",
+        onDelete: "SET NULL",
+        allowNull: true,
+      },
       value: {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
@@ -53,9 +60,8 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex("ProductComboItems", ["comboProductId", "productId"], {
-      unique: true,
-      name: "product_combo_items_combo_product_unique",
+    await queryInterface.addIndex("ProductComboItems", ["comboProductId"], {
+      name: "product_combo_items_combo_product_id",
     });
   },
 

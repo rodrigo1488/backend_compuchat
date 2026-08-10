@@ -10,8 +10,10 @@ import {
   ForeignKey,
   BelongsTo,
   Default,
+  AllowNull,
 } from "sequelize-typescript";
 import Product from "./Product";
+import ProductVariationOption from "./ProductVariationOption";
 
 @Table
 class ProductComboItem extends Model<ProductComboItem> {
@@ -24,15 +26,26 @@ class ProductComboItem extends Model<ProductComboItem> {
   @Column
   comboProductId: number;
 
-  @BelongsTo(() => Product, "comboProductId")
+  @BelongsTo(() => Product, { foreignKey: "comboProductId", as: "comboProduct" })
   comboProduct: Product;
 
   @ForeignKey(() => Product)
   @Column
   productId: number;
 
-  @BelongsTo(() => Product, "productId")
+  @BelongsTo(() => Product, { foreignKey: "productId", as: "product" })
   product: Product;
+
+  @ForeignKey(() => ProductVariationOption)
+  @AllowNull(true)
+  @Column
+  variationOptionId: number | null;
+
+  @BelongsTo(() => ProductVariationOption, {
+    foreignKey: "variationOptionId",
+    as: "variationOption",
+  })
+  variationOption: ProductVariationOption | null;
 
   @Column({
     type: DataType.DECIMAL(10, 2),

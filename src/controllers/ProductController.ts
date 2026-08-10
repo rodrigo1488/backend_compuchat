@@ -112,6 +112,7 @@ export const store = async (req: Request, res: Response): Promise<Response> => {
           value: Yup.number().min(0).required(),
           quantity: Yup.number().integer().min(1).nullable(),
           order: Yup.number().integer().min(0).nullable(),
+          variationOptionId: Yup.number().nullable(),
         })
       )
       .nullable(),
@@ -218,6 +219,7 @@ export const update = async (
           value: Yup.number().min(0).required(),
           quantity: Yup.number().integer().min(1).nullable(),
           order: Yup.number().integer().min(0).nullable(),
+          variationOptionId: Yup.number().nullable(),
         })
       )
       .nullable(),
@@ -311,6 +313,10 @@ export const getPublicMenuProducts = async (
           {
             association: "product",
             attributes: ["id", "name", "value", "grupo"],
+          },
+          {
+            association: "variationOption",
+            attributes: ["id", "label", "value"],
           },
         ],
       },

@@ -98,6 +98,7 @@ type MenuItemInput = {
     value: number;
     quantity: number;
     idUniplus?: string | null;
+    variationOptionId?: number | null;
   }>;
 };
 
@@ -221,6 +222,10 @@ const normalizeMenuItems = async (
                 as: "product",
                 attributes: ["id", "name", "idUniplus"],
               },
+              {
+                association: "variationOption",
+                attributes: ["id", "label", "value", "idUniplus"],
+              },
             ],
           },
         ],
@@ -241,13 +246,21 @@ const normalizeMenuItems = async (
         .slice()
         .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
-      const comboItemsSnapshot = rawItems.map((ci: any) => ({
-        productId: ci.productId,
-        productName: ci.product?.name || `Produto #${ci.productId}`,
-        value: Math.round((Number(ci.value) || 0) * 100) / 100,
-        quantity: Math.max(1, Number(ci.quantity) || 1),
-        idUniplus: ci.product?.idUniplus || null,
-      }));
+      const comboItemsSnapshot = rawItems.map((ci: any) => {
+        const baseName = ci.product?.name || `Produto #${ci.productId}`;
+        const optLabel = ci.variationOption?.label;
+        const productName = optLabel ? `${baseName} - ${optLabel}` : baseName;
+        const idUniplus =
+          ci.variationOption?.idUniplus || ci.product?.idUniplus || null;
+        return {
+          productId: ci.productId,
+          variationOptionId: ci.variationOptionId || null,
+          productName,
+          value: Math.round((Number(ci.value) || 0) * 100) / 100,
+          quantity: Math.max(1, Number(ci.quantity) || 1),
+          idUniplus,
+        };
+      });
 
       const productValue =
         Math.round(

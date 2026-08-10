@@ -372,6 +372,9 @@ const BuildUniplusDeliveryPayloadService = async ({
           Number(it.baseOptionId),
           Number(it.half1OptionId),
           Number(it.half2OptionId),
+          ...(Array.isArray(it.comboItems)
+            ? it.comboItems.map((ci: any) => Number(ci.variationOptionId))
+            : []),
         ])
         .filter((id) => Number.isFinite(id) && id > 0)
     ),
@@ -422,10 +425,17 @@ const BuildUniplusDeliveryPayloadService = async ({
 
       for (const ci of constituents) {
         const childProduct = productById.get(Number(ci.productId));
+        const optionCodigo = ci.variationOptionId
+          ? String(optionById.get(Number(ci.variationOptionId))?.idUniplus || "").trim()
+          : "";
         const codigo =
-          String(ci.idUniplus || childProduct?.idUniplus || "").trim() ||
+          String(ci.idUniplus || optionCodigo || childProduct?.idUniplus || "").trim() ||
           resolveItemUniplusCodigo(
-            { productId: ci.productId, productName: ci.productName },
+            {
+              productId: ci.productId,
+              productName: ci.productName,
+              variationOptionId: ci.variationOptionId,
+            },
             productById,
             catalogWithCode,
             optionById
