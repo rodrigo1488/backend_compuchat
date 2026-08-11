@@ -364,9 +364,10 @@ const normalizeMenuItems = async (
       }
       else if (rule === "average") productValue = (v1 + v2) / 2;
       else productValue = Math.max(v1, v2);
+      const half1Name = String((half1 as any).name || "").trim() || "Sabor 1";
+      const half2Name = String((half2 as any).name || "").trim() || "Sabor 2";
       const productName =
-        item.productName ||
-        `Meio a meio: ${(half1 as any).name} / ${(half2 as any).name}`;
+        item.productName || `Meio a meio: ${half1Name} / ${half2Name}`;
       const halfObservation = sanitizeObservation(item.observation);
       result.push({
         type: "halfAndHalf",
@@ -377,6 +378,8 @@ const normalizeMenuItems = async (
         half1OptionId: (item as any).half1OptionId || null,
         half2OptionId: (item as any).half2OptionId || null,
         baseOptionId: (item as any).baseOptionId || null,
+        half1Name,
+        half2Name,
         productName,
         productValue: Math.round(productValue * 100) / 100,
         grupo: item.grupo || (base as any).grupo,
