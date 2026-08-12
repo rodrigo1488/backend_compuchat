@@ -297,31 +297,67 @@ export const getPublicMenuProducts = async (
     attributes: ["id", "companyId"],
   });
 
-  // Buscar todos os produtos de cardápio da empresa (com variações, combos e addOnGroupId)
-  const products = await Product.findAll({
-    where: {
-      companyId: form.companyId,
-      isMenuProduct: true,
-    },
-    order: [["grupo", "ASC"], ["name", "ASC"]],
-    attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "isCombo", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo", "addOnGroupId"],
+  // Buscar todos os produtos de cardápio da empresa (com variações, combos e addOnGroupId).
+  // Fallback sem isCombo/comboItems se a migration ainda não rodou em produção.
+  const baseAttributes = [
+    "id",
+    "name",
+    "description",
+    "value",
+    "grupo",
+    "isMenuProduct",
+    "variablePrice",
+    "imageUrl",
+    "allowsHalfAndHalf",
+    "halfAndHalfPriceRule",
+    "halfAndHalfGrupo",
+    "addOnGroupId",
+  ];
+  const comboInclude = {
+    association: "comboItems" as const,
     include: [
-      { association: "variations", include: [{ association: "options" }] },
       {
-        association: "comboItems",
-        include: [
-          {
-            association: "product",
-            attributes: ["id", "name", "value", "grupo"],
-          },
-          {
-            association: "variationOption",
-            attributes: ["id", "label", "value"],
-          },
-        ],
+        association: "product" as const,
+        attributes: ["id", "name", "value", "grupo"],
+      },
+      {
+        association: "variationOption" as const,
+        attributes: ["id", "label", "value"],
       },
     ],
-  });
+  };
+
+  let products: Product[];
+  try {
+    products = await Product.findAll({
+      where: {
+        companyId: form.companyId,
+        isMenuProduct: true,
+      },
+      order: [["grupo", "ASC"], ["name", "ASC"]],
+      attributes: [...baseAttributes, "isCombo"],
+      include: [
+        { association: "variations", include: [{ association: "options" }] },
+        comboInclude,
+      ],
+    });
+  } catch (err) {
+    console.error(
+      "[getPublicMenuProducts] Falha ao carregar com combos; tentando sem isCombo/comboItems:",
+      (err as Error)?.message || err
+    );
+    products = await Product.findAll({
+      where: {
+        companyId: form.companyId,
+        isMenuProduct: true,
+      },
+      order: [["grupo", "ASC"], ["name", "ASC"]],
+      attributes: baseAttributes,
+      include: [
+        { association: "variations", include: [{ association: "options" }] },
+      ],
+    });
+  }
 
   // Mapeamento grupo -> addOnGroupId (atribuição por categoria)
   const grupoAssignments = await GrupoAddOn.findAll({

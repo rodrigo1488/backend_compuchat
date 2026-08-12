@@ -5,13 +5,30 @@ import { assertCompanyPublicAccess } from "../../helpers/companyPublicAccess";
 
 type PublicFormFindOptions = Omit<FindOptions, "where">;
 
+/** Garante companyId (e id) quando o caller restringe attributes. */
+const withPublicAccessAttributes = (
+  options: PublicFormFindOptions
+): PublicFormFindOptions => {
+  if (!Array.isArray(options.attributes)) {
+    return options;
+  }
+  const attrs = new Set(
+    (options.attributes as Array<string | unknown>)
+      .map((a) => (typeof a === "string" ? a : null))
+      .filter((a): a is string => Boolean(a))
+  );
+  attrs.add("id");
+  attrs.add("companyId");
+  return { ...options, attributes: Array.from(attrs) };
+};
+
 export const findPublicFormBySlug = async (
   publicId: string,
   options: PublicFormFindOptions = {}
 ): Promise<Form> => {
   const form = await Form.findOne({
     where: { publicId, isActive: true },
-    ...options,
+    ...withPublicAccessAttributes(options),
   });
 
   if (!form) {
@@ -28,7 +45,7 @@ export const findPublicFormById = async (
 ): Promise<Form> => {
   const form = await Form.findOne({
     where: { id, isActive: true },
-    ...options,
+    ...withPublicAccessAttributes(options),
   });
 
   if (!form) {

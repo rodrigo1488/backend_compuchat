@@ -414,7 +414,7 @@ export const getPublicMostOrdered = async (req: Request, res: Response): Promise
   setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
   const form = await findPublicFormBySlug(publicId, {
-    attributes: ["id"],
+    attributes: ["id", "companyId"],
   });
   const responses = await FormResponse.findAll({
     where: { formId: form.id },
