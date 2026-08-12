@@ -40,6 +40,7 @@ import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
 import EvaluateCardapioOrderHours from "./EvaluateCardapioOrderHours";
+import ResolveDeliveryFee from "./ResolveDeliveryFee";
 
 interface Answer {
   fieldId: number;
@@ -621,7 +622,6 @@ const ProcessFormResponseService = async ({
   if (isMenuForm && menuItems && menuItems.length > 0) {
     normalizedMenuItems = await normalizeMenuItems(menuItems, form.companyId);
     responseMetadata.menuItems = normalizedMenuItems;
-    const deliveryFeeFromMeta = Number((metadata as any)?.deliveryFee) || 0;
     let subtotal = 0;
     for (const it of normalizedMenuItems) {
       const pv = Number(it.productValue) || 0;
@@ -630,12 +630,20 @@ const ProcessFormResponseService = async ({
     }
     subtotal = Math.round(subtotal * 100) / 100;
 
+    // Recalcula orderType + taxa no servidor (não confiar só no metadata do cliente)
+    const resolvedDelivery = ResolveDeliveryFee(
+      { settings: formSettings, fields: (form as any).fields || [] },
+      answers,
+      { ...(metadata as any), ...responseMetadata }
+    );
+    responseMetadata.orderType = resolvedDelivery.orderType;
+    const deliveryFeeResolved = resolvedDelivery.deliveryFee;
+
     // Pedido mínimo (aplica-se a pedidos delivery)
     const minOrderValue = Number(formSettings?.minOrderValue) || 0;
-    const orderTypeMeta = (metadata as any)?.orderType || (responseMetadata as any)?.orderType;
     if (
       minOrderValue > 0 &&
-      orderTypeMeta === "delivery" &&
+      resolvedDelivery.orderType === "delivery" &&
       subtotal < minOrderValue &&
       !orderHoursBypass
     ) {
@@ -663,8 +671,8 @@ const ProcessFormResponseService = async ({
     }
 
     responseMetadata.subtotal = subtotal;
-    responseMetadata.total = Math.round((subtotal + deliveryFeeFromMeta - appliedCouponDiscount) * 100) / 100;
-    responseMetadata.deliveryFee = deliveryFeeFromMeta;
+    responseMetadata.total = Math.round((subtotal + deliveryFeeResolved - appliedCouponDiscount) * 100) / 100;
+    responseMetadata.deliveryFee = deliveryFeeResolved;
     console.log("ProcessFormResponseService: Saving menuItems:", responseMetadata.menuItems);
   } else if (isMenuForm) {
     console.log("ProcessFormResponseService: Form is menu but no menuItems received");
