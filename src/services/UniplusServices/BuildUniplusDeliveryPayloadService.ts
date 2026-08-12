@@ -638,6 +638,37 @@ const BuildUniplusDeliveryPayloadService = async ({
   const cnpjFilial = String(settings.uniplusCnpjFilial || "").trim().slice(0, 18);
   const hash = padHash(randomUUID());
 
+  const orderType = meta.orderType === "mesa" ? "mesa" : "delivery";
+  const tableNumber = String(meta.tableNumber || "").trim();
+  const garcomName = String(meta.garcomName || "").trim();
+  const nomeFromAnswers = findAnswerByLabel(fields, answers, [
+    /nome\s*do\s*cliente/,
+    /nome\s*completo/,
+    /^nome$/,
+    /\bnome\b/,
+  ]);
+  let clienteNome = String(
+    contactName ||
+      response.responderName ||
+      meta.customerName ||
+      meta.clienteNome ||
+      nomeFromAnswers ||
+      ""
+  ).trim();
+  if (!clienteNome) clienteNome = "Cliente";
+
+  // Unico lista pelo campo `nome`: em mesa, anexa o nº para identificar no delivery.
+  const nomeDisplay =
+    orderType === "mesa" && tableNumber
+      ? `${clienteNome} (Mesa ${tableNumber})`.slice(0, 60)
+      : clienteNome.slice(0, 60);
+
+  const obsParts = [
+    orderType === "mesa" && tableNumber ? `Mesa ${tableNumber}` : "",
+    garcomName ? `Garçom: ${garcomName}` : "",
+    `Compuchat ${protocol}`,
+  ].filter(Boolean);
+
   const contamesa: Record<string, unknown> = {
     tipopedido: 0,
     status: 1,
@@ -654,8 +685,8 @@ const BuildUniplusDeliveryPayloadService = async ({
     idcliente: 0,
     codigocliente: "",
     // Unico usa `nome` na listagem de delivery; `nomecliente` fica como espelho.
-    nome: String(contactName || response.responderName || "Cliente").slice(0, 60),
-    nomecliente: String(contactName || response.responderName || "Cliente").slice(0, 60),
+    nome: nomeDisplay,
+    nomecliente: clienteNome.slice(0, 60),
     telefone: String(contactPhone || response.responderPhone || "").slice(0, 20),
     documento: String(documento).slice(0, 18),
     endereco: String(endereco).slice(0, 60),
@@ -663,7 +694,7 @@ const BuildUniplusDeliveryPayloadService = async ({
     enderecobairro: String(enderecobairro).slice(0, 255),
     enderecocomplemento: String(enderecocomplemento).slice(0, 255),
     enderecoreferencia: String(enderecoreferencia).slice(0, 255),
-    valorentrega: deliveryFee,
+    valorentrega: orderType === "mesa" ? 0 : deliveryFee,
     valortotal: total,
     valorcombinado: total,
     ...valorPagamentos,
@@ -678,7 +709,7 @@ const BuildUniplusDeliveryPayloadService = async ({
     paraviagem: 0,
     numeropessoas: 1,
     desconto: 0,
-    obs: `Compuchat ${protocol}`.slice(0, 255),
+    obs: obsParts.join(" | ").slice(0, 255),
     data: now.toISOString().slice(0, 10),
     horaabertura: now.toISOString(),
     horaultimoconsumo: now.toISOString(),

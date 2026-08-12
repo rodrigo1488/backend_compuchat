@@ -554,9 +554,14 @@ const ProcessFormResponseService = async ({
     if (field) {
       const fieldMetadata = field.metadata as any;
       const val = toStr(answer.answer).trim();
-      if (fieldMetadata?.autoFieldType === "supplierName" || (field.fieldType === "text" && field.label.toLowerCase().includes("nome do fornecedor"))) {
+      const labelLower = String(field.label || "").toLowerCase();
+      if (fieldMetadata?.autoFieldType === "supplierName" || labelLower.includes("nome do fornecedor")) {
         if (val) contactName = val;
-      } else if (fieldMetadata?.autoFieldType === "name" || (field.fieldType === "text" && field.label.toLowerCase().includes("nome"))) {
+      } else if (
+        fieldMetadata?.autoFieldType === "name" ||
+        (labelLower.includes("nome") && !labelLower.includes("sobrenome") && !labelLower.includes("fornecedor"))
+      ) {
+        // Aceita autoField name em qualquer fieldType (garçom/mesas enviam pelo autoField)
         if (val) contactName = val;
       }
       if (fieldMetadata?.autoFieldType === "phone" || field.fieldType === "phone") {
@@ -1275,12 +1280,16 @@ const ProcessFormResponseService = async ({
     }
   }
 
-  // UniPlus: despacha job direto (sem preflight) — best-effort, nunca bloqueia o pedido
+  // UniPlus: despacha job direto (sem preflight) — best-effort, nunca bloqueia o pedido.
+  // Delivery e mesa (garçom / QR / tela Mesas) usam o mesmo fluxo CONTAMESA.
+  const orderTypeForUniplus = String(
+    ((response.metadata || metadata || {}) as any)?.orderType || ""
+  );
   if (
     isMenuForm &&
     menuItems &&
     menuItems.length > 0 &&
-    ((response.metadata || metadata || {}) as any)?.orderType === "delivery"
+    (orderTypeForUniplus === "delivery" || orderTypeForUniplus === "mesa")
   ) {
     try {
       const allMenuItems =
