@@ -7,6 +7,7 @@ import AddOnSubgroup from "../../models/AddOnSubgroup";
 import AddOnItem from "../../models/AddOnItem";
 import PrintDevice from "../../models/PrintDevice";
 import GrupoAddOn from "../../models/GrupoAddOn";
+import Form from "../../models/Form";
 
 interface Request {
   companyId: number;
@@ -22,7 +23,7 @@ const pinFromUser = (user: User): string => {
 };
 
 const BuildPosCatalogService = async ({ companyId }: Request) => {
-  const [users, mesas, products, addOnGroups, printers, grupoAssignments] =
+  const [users, mesas, products, addOnGroups, printers, grupoAssignments, forms] =
     await Promise.all([
       User.findAll({
         where: { companyId, active: true },
@@ -121,6 +122,10 @@ const BuildPosCatalogService = async ({ companyId }: Request) => {
       GrupoAddOn.findAll({
         where: { companyId },
         attributes: ["grupo", "addOnGroupId"],
+      }),
+      Form.findAll({
+        where: { companyId, isActive: true },
+        attributes: ["id", "settings"],
       }),
     ]);
 
@@ -236,8 +241,66 @@ const BuildPosCatalogService = async ({ companyId }: Request) => {
       deviceId: p.deviceId,
       name: p.name || p.deviceId,
     })),
+    printRoutes: buildPrintRoutes(forms, mesas, printers),
     images,
   };
+};
+
+const formHasPrintConfig = (form: Form): boolean => {
+  const settings = (form.settings || {}) as Record<string, unknown>;
+  const mesaPrintConfig = settings.mesaPrintConfig;
+  if (Array.isArray(mesaPrintConfig) && mesaPrintConfig.length > 0) {
+    return true;
+  }
+  return Number(settings.printDeviceId) > 0;
+};
+
+const buildPrintRoutes = (
+  forms: Form[],
+  mesas: Mesa[],
+  printers: PrintDevice[]
+): Array<{ deviceId: string; groupNames: string[] }> => {
+  const mesaFormIds = new Set(
+    mesas.map((m) => m.formId).filter((id): id is number => Number(id) > 0)
+  );
+  const fromMesas = forms.filter((f) => mesaFormIds.has(f.id) && formHasPrintConfig(f));
+  const source = fromMesas.length
+    ? fromMesas
+    : forms.filter((f) => formHasPrintConfig(f));
+
+  const byPk = new Map<number, Set<string>>();
+  for (const form of source) {
+    const settings = (form.settings || {}) as Record<string, unknown>;
+    const mesaPrintConfig = settings.mesaPrintConfig as
+      | Array<{ printDeviceId?: number; groupNames?: string[] }>
+      | undefined;
+    const printDeviceId = Number(settings.printDeviceId);
+    const rows =
+      Array.isArray(mesaPrintConfig) && mesaPrintConfig.length
+        ? mesaPrintConfig
+        : printDeviceId > 0
+          ? [{ printDeviceId, groupNames: ["*"] }]
+          : [];
+    for (const row of rows) {
+      const id = Number(row?.printDeviceId);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      if (!byPk.has(id)) byPk.set(id, new Set());
+      const groups = Array.isArray(row.groupNames) ? row.groupNames : [];
+      for (const g of groups) {
+        const name = String(g || "").trim();
+        if (name) byPk.get(id)!.add(name);
+      }
+    }
+  }
+
+  const idToDevice = new Map(printers.map((p) => [p.id, String(p.deviceId || "").trim()]));
+  const routes: Array<{ deviceId: string; groupNames: string[] }> = [];
+  for (const [pk, groups] of byPk.entries()) {
+    const deviceId = idToDevice.get(pk);
+    if (!deviceId) continue;
+    routes.push({ deviceId, groupNames: Array.from(groups) });
+  }
+  return routes;
 };
 
 export default BuildPosCatalogService;
