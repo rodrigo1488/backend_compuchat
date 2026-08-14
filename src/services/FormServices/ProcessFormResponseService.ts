@@ -1136,10 +1136,15 @@ const ProcessFormResponseService = async ({
       
       console.log("ProcessFormResponseService: Extracted values - printDeviceId:", printDeviceId, "mesaPrintConfig:", mesaPrintConfig, "deliveryPrintDeviceIds:", deliveryPrintDeviceIds);
 
-      let meta = (response.metadata || metadata || {}) as Record<string, unknown>;
+      let meta = {
+        ...((metadata || {}) as Record<string, unknown>),
+        ...((response.metadata || {}) as Record<string, unknown>),
+      } as Record<string, unknown>;
       if (meta?.orderType === "delivery") {
         const fresh = await FormResponse.findByPk(response.id, { attributes: ["metadata"] });
-        if (fresh?.metadata) meta = fresh.metadata as Record<string, unknown>;
+        if (fresh?.metadata) {
+          meta = { ...meta, ...(fresh.metadata as Record<string, unknown>) };
+        }
         let scanToken = meta?.deliveryScanToken as string | undefined;
         if (!scanToken) {
           scanToken = createDeliveryScanToken(form.companyId, form.id, response.id);
@@ -1218,6 +1223,13 @@ const ProcessFormResponseService = async ({
           printQrModuleSize,
           printFontScale,
           fulfillmentMode,
+          pickup: fulfillmentMode === "pickup",
+          retirada: fulfillmentMode === "pickup",
+          metadata: {
+            fulfillmentMode,
+            pickup: fulfillmentMode === "pickup",
+            retirada: fulfillmentMode === "pickup",
+          },
         };
         if (
           orderType === "delivery" &&
