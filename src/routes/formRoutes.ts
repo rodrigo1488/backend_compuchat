@@ -47,6 +47,7 @@ routes.delete("/forms/:formId/responses/:id", isAuth, FormResponseController.des
 routes.put("/forms/:formId/responses/:id/read", isAuth, FormResponseController.markAsRead);
 routes.put("/forms/:formId/responses/:id/star", isAuth, FormResponseController.toggleStar);
 routes.put("/forms/:formId/responses/:id/order-status", isAuth, FormResponseController.updateOrderStatus);
+routes.put("/forms/:formId/responses/:id/delivery-order", isAuth, FormResponseController.updateDeliveryOrder);
 routes.post(
   "/forms/:formId/responses/:id/reprint-print",
   isAuth,

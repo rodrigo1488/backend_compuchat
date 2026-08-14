@@ -221,7 +221,7 @@ const validateAddonRules = async (
 };
 
 /** Normaliza menuItems: halfAndHalf / combo recalculam productValue e snapshot no backend. */
-const normalizeMenuItems = async (
+export const normalizeMenuItems = async (
   items: MenuItemInput[],
   companyId: number
 ): Promise<any[]> => {

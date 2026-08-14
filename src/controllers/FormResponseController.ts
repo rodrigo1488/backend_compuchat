@@ -9,6 +9,7 @@ import ResponseAnswer from "../models/ResponseAnswer";
 import ProcessFormResponseService from "../services/FormServices/ProcessFormResponseService";
 import UpdateOrderStatusService from "../services/OrderServices/UpdateOrderStatusService";
 import { ReprintLastPrintJobForFormResponse } from "../services/PrintJobService/ReprintPrintJobService";
+import UpdateDeliveryOrderService from "../services/OrderServices/UpdateDeliveryOrderService";
 import AppError from "../errors/AppError";
 import { verifyOrderToken, verifyOrderTrackingToken } from "../helpers/MesaLinkSign";
 import {
@@ -791,5 +792,39 @@ export const reprintPrint = async (req: Request, res: Response): Promise<Respons
     message: dispatched
       ? "Reimpressão enviada para o agente de impressão."
       : "Reimpressão registrada e ficará na fila até o agente conectar à impressora."
+  });
+};
+
+export const updateDeliveryOrder = async (
+  req: Request,
+  res: Response
+): Promise<Response> => {
+  const { companyId } = req.user;
+  const formId = Number(req.params.formId);
+  const responseId = Number(req.params.id);
+  const { responderName, menuItems, address } = req.body || {};
+
+  const { response, print } = await UpdateDeliveryOrderService({
+    companyId,
+    formId,
+    responseId,
+    responderName,
+    menuItems,
+    address,
+  });
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-formResponse`, {
+    action: "update",
+    response,
+  });
+
+  return res.status(200).json({
+    response,
+    print,
+    message:
+      print.dispatched > 0
+        ? "Pedido atualizado e enviado para reimpressão."
+        : "Pedido atualizado. Reimpressão na fila aguardando o agente.",
   });
 };
