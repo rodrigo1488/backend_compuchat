@@ -1,5 +1,6 @@
 import {
   filterAnswersForPrint,
+  resolvePrintFontScale,
   resolveMesaQrPrintSize,
   resolvePrintQrModuleSize,
   resolvePrintStoredFieldIds,
@@ -38,5 +39,11 @@ describe("printFields", () => {
   it("limita tamanho do QR de mesa entre 80 e 280", () => {
     expect(resolveMesaQrPrintSize({ mesaQrPrintSize: 50 })).toBe(80);
     expect(resolveMesaQrPrintSize({ mesaQrPrintSize: 400 })).toBe(280);
+  });
+
+  it("limita escala da fonte do cupom entre 1 e 3", () => {
+    expect(resolvePrintFontScale({ printFontScale: 0 })).toBe(1);
+    expect(resolvePrintFontScale({ printFontScale: 2 })).toBe(2);
+    expect(resolvePrintFontScale({ printFontScale: 9 })).toBe(3);
   });
 });

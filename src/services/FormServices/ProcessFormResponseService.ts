@@ -41,6 +41,7 @@ import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPh
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
 import EvaluateCardapioOrderHours from "./EvaluateCardapioOrderHours";
 import ResolveDeliveryFee from "./ResolveDeliveryFee";
+import { inferFulfillmentMode } from "../../helpers/fulfillmentMode";
 import sequelize from "../../database";
 import {
   buildCustomerSnapshot,
@@ -54,6 +55,7 @@ import {
 } from "../../helpers/pieceAgainFields";
 import {
   filterAnswersForPrint,
+  resolvePrintFontScale,
   resolvePrintQrModuleSize,
   resolvePrintStoredFieldIds,
 } from "../../helpers/printFields";
@@ -701,6 +703,14 @@ const ProcessFormResponseService = async ({
       }
     );
     responseMetadata.orderType = resolvedDelivery.orderType;
+    const fulfillmentMode = inferFulfillmentMode(
+      resolvedDelivery.orderType,
+      fields,
+      answers
+    );
+    responseMetadata.fulfillmentMode = fulfillmentMode;
+    responseMetadata.pickup = fulfillmentMode === "pickup";
+    responseMetadata.retirada = fulfillmentMode === "pickup";
     const deliveryFeeResolved = resolvedDelivery.deliveryFee;
 
     const customerSnapshot = buildCustomerSnapshot(
@@ -1139,8 +1149,12 @@ const ProcessFormResponseService = async ({
       const garcomName = (meta?.garcomName as string) || "";
       const allMenuItems = normalizedMenuItems && normalizedMenuItems.length > 0 ? normalizedMenuItems : menuItems;
       const orderType = meta?.orderType === "delivery" ? "delivery" : "mesa";
+      const fulfillmentMode =
+        (meta?.fulfillmentMode as string) ||
+        inferFulfillmentMode(orderType, fields, answers);
       const printStoredFieldIds = resolvePrintStoredFieldIds(formSettings, fields);
       const printQrModuleSize = resolvePrintQrModuleSize(formSettings);
+      const printFontScale = resolvePrintFontScale(formSettings);
 
       // Payload de impressão: menuItems com addons e addonsTotal explícitos para o agente de impressão
       const buildConteudo = (menuItemsForJob: typeof allMenuItems): Record<string, unknown> => {
@@ -1197,8 +1211,14 @@ const ProcessFormResponseService = async ({
           answers: answersForPrint,
           menuItems: menuItemsForPayload,
           printQrModuleSize,
+          printFontScale,
+          fulfillmentMode,
         };
-        if (orderType === "delivery" && meta?.deliveryScanToken) {
+        if (
+          orderType === "delivery" &&
+          fulfillmentMode !== "pickup" &&
+          meta?.deliveryScanToken
+        ) {
           const token = meta.deliveryScanToken as string;
           conteudo.deliveryScanToken = token;
           const baseUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL || "";

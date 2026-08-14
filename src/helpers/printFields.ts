@@ -63,6 +63,15 @@ export const resolvePrintQrModuleSize = (
   return Math.min(16, Math.max(4, Math.round(raw)));
 };
 
+/** 1=normal, 2=altura dupla, 3=largura+altura duplas (ESC/POS GS !). */
+export const resolvePrintFontScale = (
+  settings: { printFontScale?: number } | null | undefined
+): number => {
+  const raw = Number(settings?.printFontScale ?? 1);
+  if (!Number.isFinite(raw)) return 1;
+  return Math.min(3, Math.max(1, Math.round(raw)));
+};
+
 export const resolveMesaQrPrintSize = (
   settings: { mesaQrPrintSize?: number } | null | undefined
 ): number => {
@@ -74,11 +83,16 @@ export const resolveMesaQrPrintSize = (
 /** Reaplica configuração atual de impressão ao payload (ex.: reimpressão). */
 export const applyPrintSettingsToConteudo = (
   conteudo: Record<string, unknown>,
-  formSettings: { printStoredFieldIds?: number[]; printQrModuleSize?: number } | null | undefined,
+  formSettings: {
+    printStoredFieldIds?: number[];
+    printQrModuleSize?: number;
+    printFontScale?: number;
+  } | null | undefined,
   fields: FormFieldLike[] = []
 ): Record<string, unknown> => {
   const printStoredFieldIds = resolvePrintStoredFieldIds(formSettings, fields);
   const printQrModuleSize = resolvePrintQrModuleSize(formSettings);
+  const printFontScale = resolvePrintFontScale(formSettings);
   const rawAnswers = Array.isArray(conteudo.answers)
     ? (conteudo.answers as PrintAnswer[])
     : [];
@@ -86,5 +100,6 @@ export const applyPrintSettingsToConteudo = (
     ...conteudo,
     answers: filterAnswersForPrint(rawAnswers, fields, printStoredFieldIds),
     printQrModuleSize,
+    printFontScale,
   };
 };
