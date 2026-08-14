@@ -16,6 +16,11 @@ import AppError from "../errors/AppError";
 import { normalizeBrazilPhoneForWhatsapp } from "../helpers/NormalizeBrazilPhone";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
+import {
+  decodePieceAgainValue,
+  filterPieceAgainPrefillByLabel,
+  resolvePieceAgainStoredFieldIds,
+} from "../helpers/pieceAgainFields";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -414,7 +419,7 @@ export const getPublicMostOrdered = async (req: Request, res: Response): Promise
   setPublicApiNoCacheHeaders(res);
   const { publicId } = req.params as any;
   const form = await findPublicFormBySlug(publicId, {
-    attributes: ["id", "companyId"],
+    attributes: ["id"],
   });
   const responses = await FormResponse.findAll({
     where: { formId: form.id },
@@ -458,9 +463,12 @@ export const getPublicRepeatData = async (req: Request, res: Response): Promise<
 
   const form = await findPublicFormBySlug(publicId, {
     attributes: ["id", "companyId", "settings"],
+    include: [{ association: "fields", order: [["order", "ASC"]] }],
   });
 
   const settings = (form.settings as any) || {};
+  const fields = (form.fields || []) as any[];
+  const storedFieldIds = resolvePieceAgainStoredFieldIds(settings, fields);
   const maxOrders = Math.min(30, Math.max(1, Number(settings.pieceAgainMaxOrders ?? 5) || 5));
   const maxItems = Math.min(50, Math.max(1, Number(settings.pieceAgainMaxItems ?? 6) || 6));
 
@@ -469,28 +477,22 @@ export const getPublicRepeatData = async (req: Request, res: Response): Promise<
     include: ["extraInfo"],
   });
 
-  const decodeMaybeJson = (val: any) => {
-    const str = typeof val === "string" ? val : String(val ?? "");
-    if (str.startsWith("__json__:")) {
-      try {
-        return JSON.parse(str.replace("__json__:", ""));
-      } catch {
-        return str;
-      }
-    }
-    return str;
-  };
+  const decodeMaybeJson = decodePieceAgainValue;
 
   // Montar prefillByLabel a partir dos ContactCustomFields (name=label do campo).
-  // Se houver duplicados, o último vence (pela ordem do array).
-  const prefillByLabel: Record<string, any> = {};
+  const prefillRaw: Record<string, any> = {};
   if (contact && Array.isArray((contact as any).extraInfo)) {
     (contact as any).extraInfo.forEach((info: any) => {
       if (info?.name && info?.value != null && String(info.value).trim() !== "") {
-        prefillByLabel[String(info.name)] = decodeMaybeJson(info.value);
+        prefillRaw[String(info.name)] = decodeMaybeJson(info.value);
       }
     });
   }
+  const prefillByLabel = filterPieceAgainPrefillByLabel(
+    prefillRaw,
+    fields,
+    storedFieldIds
+  );
 
   const responses = await FormResponse.findAll({
     where: { formId: form.id, responderPhone: phoneNormalized },

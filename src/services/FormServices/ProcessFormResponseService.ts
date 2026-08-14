@@ -47,6 +47,11 @@ import {
   deliveryAddressRequired,
 } from "../../helpers/buildCustomerSnapshot";
 import { generateOrderProtocol } from "../../helpers/generateOrderProtocol";
+import { buildAnswersMap, isFieldVisible } from "../../helpers/isFieldVisible";
+import {
+  buildPieceAgainEntriesFromAnswers,
+  resolvePieceAgainStoredFieldIds,
+} from "../../helpers/pieceAgainFields";
 
 interface Answer {
   fieldId: number;
@@ -564,14 +569,21 @@ const ProcessFormResponseService = async ({
     }
   }
 
-  // Validate required fields
+  // Validate required fields (apenas os visíveis pela lógica condicional)
   const fields = form.fields || [];
-  const requiredFields = fields.filter((f) => f.isRequired);
-  
+  const answersMap = buildAnswersMap(answers);
+  const requiredFields = fields.filter(
+    (f) => f.isRequired && isFieldVisible(f, answersMap, fields)
+  );
+
   for (const field of requiredFields) {
     const answer = answers.find((a) => a.fieldId === field.id);
-    if (!answer || !answer.answer || 
-        (Array.isArray(answer.answer) && answer.answer.length === 0)) {
+    if (
+      !answer ||
+      !answer.answer ||
+      (Array.isArray(answer.answer) && answer.answer.length === 0) ||
+      (typeof answer.answer === "string" && answer.answer.trim() === "")
+    ) {
       throw new AppError(`ERR_FIELD_REQUIRED: ${field.label}`, 400);
     }
   }
@@ -908,39 +920,8 @@ const ProcessFormResponseService = async ({
   const enablePieceAgain = formSettings?.enablePieceAgain === true;
   if (enablePieceAgain && isMenuForm && contact) {
     try {
-      const isSensitiveLabel = (label: string) =>
-        /cpf|cart[aã]o|card|senha|password|cvv|cvc|token|c[oó]digo|pin/i.test(label || "");
-
-      const toValueString = (val: any) => {
-        if (val === undefined || val === null) return "";
-        if (Array.isArray(val)) return "__json__:" + JSON.stringify(val);
-        return String(val);
-      };
-
-      const entries = answers
-        .map((answer) => {
-          const field = fields.find((f) => f.id === answer.fieldId);
-          if (!field) return null;
-          const meta = field.metadata as any;
-          const label = String(field.label || "").trim();
-          if (!label) return null;
-
-          // Não salvar campos automáticos e dados de contato
-          if (
-            meta?.autoFieldType === "name" ||
-            meta?.autoFieldType === "phone" ||
-            meta?.autoFieldType === "supplierName" ||
-            meta?.autoFieldType === "sellerName"
-          ) return null;
-          if (field.fieldType === "phone" || field.fieldType === "email") return null;
-          if (field.fieldType === "file") return null;
-          if (isSensitiveLabel(label)) return null;
-
-          const valueStr = toValueString(answer.answer);
-          if (!valueStr || valueStr.trim() === "") return null;
-          return { name: label, value: valueStr };
-        })
-        .filter((x): x is { name: string; value: string } => x !== null);
+      const storedFieldIds = resolvePieceAgainStoredFieldIds(formSettings, fields);
+      const entries = buildPieceAgainEntriesFromAnswers(answers, fields, storedFieldIds);
 
       if (entries.length > 0) {
         const names = Array.from(new Set(entries.map((e) => e.name)));
