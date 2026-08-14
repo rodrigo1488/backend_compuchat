@@ -29,6 +29,7 @@ routes.get("/mesas/:id", isAuth, requireLanchonetes, MesaController.show);
 routes.get("/mesas/:id/resumo-conta", isAuth, requireLanchonetes, MesaController.resumoConta);
 routes.put("/mesas/:id", isAuth, requireLanchonetes, MesaController.update);
 routes.put("/mesas/:id/ocupar", isAuth, requireLanchonetes, MesaController.ocupar);
+routes.put("/mesas/:id/contato-nome", isAuth, requireLanchonetes, MesaController.atualizarNomeContato);
 routes.post("/mesas/:id/confirmar-ocupacao", isAuth, requireLanchonetes, MesaController.confirmarOcupacao);
 routes.put("/mesas/:id/liberar", isAuth, requireLanchonetes, MesaController.liberar);
 routes.delete("/mesas/:id", isAuth, requireLanchonetes, MesaController.destroy);

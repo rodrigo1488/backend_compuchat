@@ -316,7 +316,16 @@ const UpdateFormService = async ({
       const storedIdsChanged =
         JSON.stringify(remappedStoredIds) !== JSON.stringify(storedIds);
 
-      if (mapped || triggerRulesChanged || storedIdsChanged) {
+      const printIds = Array.isArray(currentSettings?.printStoredFieldIds)
+        ? currentSettings.printStoredFieldIds
+        : [];
+      const remappedPrintIds = printIds
+        .map((id: any) => oldToNewFieldId[Number(id)])
+        .filter((id: number | undefined): id is number => id != null && id > 0);
+      const printIdsChanged =
+        JSON.stringify(remappedPrintIds) !== JSON.stringify(printIds);
+
+      if (mapped || triggerRulesChanged || storedIdsChanged || printIdsChanged) {
         const nextSettings: any = { ...currentSettings };
         if (mapped) {
           nextSettings.deliveryFeeCondition = {
@@ -329,6 +338,9 @@ const UpdateFormService = async ({
         }
         if (storedIdsChanged) {
           nextSettings.pieceAgainStoredFieldIds = remappedStoredIds;
+        }
+        if (printIdsChanged) {
+          nextSettings.printStoredFieldIds = remappedPrintIds;
         }
         await form.update({ settings: nextSettings });
         await form.reload();

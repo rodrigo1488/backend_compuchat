@@ -52,6 +52,11 @@ import {
   buildPieceAgainEntriesFromAnswers,
   resolvePieceAgainStoredFieldIds,
 } from "../../helpers/pieceAgainFields";
+import {
+  filterAnswersForPrint,
+  resolvePrintQrModuleSize,
+  resolvePrintStoredFieldIds,
+} from "../../helpers/printFields";
 
 interface Answer {
   fieldId: number;
@@ -1134,10 +1139,12 @@ const ProcessFormResponseService = async ({
       const garcomName = (meta?.garcomName as string) || "";
       const allMenuItems = normalizedMenuItems && normalizedMenuItems.length > 0 ? normalizedMenuItems : menuItems;
       const orderType = meta?.orderType === "delivery" ? "delivery" : "mesa";
+      const printStoredFieldIds = resolvePrintStoredFieldIds(formSettings, fields);
+      const printQrModuleSize = resolvePrintQrModuleSize(formSettings);
 
       // Payload de impressão: menuItems com addons e addonsTotal explícitos para o agente de impressão
       const buildConteudo = (menuItemsForJob: typeof allMenuItems): Record<string, unknown> => {
-        const answersForPrint = answers
+        const mappedAnswers = answers
           .map((answer) => {
             const field = fields.find((f) => f.id === answer.fieldId);
             return {
@@ -1145,14 +1152,18 @@ const ProcessFormResponseService = async ({
               label: field?.label || "",
               answer: answer.answer,
             };
-          })
-          .concat(
+          });
+        const answersForPrint = filterAnswersForPrint(
+          mappedAnswers.concat(
             triggeredOrderMessages.map((message, index) => ({
               fieldId: -(index + 1),
               label: "Mensagem automática",
               answer: message,
             }))
-          );
+          ),
+          fields,
+          printStoredFieldIds
+        );
         const menuItemsForPayload = (menuItemsForJob || []).map((it: any) => ({
           ...it,
           quantity: it.quantity ?? 1,
@@ -1185,6 +1196,7 @@ const ProcessFormResponseService = async ({
           },
           answers: answersForPrint,
           menuItems: menuItemsForPayload,
+          printQrModuleSize,
         };
         if (orderType === "delivery" && meta?.deliveryScanToken) {
           const token = meta.deliveryScanToken as string;

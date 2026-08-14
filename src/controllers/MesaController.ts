@@ -8,6 +8,7 @@ import UpdateMesaService from "../services/MesaServices/UpdateMesaService";
 import ShowMesaService from "../services/MesaServices/ShowMesaService";
 import OcuparMesaService from "../services/MesaServices/OcuparMesaService";
 import LiberarMesaService from "../services/MesaServices/LiberarMesaService";
+import AtualizarNomeContatoMesaService from "../services/MesaServices/AtualizarNomeContatoMesaService";
 import ResumoContaMesaService from "../services/MesaServices/ResumoContaMesaService";
 import DeleteMesaService from "../services/MesaServices/DeleteMesaService";
 import ValidateMesaRestoreQrService from "../services/MesaServices/ValidateMesaRestoreQrService";
@@ -540,6 +541,36 @@ export const resumoConta = async (req: Request, res: Response): Promise<Response
 
   const resumo = await ResumoContaMesaService(Number(id), companyId);
   return res.status(200).json(resumo);
+};
+
+export const atualizarNomeContato = async (req: Request, res: Response): Promise<Response> => {
+  const { id } = req.params;
+  const { companyId } = req.user;
+  const { contactName } = req.body;
+
+  const schema = Yup.object().shape({
+    contactName: Yup.string().trim().min(1).required(),
+  });
+
+  try {
+    await schema.validate({ contactName });
+  } catch (err: any) {
+    throw new AppError(err.message, 400);
+  }
+
+  const mesa = await AtualizarNomeContatoMesaService({
+    mesaId: Number(id),
+    companyId,
+    contactName: String(contactName).trim(),
+  });
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-mesa`, {
+    action: "update",
+    mesa,
+  });
+
+  return res.status(200).json(mesa);
 };
 
 export const liberar = async (req: Request, res: Response): Promise<Response> => {
