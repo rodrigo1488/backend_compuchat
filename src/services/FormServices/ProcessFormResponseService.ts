@@ -41,6 +41,12 @@ import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPh
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
 import EvaluateCardapioOrderHours from "./EvaluateCardapioOrderHours";
 import ResolveDeliveryFee from "./ResolveDeliveryFee";
+import sequelize from "../../database";
+import {
+  buildCustomerSnapshot,
+  deliveryAddressRequired,
+} from "../../helpers/buildCustomerSnapshot";
+import { generateOrderProtocol } from "../../helpers/generateOrderProtocol";
 
 interface Answer {
   fieldId: number;
@@ -74,6 +80,7 @@ interface Request {
   ipAddress?: string;
   userAgent?: string;
   metadata?: object;
+  clientOrderId?: string;
   /** Token de sessão da mesa (retornado ao abrir link assinado). Garante que o pedido vá para a mesa correta. */
   orderToken?: string;
   /** true quando o submit vem com JWT da mesma empresa (ex.: PDV Mesas) — ignora bloqueio de horário do cardápio. */
@@ -501,6 +508,7 @@ const ProcessFormResponseService = async ({
   ipAddress,
   userAgent,
   metadata,
+  clientOrderId,
   orderToken,
   orderHoursBypass,
 }: Request): Promise<FormResponse> => {
@@ -526,6 +534,34 @@ const ProcessFormResponseService = async ({
 
   if (!form.isActive) {
     throw new AppError("ERR_FORM_INACTIVE", 400);
+  }
+
+  const isMenuFormEarly = (form.settings as any)?.formType === "cardapio";
+  const incomingClientOrderId = String(
+    clientOrderId || (metadata as any)?.clientOrderId || ""
+  ).trim();
+  if (isMenuFormEarly && incomingClientOrderId) {
+    const existingByClient = await FormResponse.findOne({
+      where: sequelize.where(
+        sequelize.literal("metadata->>'clientOrderId'"),
+        incomingClientOrderId
+      ),
+      include: [
+        {
+          model: Form,
+          as: "form",
+          required: true,
+          where: { companyId: form.companyId },
+          attributes: ["id"],
+        },
+      ],
+    });
+    if (existingByClient) {
+      logger.info(
+        `ProcessFormResponseService: idempotente clientOrderId=${incomingClientOrderId} formResponseId=${existingByClient.id}`
+      );
+      return existingByClient;
+    }
   }
 
   // Validate required fields
@@ -639,10 +675,47 @@ const ProcessFormResponseService = async ({
     const resolvedDelivery = ResolveDeliveryFee(
       { settings: formSettings, fields: (form as any).fields || [] },
       answers,
-      { ...(metadata as any), ...responseMetadata }
+      {
+        ...(metadata as any),
+        ...responseMetadata,
+        orderToken,
+        placedByGarcom:
+          (metadata as any)?.placedByGarcom || (metadata as any)?.garcomName,
+      }
     );
     responseMetadata.orderType = resolvedDelivery.orderType;
     const deliveryFeeResolved = resolvedDelivery.deliveryFee;
+
+    const customerSnapshot = buildCustomerSnapshot(
+      fields,
+      answers,
+      { ...(metadata as any), ...responseMetadata },
+      contactName,
+      contactPhone
+    );
+    responseMetadata.customerName = customerSnapshot.customerName;
+    responseMetadata.customerPhone = customerSnapshot.phone;
+    responseMetadata.endereco = customerSnapshot.endereco;
+    responseMetadata.endereconumero = customerSnapshot.endereconumero;
+    responseMetadata.enderecobairro = customerSnapshot.enderecobairro;
+    responseMetadata.enderecocomplemento = customerSnapshot.enderecocomplemento;
+    responseMetadata.enderecoreferencia = customerSnapshot.enderecoreferencia;
+    responseMetadata.documento = customerSnapshot.documento;
+    if (customerSnapshot.orderNotes) {
+      responseMetadata.orderNotes = customerSnapshot.orderNotes;
+    }
+    if (incomingClientOrderId) {
+      responseMetadata.clientOrderId = incomingClientOrderId;
+    }
+    responseMetadata.printStatus = "pending";
+    responseMetadata.uniplusStatus = responseMetadata.uniplusStatus || "pending";
+
+    if (
+      deliveryAddressRequired(fields, resolvedDelivery.orderType) &&
+      !customerSnapshot.endereco
+    ) {
+      throw new AppError("ERR_DELIVERY_ADDRESS_REQUIRED", 400);
+    }
 
     // Pedido mínimo (aplica-se a pedidos delivery)
     const minOrderValue = Number(formSettings?.minOrderValue) || 0;
@@ -741,27 +814,16 @@ const ProcessFormResponseService = async ({
     } else {
       createPayload.orderStatus = "novo";
     }
-    // Gerar protocolo único PED-YYYYMMDD-NNNN por empresa/dia (dia no fuso de Brasília)
-    const now = new Date();
-    const { startOfDay, endOfDay } = getBrazilDayBounds(now);
-    const dateStr = getBrazilDateString(now);
-    const count = await FormResponse.count({
-      include: [
-        {
-          model: Form,
-          as: "form",
-          required: true,
-          where: { companyId: form.companyId },
-          attributes: [],
-        },
-      ],
-      where: {
-        submittedAt: { [Op.between]: [startOfDay, endOfDay] } as any,
-      },
-    });
-    createPayload.protocol = `PED-${dateStr}-${String(count + 1).padStart(4, "0")}`;
   }
-  const response = await FormResponse.create(createPayload);
+  let response: FormResponse;
+  if (isMenuForm) {
+    response = await sequelize.transaction(async (transaction) => {
+      createPayload.protocol = await generateOrderProtocol(form.companyId, transaction);
+      return FormResponse.create(createPayload, { transaction });
+    });
+  } else {
+    response = await FormResponse.create(createPayload);
+  }
 
   // Pedido delivery: gerar token único para QR do entregador
   if (isMenuForm && responseMetadata.orderType === "delivery") {
@@ -1328,7 +1390,7 @@ const ProcessFormResponseService = async ({
             externalRef: payload.protocol,
           });
           logger.info(
-            `Uniplus job despachado formResponseId=${response.id} deviceId=${deviceId} protocol=${payload.protocol}`
+            `Uniplus job despachado formResponseId=${response.id} deviceId=${deviceId} protocol=${payload.protocol} orderType=${payload.orderType} tipopedido=${payload.tipopedido} numeromesa=${payload.numeromesa ?? "-"}`
           );
         }
       }

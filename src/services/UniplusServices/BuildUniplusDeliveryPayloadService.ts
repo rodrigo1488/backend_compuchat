@@ -11,6 +11,7 @@ import { calcMenuItemLineTotal } from "../../helpers/gourmetOrderTotals";
 import AppError from "../../errors/AppError";
 import { isAgentConnected } from "../../libs/printWebSocket";
 import { logger } from "../../utils/logger";
+import { buildCustomerSnapshot } from "../../helpers/buildCustomerSnapshot";
 import {
   extractFormPrintDevicePks,
   isUniplusFlagEnabled,
@@ -50,6 +51,9 @@ export interface UniplusDeliveryPayload {
   event: "uniplus.delivery";
   protocol: string;
   formResponseId: number;
+  orderType: "delivery" | "mesa";
+  tipopedido: number;
+  numeromesa: number | null;
   contamesa: Record<string, unknown>;
   itens: UniplusPayloadItem[];
   /** Avisos de resolução (ex.: match só por nome) — agent ignora se não consumir */
@@ -613,24 +617,19 @@ const BuildUniplusDeliveryPayloadService = async ({
   };
   valorPagamentos[column] = total;
 
-  const endereco =
-    findAnswerByLabel(fields, answers, [/^endereco$/, /endereço/, /rua/]) ||
-    String(meta.endereco || "");
-  const endereconumero =
-    findAnswerByLabel(fields, answers, [/n[uú]mero/, /^numero$/]) ||
-    String(meta.endereconumero || "");
-  const enderecobairro =
-    findAnswerByLabel(fields, answers, [/bairro/]) ||
-    String(meta.enderecobairro || "");
-  const enderecocomplemento =
-    findAnswerByLabel(fields, answers, [/complemento/]) ||
-    String(meta.enderecocomplemento || "");
-  const enderecoreferencia =
-    findAnswerByLabel(fields, answers, [/refer[eê]ncia/, /referencia/]) ||
-    String(meta.enderecoreferencia || "");
-  const documento =
-    findAnswerByLabel(fields, answers, [/cpf/, /cnpj/, /documento/]) ||
-    String(meta.documento || "");
+  const snapshot = buildCustomerSnapshot(
+    fields,
+    answers,
+    meta,
+    contactName,
+    contactPhone
+  );
+  const endereco = snapshot.endereco;
+  const endereconumero = snapshot.endereconumero;
+  const enderecobairro = snapshot.enderecobairro;
+  const enderecocomplemento = snapshot.enderecocomplemento;
+  const enderecoreferencia = snapshot.enderecoreferencia;
+  const documento = snapshot.documento;
 
   const now = new Date();
   const idFilial = Number(settings.uniplusIdFilial) || 1;
@@ -641,40 +640,25 @@ const BuildUniplusDeliveryPayloadService = async ({
   const orderType = meta.orderType === "mesa" ? "mesa" : "delivery";
   const tableNumber = String(meta.tableNumber || "").trim();
   const garcomName = String(meta.garcomName || "").trim();
-  const nomeFromAnswers = findAnswerByLabel(fields, answers, [
-    /nome\s*do\s*cliente/,
-    /nome\s*completo/,
-    /^nome$/,
-    /\bnome\b/,
-  ]);
-  let clienteNome = String(
-    contactName ||
-      response.responderName ||
-      meta.customerName ||
-      meta.clienteNome ||
-      nomeFromAnswers ||
-      ""
-  ).trim();
-  if (!clienteNome) clienteNome = "Cliente";
-
-  // Unico lista pelo campo `nome`: em mesa, anexa o nº para identificar no delivery.
-  const nomeDisplay =
-    orderType === "mesa" && tableNumber
-      ? `${clienteNome} (Mesa ${tableNumber})`.slice(0, 60)
-      : clienteNome.slice(0, 60);
+  const clienteNome = snapshot.customerName;
+  const nomeDisplay = clienteNome.slice(0, 60);
+  const mesaNum = tableNumber ? parseInt(tableNumber.replace(/\D/g, ""), 10) : NaN;
+  const numeromesaExplicit =
+    orderType === "mesa" && Number.isFinite(mesaNum) && mesaNum > 0 ? mesaNum : null;
+  const tipopedido = orderType === "mesa" ? 1 : 0;
 
   const obsParts = [
-    orderType === "mesa" && tableNumber ? `Mesa ${tableNumber}` : "",
     garcomName ? `Garçom: ${garcomName}` : "",
+    snapshot.orderNotes ? `Obs: ${snapshot.orderNotes}` : "",
     `Compuchat ${protocol}`,
   ].filter(Boolean);
 
   const contamesa: Record<string, unknown> = {
-    tipopedido: 0,
+    orderType,
+    tipopedido,
     status: 1,
     situacao: 0,
-    // UniPlus Delivery card = numeromesa. O agente aloca um número único por conta aberta.
-    numeromesa: null,
+    numeromesa: numeromesaExplicit,
     statusagendamento: 3,
     pautaunica: 1,
     // Alinhado à inserção nativa do UniPlus
@@ -687,7 +671,7 @@ const BuildUniplusDeliveryPayloadService = async ({
     // Unico usa `nome` na listagem de delivery; `nomecliente` fica como espelho.
     nome: nomeDisplay,
     nomecliente: clienteNome.slice(0, 60),
-    telefone: String(contactPhone || response.responderPhone || "").slice(0, 20),
+    telefone: String(snapshot.phone || contactPhone || response.responderPhone || "").slice(0, 20),
     documento: String(documento).slice(0, 18),
     endereco: String(endereco).slice(0, 60),
     endereconumero: String(endereconumero).slice(0, 12),
@@ -704,7 +688,7 @@ const BuildUniplusDeliveryPayloadService = async ({
     hash,
     statussinc: 1,
     cupomcancelado: 0,
-    retiradanobalcao: 0,
+    retiradanobalcao: meta.pickup === true || meta.retirada === true ? 1 : 0,
     retirabalcaodepois: 0,
     paraviagem: 0,
     numeropessoas: 1,
@@ -722,6 +706,9 @@ const BuildUniplusDeliveryPayloadService = async ({
     event: "uniplus.delivery",
     protocol,
     formResponseId: response.id,
+    orderType,
+    tipopedido,
+    numeromesa: numeromesaExplicit,
     contamesa,
     itens: payloadItems,
     ...(warnings.length ? { metadata: { warnings } } : {}),

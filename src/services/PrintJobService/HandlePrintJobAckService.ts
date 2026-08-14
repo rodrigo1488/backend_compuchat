@@ -95,6 +95,14 @@ const HandlePrintJobAckService = async ({
       `Print job ${jobId} completed successfully (tipo=${job.tipo || "print"})`
     );
 
+    if (!isUniplus && job.formResponseId) {
+      await patchFormResponseUniplusMetadata(job.formResponseId, {
+        printStatus: "synced",
+        printSyncedAt: new Date().toISOString(),
+        printLastError: null,
+      });
+    }
+
     if (isUniplus && job.formResponseId && uniplusContaId != null) {
       await patchFormResponseUniplusMetadata(job.formResponseId, {
         uniplusStatus: "synced",
@@ -124,13 +132,20 @@ const HandlePrintJobAckService = async ({
       `Print job ${jobId} failed (attempt ${tentativas}/${job.maxTentativas}, permanent=${permanentError}): ${message || "unknown"}`
     );
 
-    if (isUniplus && job.formResponseId) {
-      await patchFormResponseUniplusMetadata(job.formResponseId, {
-        uniplusStatus: "error",
-        uniplusLastError: message || "UniPlus failed",
-        uniplusLastErrorAt: new Date().toISOString(),
-        uniplusJobId: job.id,
-      });
+    if (job.formResponseId) {
+      if (isUniplus) {
+        await patchFormResponseUniplusMetadata(job.formResponseId, {
+          uniplusStatus: "error",
+          uniplusLastError: message || "UniPlus failed",
+          uniplusLastErrorAt: new Date().toISOString(),
+          uniplusJobId: job.id,
+        });
+      } else {
+        await patchFormResponseUniplusMetadata(job.formResponseId, {
+          printStatus: newStatus === "error" ? "error" : "pending",
+          printLastError: message || "Print failed",
+        });
+      }
     }
   }
 };

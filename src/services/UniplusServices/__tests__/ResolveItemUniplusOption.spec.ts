@@ -36,3 +36,28 @@ describe("resolveItemUniplusCodigo com variação", () => {
     expect(code).toBe("2002");
   });
 });
+
+
+  it("aceita optionId como sinônimo de variationOptionId", () => {
+    const code = resolveItemUniplusCodigo(
+      { productId: 10, optionId: 101, productName: "Pizza Calabresa G" },
+      byId,
+      catalog,
+      optionById
+    );
+    expect(code).toBe("2001");
+  });
+
+  it("não faz match fuzzy por substring no nome", () => {
+    const fuzzyCatalog = [
+      { id: 20, name: "Brahma 600", idUniplus: "600" },
+      { id: 21, name: "Brahma 350", idUniplus: "350" },
+    ];
+    const code = resolveItemUniplusCodigo(
+      { productId: 99, productName: "Brahma 350ml" },
+      new Map([[99, { id: 99, name: "Outro", idUniplus: null }]]),
+      fuzzyCatalog,
+      optionById
+    );
+    expect(code).toBe("");
+  });

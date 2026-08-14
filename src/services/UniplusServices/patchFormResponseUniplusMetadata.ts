@@ -16,6 +16,9 @@ export interface UniplusMetadataPatch {
   uniplusAction?: string | null;
   uniplusNumeromesa?: number | null;
   uniplusJobId?: number | null;
+  printStatus?: "pending" | "synced" | "error";
+  printLastError?: string | null;
+  printSyncedAt?: string | null;
 }
 
 export async function patchFormResponseUniplusMetadata(

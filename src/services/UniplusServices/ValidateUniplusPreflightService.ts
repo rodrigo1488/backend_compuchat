@@ -99,18 +99,6 @@ export function extractFormPrintDevicePks(form: Form): number[] {
   return [...ids];
 }
 
-function normalizeProductName(name: string): string {
-  return String(name || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\b\d+\s*ml\b/g, " ")
-    .replace(/\b\d+\s*l\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
 function itemCodigoHint(item: any): string {
   return String(
     item?.idUniplus ||
@@ -138,17 +126,19 @@ export function resolveItemUniplusCodigo(
   const direct = itemCodigoHint(item);
   if (direct) return direct;
 
-  // Meio a meio: prioriza tamanho do base; item normal: variationOptionId
+  // Meio a meio: prioriza tamanho do base; item normal: variationOptionId / optionId
   const optionIds = (
     item?.type === "halfAndHalf"
       ? [
           Number(item?.baseOptionId),
           Number(item?.variationOptionId),
+          Number(item?.optionId),
           Number(item?.half1OptionId),
           Number(item?.half2OptionId),
         ]
       : [
           Number(item?.variationOptionId),
+          Number(item?.optionId),
           Number(item?.baseOptionId),
           Number(item?.half1OptionId),
           Number(item?.half2OptionId),
@@ -162,36 +152,7 @@ export function resolveItemUniplusCodigo(
 
   const pid = Number(item?.productId);
   const byProduct = byId.get(pid);
-  const fromProduct = String(byProduct?.idUniplus || "").trim();
-  if (fromProduct) return fromProduct;
-
-  const rawName = String(item?.productName || item?.name || byProduct?.name || "").trim();
-  if (!rawName || !catalog.length) return "";
-
-  const needle = normalizeProductName(rawName);
-  if (!needle) return "";
-
-  // 1) nome exato normalizado
-  for (const p of catalog) {
-    const code = String(p.idUniplus || "").trim();
-    if (!code) continue;
-    if (normalizeProductName(p.name || "") === needle) return code;
-  }
-
-  // 2) produto cujo nome está contido no item (ex.: "Brahma" em "brahma 350")
-  let best: { code: string; len: number } | null = null;
-  for (const p of catalog) {
-    const code = String(p.idUniplus || "").trim();
-    if (!code) continue;
-    const pname = normalizeProductName(p.name || "");
-    if (!pname || pname.length < 3) continue;
-    if (needle.includes(pname) || pname.includes(needle)) {
-      if (!best || pname.length > best.len) {
-        best = { code, len: pname.length };
-      }
-    }
-  }
-  return best?.code || "";
+  return String(byProduct?.idUniplus || "").trim();
 }
 
 /**

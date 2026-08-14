@@ -86,16 +86,17 @@ const inferOrderTypeFromAnswers = (
 
   const values = getAnswerValues(answers, tipoField.id).map((v) => v.toLowerCase());
   const joined = values.join(" ");
+  if (joined.includes("mesa")) {
+    return "mesa";
+  }
   if (
-    joined.includes("mesa") ||
+    joined.includes("delivery") ||
+    joined.includes("entrega") ||
     joined.includes("retirada") ||
     joined.includes("balcão") ||
     joined.includes("balcao") ||
     joined.includes("local")
   ) {
-    return "mesa";
-  }
-  if (joined.includes("delivery") || joined.includes("entrega") || joined.includes("delivery")) {
     return "delivery";
   }
   return null;
@@ -119,8 +120,11 @@ const ResolveDeliveryFee = (
 
   let orderType: "delivery" | "mesa" | null = null;
 
-  // Mesa via QR/tableId tem prioridade absoluta
-  if (metadata?.tableId) {
+  // Mesa via QR/garçom — tableId sozinho (localStorage) não força mesa
+  if (
+    (metadata?.orderToken || metadata?.placedByGarcom || metadata?.garcomName) &&
+    (metadata?.tableId || metadata?.tableNumber)
+  ) {
     orderType = "mesa";
   } else {
     // Preferir resposta do cliente (tipo de pedido) ao metadata do front —
