@@ -3,6 +3,7 @@ import {
   isPieceAgainStorableField,
   listPieceAgainStorableFields,
 } from "./pieceAgainFields";
+import { inferFulfillmentMode } from "./fulfillmentMode";
 
 type FormFieldLike = {
   id?: number;
@@ -96,10 +97,24 @@ export const applyPrintSettingsToConteudo = (
   const rawAnswers = Array.isArray(conteudo.answers)
     ? (conteudo.answers as PrintAnswer[])
     : [];
+  const allAnswers = Array.isArray(conteudo.allAnswers)
+    ? (conteudo.allAnswers as PrintAnswer[])
+    : rawAnswers;
+  const existingMode = String(conteudo.fulfillmentMode || "").trim();
+  const orderType =
+    existingMode === "mesa" || (conteudo.metadata as any)?.orderType === "mesa"
+      ? "mesa"
+      : "delivery";
+  const fulfillmentMode =
+    existingMode || inferFulfillmentMode(orderType, fields, allAnswers as any);
   return {
     ...conteudo,
     answers: filterAnswersForPrint(rawAnswers, fields, printStoredFieldIds),
+    allAnswers,
     printQrModuleSize,
     printFontScale,
+    fulfillmentMode,
+    pickup: fulfillmentMode === "pickup",
+    retirada: fulfillmentMode === "pickup",
   };
 };

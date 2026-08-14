@@ -1219,6 +1219,7 @@ const ProcessFormResponseService = async ({
             email: contactEmail,
           },
           answers: answersForPrint,
+          allAnswers: mappedAnswers,
           menuItems: menuItemsForPayload,
           printQrModuleSize,
           printFontScale,

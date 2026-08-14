@@ -31,7 +31,12 @@ export const findOrderTypeField = (
 ): FormFieldLike | undefined =>
   fields.find((f) => {
     const label = String(f.label || "").toLowerCase();
-    return label.includes("tipo") && (label.includes("pedido") || label.includes("entrega"));
+    return (
+      (label.includes("tipo") && (label.includes("pedido") || label.includes("entrega"))) ||
+      label.includes("modalidade") ||
+      (label.includes("forma") && label.includes("entrega")) ||
+      label.includes("retirada")
+    );
   });
 
 export const getOrderTypeFieldAnswerText = (
