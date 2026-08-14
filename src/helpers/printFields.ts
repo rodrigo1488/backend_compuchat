@@ -70,3 +70,21 @@ export const resolveMesaQrPrintSize = (
   if (!Number.isFinite(raw)) return 120;
   return Math.min(280, Math.max(80, Math.round(raw)));
 };
+
+/** Reaplica configuração atual de impressão ao payload (ex.: reimpressão). */
+export const applyPrintSettingsToConteudo = (
+  conteudo: Record<string, unknown>,
+  formSettings: { printStoredFieldIds?: number[]; printQrModuleSize?: number } | null | undefined,
+  fields: FormFieldLike[] = []
+): Record<string, unknown> => {
+  const printStoredFieldIds = resolvePrintStoredFieldIds(formSettings, fields);
+  const printQrModuleSize = resolvePrintQrModuleSize(formSettings);
+  const rawAnswers = Array.isArray(conteudo.answers)
+    ? (conteudo.answers as PrintAnswer[])
+    : [];
+  return {
+    ...conteudo,
+    answers: filterAnswersForPrint(rawAnswers, fields, printStoredFieldIds),
+    printQrModuleSize,
+  };
+};

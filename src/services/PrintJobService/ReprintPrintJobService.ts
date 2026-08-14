@@ -1,9 +1,11 @@
 import { Op } from "sequelize";
 import PrintPedido from "../../models/PrintPedido";
 import Form from "../../models/Form";
+import FormField from "../../models/FormField";
 import FormResponse from "../../models/FormResponse";
 import PrintDevice from "../../models/PrintDevice";
 import AppError from "../../errors/AppError";
+import { applyPrintSettingsToConteudo } from "../../helpers/printFields";
 import { dispatchJob } from "./CreateAndDispatchPrintJobService";
 import { logger } from "../../utils/logger";
 
@@ -92,7 +94,16 @@ export async function reprintFromSourceJob(
     );
   }
 
-  const conteudo = cloneConteudo(source.conteudo);
+  const conteudo = cloneConteudo(source.conteudo) as Record<string, unknown>;
+  const fields = await FormField.findAll({
+    where: { formId: form.id },
+    order: [["order", "ASC"]],
+  });
+  const refreshedConteudo = applyPrintSettingsToConteudo(
+    conteudo,
+    (form.settings || {}) as Record<string, unknown>,
+    fields
+  );
 
   const since = new Date();
   since.setHours(since.getHours() - 1);
@@ -120,7 +131,7 @@ export async function reprintFromSourceJob(
     deviceId: source.deviceId,
     formId: source.formId,
     formResponseId: source.formResponseId,
-    conteudo,
+    conteudo: refreshedConteudo,
     tipo: source.tipo || "print",
     externalRef: source.externalRef || null,
     status: "pending",
