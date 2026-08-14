@@ -1,4 +1,5 @@
 import FormField from "../models/FormField";
+import { buildAnswersMap, isFieldVisible } from "./isFieldVisible";
 
 type AnswerLike = { fieldId: number; answer?: string | string[] | null };
 
@@ -108,15 +109,26 @@ export function buildCustomerSnapshot(
 
 export function deliveryAddressRequired(
   fields: FormField[] | undefined,
-  orderType: string
+  orderType: string,
+  answers: AnswerLike[] | undefined = [],
+  fulfillmentMode?: string
 ): boolean {
   if (orderType !== "delivery") return false;
+  if (fulfillmentMode === "pickup") return false;
   if (!fields?.length) return false;
+  const answersMap = buildAnswersMap(answers);
   return fields.some((field) => {
+    if (!field.isRequired) return false;
+    if (
+      field.hasConditional &&
+      !isFieldVisible(field, answersMap, fields)
+    ) {
+      return false;
+    }
     const meta = (field.metadata || {}) as Record<string, unknown>;
     const auto = String(meta.autoFieldType || "");
-    if (auto === "address" && field.isRequired) return true;
+    if (auto === "address") return true;
     const label = String(field.label || "").toLowerCase();
-    return field.isRequired && (/endereço/.test(label) || /^endereco$/.test(label) || /rua/.test(label));
+    return /endereço/.test(label) || /^endereco$/.test(label) || /rua/.test(label);
   });
 }

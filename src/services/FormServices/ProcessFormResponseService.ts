@@ -738,7 +738,12 @@ const ProcessFormResponseService = async ({
     responseMetadata.uniplusStatus = responseMetadata.uniplusStatus || "pending";
 
     if (
-      deliveryAddressRequired(fields, resolvedDelivery.orderType) &&
+      deliveryAddressRequired(
+        fields,
+        resolvedDelivery.orderType,
+        answers,
+        fulfillmentMode
+      ) &&
       !customerSnapshot.endereco
     ) {
       throw new AppError("ERR_DELIVERY_ADDRESS_REQUIRED", 400);
