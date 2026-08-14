@@ -13,9 +13,9 @@ describe("resolveItemUniplusCodigo com variação", () => {
   it("usa idUniplus da option (variationOptionId)", () => {
     const code = resolveItemUniplusCodigo(
       { productId: 10, variationOptionId: 101, productName: "Pizza Calabresa G" },
-      byId,
-      catalog,
-      optionById
+      byId as any,
+      catalog as any,
+      optionById as any
     );
     expect(code).toBe("2001");
   });
@@ -29,21 +29,19 @@ describe("resolveItemUniplusCodigo com variação", () => {
         half1OptionId: 101,
         productName: "Pizza G - Metade A / Metade B",
       },
-      byId,
-      catalog,
-      optionById
+      byId as any,
+      catalog as any,
+      optionById as any
     );
     expect(code).toBe("2002");
   });
-});
-
 
   it("aceita optionId como sinônimo de variationOptionId", () => {
     const code = resolveItemUniplusCodigo(
       { productId: 10, optionId: 101, productName: "Pizza Calabresa G" },
-      byId,
-      catalog,
-      optionById
+      byId as any,
+      catalog as any,
+      optionById as any
     );
     expect(code).toBe("2001");
   });
@@ -55,9 +53,10 @@ describe("resolveItemUniplusCodigo com variação", () => {
     ];
     const code = resolveItemUniplusCodigo(
       { productId: 99, productName: "Brahma 350ml" },
-      new Map([[99, { id: 99, name: "Outro", idUniplus: null }]]),
-      fuzzyCatalog,
-      optionById
+      new Map([[99, { id: 99, name: "Outro", idUniplus: null }]]) as any,
+      fuzzyCatalog as any,
+      optionById as any
     );
     expect(code).toBe("");
   });
+});

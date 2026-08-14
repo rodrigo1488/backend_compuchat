@@ -1,4 +1,4 @@
-import { Op } from "sequelize";
+import { Op, Sequelize } from "sequelize";
 import Form from "../../models/Form";
 import FormField from "../../models/FormField";
 import FormResponse from "../../models/FormResponse";
@@ -547,8 +547,8 @@ const ProcessFormResponseService = async ({
   ).trim();
   if (isMenuFormEarly && incomingClientOrderId) {
     const existingByClient = await FormResponse.findOne({
-      where: sequelize.where(
-        sequelize.literal("metadata->>'clientOrderId'"),
+      where: Sequelize.where(
+        Sequelize.literal("metadata->>'clientOrderId'"),
         incomingClientOrderId
       ),
       include: [
