@@ -1,4 +1,5 @@
 import Product from "../../models/Product";
+import ProductVariationOption from "../../models/ProductVariationOption";
 
 interface MenuItem {
   productId: number;
@@ -8,6 +9,11 @@ interface MenuItem {
   grupo?: string;
   type?: string;
   observation?: string;
+  variationOptionId?: number | null;
+  optionId?: number | null;
+  baseOptionId?: number | null;
+  half1OptionId?: number | null;
+  half2OptionId?: number | null;
   addons?: Array<{ label: string; value: number }>;
   addonsTotal?: number;
   comboItems?: Array<{
@@ -15,6 +21,7 @@ interface MenuItem {
     productName?: string;
     value?: number;
     quantity?: number;
+    variationOptionId?: number | null;
   }>;
 }
 
@@ -43,6 +50,104 @@ interface Request {
   couponDiscount?: number;
 }
 
+type ProductInfo = { name: string; value: number; grupo: string };
+type OptionInfo = { id: number; label: string; value: number };
+
+export const resolveVariationOptionId = (item: MenuItem): number | null => {
+  const raw =
+    item.variationOptionId ??
+    item.optionId ??
+    (item.type === "halfAndHalf" ? item.baseOptionId ?? item.half1OptionId : null);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+export const collectVariationOptionIds = (menuItems: MenuItem[]): number[] => {
+  const ids = new Set<number>();
+  for (const item of menuItems || []) {
+    const primary = resolveVariationOptionId(item);
+    if (primary) ids.add(primary);
+    if (item.half2OptionId) {
+      const n = Number(item.half2OptionId);
+      if (Number.isFinite(n) && n > 0) ids.add(n);
+    }
+    for (const ci of item.comboItems || []) {
+      if (ci.variationOptionId) {
+        const n = Number(ci.variationOptionId);
+        if (Number.isFinite(n) && n > 0) ids.add(n);
+      }
+    }
+  }
+  return Array.from(ids);
+};
+
+export const buildProductDisplayName = (
+  baseName: string,
+  productName: string | undefined,
+  optionLabel: string | null | undefined
+): string => {
+  const name = String(productName || baseName || "Produto").trim();
+  const label = String(optionLabel || "").trim();
+  if (!label) return name || "Produto";
+  if (name.toLowerCase().includes(label.toLowerCase())) return name;
+  const base = String(baseName || name).trim() || name;
+  return `${base} - ${label}`;
+};
+
+export const resolveMenuItemForMessage = (
+  item: MenuItem,
+  productMap: Map<number, ProductInfo>,
+  optionMap: Map<number, OptionInfo>
+): MenuItem => {
+  const product = productMap.get(item.productId);
+  const grupo = item.grupo || product?.grupo || "Outros";
+  const optionId = resolveVariationOptionId(item);
+  const option = optionId ? optionMap.get(optionId) : undefined;
+
+  let productName = item.productName || product?.name || "Produto";
+  let productValue =
+    item.productValue != null ? Number(item.productValue) : Number(product?.value) || 0;
+
+  if (option) {
+    productName = buildProductDisplayName(
+      product?.name || productName,
+      item.productName,
+      option.label
+    );
+    if (item.productValue == null) {
+      productValue = Number(option.value) || productValue;
+    }
+  }
+
+  if (item.type === "halfAndHalf") {
+    const sizeLabel = option?.label;
+    if (sizeLabel && !String(productName).toLowerCase().includes(sizeLabel.toLowerCase())) {
+      productName = `${productName} (${sizeLabel})`;
+    }
+  }
+
+  const comboItems = (item.comboItems || []).map((ci) => {
+    const ciOptionId = ci.variationOptionId ? Number(ci.variationOptionId) : null;
+    const ciOption =
+      ciOptionId && Number.isFinite(ciOptionId) ? optionMap.get(ciOptionId) : undefined;
+    const ciBaseName = ci.productName || `Produto #${ci.productId || "?"}`;
+    return {
+      ...ci,
+      productName: ciOption
+        ? buildProductDisplayName(ciBaseName, ci.productName, ciOption.label)
+        : ciBaseName,
+    };
+  });
+
+  return {
+    ...item,
+    productName,
+    productValue,
+    grupo,
+    comboItems,
+  };
+};
+
 const FormatMenuOrderMessage = async ({
   menuItems,
   customerName,
@@ -56,39 +161,42 @@ const FormatMenuOrderMessage = async ({
   couponCode,
   couponDiscount = 0,
 }: Request): Promise<string> => {
-  // Buscar informações completas dos produtos se não estiverem no menuItem
-  const productIds = menuItems.map((item) => item.productId);
-  const products = await Product.findAll({
-    where: { id: productIds },
-  });
+  const productIds = [...new Set(menuItems.map((item) => item.productId).filter(Boolean))];
+  const products = productIds.length
+    ? await Product.findAll({ where: { id: productIds } })
+    : [];
 
-  // Criar mapa de produtos para acesso rápido
-  const productMap = new Map(
-    products.map((p) => [p.id, { name: p.name, value: p.value, grupo: p.grupo || "Outros" }])
+  const productMap = new Map<number, ProductInfo>(
+    products.map((p) => [
+      p.id,
+      {
+        name: p.name,
+        value: Number(p.value) || 0,
+        grupo: p.grupo || "Outros",
+      },
+    ])
   );
 
-  // Agrupar itens por grupo
+  const optionIds = collectVariationOptionIds(menuItems);
+  const options = optionIds.length
+    ? await ProductVariationOption.findAll({ where: { id: optionIds } })
+    : [];
+  const optionMap = new Map<number, OptionInfo>(
+    options.map((o) => [
+      o.id,
+      { id: o.id, label: o.label, value: Number(o.value) || 0 },
+    ])
+  );
+
   const itemsByGroup: { [key: string]: MenuItem[] } = {};
 
   menuItems.forEach((item) => {
-    const product = productMap.get(item.productId);
-    const grupo = item.grupo || product?.grupo || "Outros";
-    const productName = item.productName || product?.name || "Produto";
-    const productValue = item.productValue || product?.value || 0;
-
-    if (!itemsByGroup[grupo]) {
-      itemsByGroup[grupo] = [];
-    }
-
-    itemsByGroup[grupo].push({
-      ...item,
-      productName,
-      productValue,
-      grupo,
-    });
+    const resolved = resolveMenuItemForMessage(item, productMap, optionMap);
+    const grupo = resolved.grupo || "Outros";
+    if (!itemsByGroup[grupo]) itemsByGroup[grupo] = [];
+    itemsByGroup[grupo].push(resolved);
   });
 
-  // Construir mensagem
   let message = "🍽️ *NOVO PEDIDO - CARDÁPIO*\n\n";
   if (protocol) {
     message += `📋 *Protocolo:* ${protocol}\n`;
@@ -146,7 +254,6 @@ const FormatMenuOrderMessage = async ({
     message += "\n";
   });
 
-  // Mostrar subtotal, taxa de entrega, desconto (se houver) e total
   const itemsSubtotal = calculatedTotal - (deliveryFee || 0) + (couponDiscount || 0);
   if ((deliveryFee && deliveryFee > 0) || (couponDiscount && couponDiscount > 0)) {
     message += `💰 *Subtotal:* R$ ${itemsSubtotal.toFixed(2).replace(".", ",")}\n`;
@@ -159,7 +266,6 @@ const FormatMenuOrderMessage = async ({
   }
   message += `💰 *TOTAL:* R$ ${calculatedTotal.toFixed(2).replace(".", ",")}\n`;
 
-  // Adicionar campos customizados se houver
   if (customFields && customFields.length > 0) {
     message += "\n";
     customFields.forEach((field) => {

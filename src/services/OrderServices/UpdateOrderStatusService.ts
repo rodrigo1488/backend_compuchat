@@ -3,6 +3,10 @@ import FormResponse from "../../models/FormResponse";
 import AppError from "../../errors/AppError";
 import SendOrderStatusNotificationService from "./SendOrderStatusNotificationService";
 import RegisterGourmetVendaService from "../GourmetFinanceiroServices/RegisterGourmetVendaService";
+import {
+  buildMeiosPagamentoForValor,
+  extractPaymentMethodFromResponse,
+} from "../../helpers/paymentMethodUtils";
 
 const calcTotalFromMenuItems = (metadata: any): number => {
   const items = metadata?.menuItems || [];
@@ -85,6 +89,7 @@ const UpdateOrderStatusService = async ({
       const valor = calcTotalFromMenuItems(response.metadata);
       if (valor > 0 && (form as any).companyId) {
         try {
+          const paymentMethod = extractPaymentMethodFromResponse(response);
           await RegisterGourmetVendaService({
             companyId: (form as any).companyId,
             tipo: "delivery",
@@ -93,6 +98,7 @@ const UpdateOrderStatusService = async ({
             protocol: (response as any).protocol ?? null,
             entregadorUserId: meta.entregadorUserId as number | undefined,
             entregadorNome: (meta.entregadorName as string) ?? null,
+            meiosPagamento: buildMeiosPagamentoForValor(paymentMethod, valor),
           });
         } catch (err) {
           console.error("RegisterGourmetVendaService (delivery):", err);

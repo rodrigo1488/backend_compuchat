@@ -10,6 +10,11 @@ import UpdateOrderStatusService from "../services/OrderServices/UpdateOrderStatu
 import SendOrderStatusNotificationService from "../services/OrderServices/SendOrderStatusNotificationService";
 import SendOrderEvaluationService from "../services/OrderServices/SendOrderEvaluationService";
 import RegisterGourmetVendaService from "../services/GourmetFinanceiroServices/RegisterGourmetVendaService";
+import {
+  buildMeiosPagamentoForValor,
+  extractPaymentMethodFromResponse,
+} from "../helpers/paymentMethodUtils";
+import GourmetFinanceiro from "../models/GourmetFinanceiro";
 
 const calcTotalFromMenuItems = (metadata: any): number => {
   const items = metadata?.menuItems || [];
@@ -148,6 +153,7 @@ export const finalizarRota = async (req: Request, res: Response): Promise<Respon
     const valor = calcTotalFromMenuItems(r.metadata);
     if (valor > 0) {
       try {
+        const paymentMethod = extractPaymentMethodFromResponse(r);
         await RegisterGourmetVendaService({
           companyId: form.companyId,
           tipo: "delivery",
@@ -156,6 +162,7 @@ export const finalizarRota = async (req: Request, res: Response): Promise<Respon
           protocol: (r as any).protocol ?? null,
           entregadorUserId: (meta.entregadorUserId as number) ?? null,
           entregadorNome: (meta.entregadorName as string) ?? null,
+          meiosPagamento: buildMeiosPagamentoForValor(paymentMethod, valor),
         });
       } catch (err) {
         console.error("RegisterGourmetVendaService (delivery finalizarRota):", err);
@@ -198,4 +205,71 @@ export const getScanToken = async (req: Request, res: Response): Promise<Respons
 
   const token = createDeliveryScanToken(companyId, Number(formId), response.id);
   return res.json({ token });
+};
+
+/** GET /delivery/entregas-concluidas - Histórico de entregas finalizadas do entregador logado. */
+export const listEntregasConcluidas = async (req: Request, res: Response): Promise<Response> => {
+  const { companyId, id: userId, profile } = req.user as any;
+  const { initialDate, finalDate, entregadorUserId } = req.query as Record<string, string>;
+
+  const where: Record<string, unknown> = {
+    companyId,
+    tipo: "delivery",
+  };
+
+  const isAdmin = profile === "admin";
+  if (isAdmin && entregadorUserId && Number.isFinite(Number(entregadorUserId))) {
+    where.entregadorUserId = Number(entregadorUserId);
+  } else {
+    where.entregadorUserId = userId;
+  }
+
+  if (initialDate && finalDate) {
+    where.dataVenda = { [Op.gte]: initialDate, [Op.lte]: finalDate };
+  } else if (initialDate) {
+    where.dataVenda = { [Op.gte]: initialDate };
+  } else if (finalDate) {
+    where.dataVenda = { [Op.lte]: finalDate };
+  }
+
+  const records = await GourmetFinanceiro.findAll({
+    where,
+    order: [
+      ["dataVenda", "DESC"],
+      ["id", "DESC"],
+    ],
+    limit: 200,
+  });
+
+  const responseIds = records
+    .map((r) => Number((r as any).formResponseId))
+    .filter((id) => Number.isFinite(id) && id > 0);
+
+  const responses = responseIds.length
+    ? await FormResponse.findAll({
+        where: { id: { [Op.in]: responseIds } },
+        attributes: ["id", "responderName", "responderPhone", "metadata"],
+      })
+    : [];
+  const responseMap = new Map(responses.map((r) => [r.id, r]));
+
+  const entregas = records.map((record) => {
+    const fr = responseMap.get(Number((record as any).formResponseId));
+    const meta = (fr?.metadata || {}) as Record<string, unknown>;
+    return {
+      id: record.id,
+      formResponseId: record.formResponseId,
+      protocol: record.protocol,
+      dataVenda: record.dataVenda,
+      valor: Number(record.valor || 0),
+      entregadorUserId: record.entregadorUserId,
+      entregadorNome: record.entregadorNome,
+      cliente: fr?.responderName || meta.customerName || "",
+      telefone: fr?.responderPhone || "",
+      endereco: String(meta.endereco || "").trim(),
+      meiosPagamento: record.meiosPagamento,
+    };
+  });
+
+  return res.json({ entregas, count: entregas.length });
 };

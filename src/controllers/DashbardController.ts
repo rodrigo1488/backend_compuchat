@@ -3,6 +3,7 @@ import DashboardDataService, { DashboardData, Params } from "../services/ReportS
 import DashboardExtendedService, { ExtendedParams } from "../services/ReportService/DashboardExtendedService";
 import OrdersStatsService from "../services/ReportService/OrdersStatsService";
 import LanchonetesStatsService from "../services/ReportService/LanchonetesStatsService";
+import LanchonetesReportExportService from "../services/ReportService/LanchonetesReportExportService";
 import AgendamentoStatsService from "../services/ReportService/AgendamentoStatsService";
 import { TicketsAttendance } from "../services/ReportService/TicketsAttendance";
 import { TicketsDayService } from "../services/ReportService/TicketsDayService";
@@ -84,6 +85,21 @@ export const lanchonetesStats = async (req: Request, res: Response): Promise<Res
     finalDate: finalDate as string | undefined,
   });
   return res.status(200).json(stats);
+};
+
+export const lanchonetesExport = async (req: Request, res: Response): Promise<Response> => {
+  const { companyId } = req.user;
+  const { initialDate, finalDate, type } = req.query as any;
+  const reportType = type === "entregador" ? "entregador" : "pagamento";
+  const { filename, csv } = await LanchonetesReportExportService({
+    companyId,
+    initialDate: initialDate as string | undefined,
+    finalDate: finalDate as string | undefined,
+    type: reportType,
+  });
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.status(200).send(csv);
 };
 
 export const agendamentoStats = async (req: Request, res: Response): Promise<Response> => {
