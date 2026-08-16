@@ -55,6 +55,7 @@ app.use(
       "Accept",
       "Cache-Control",
       "Pragma",
+      "X-Refresh-Token",
     ],
     exposedHeaders: ["Content-Range", "X-Content-Range"],
     maxAge: 600 // Cache preflight response for 10 minutes
