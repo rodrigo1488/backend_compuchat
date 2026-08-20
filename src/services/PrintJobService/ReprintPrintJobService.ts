@@ -7,6 +7,7 @@ import PrintDevice from "../../models/PrintDevice";
 import AppError from "../../errors/AppError";
 import { applyPrintSettingsToConteudo } from "../../helpers/printFields";
 import { dispatchJob } from "./CreateAndDispatchPrintJobService";
+import DispatchFreshDeliveryPrintService from "../OrderServices/DispatchFreshDeliveryPrintService";
 import { logger } from "../../utils/logger";
 
 const JOB_EXPIRY_HOURS = 24;
@@ -51,23 +52,20 @@ export async function reprintFromSourceJob(
     throw new AppError("Job de impressão não encontrado.", 404);
   }
 
-  if (source.status === "printing") {
+  if (source.status === "printing" && (source.tipo || "print") !== "uniplus") {
     throw new AppError(
       "Este pedido ainda está em impressão. Aguarde concluir antes de solicitar reimpressão.",
       409
     );
   }
 
-  // UniPlus já sincronizado: não cria job duplicado cego
-  if (
-    (source.tipo || "print") === "uniplus" &&
-    source.status === "done" &&
-    source.uniplusContaId
-  ) {
-    throw new AppError(
-      `Pedido já sincronizado no UniPlus (conta=${source.uniplusContaId}). Use reprocessar UniPlus se necessário.`,
-      409
-    );
+  // Reimprimir = só cupom. Job UniPlus já sincronizado não deve ir de novo ao ERP.
+  if ((source.tipo || "print") === "uniplus") {
+    return reprintPhysicalOnlyFromFormResponse({
+      companyId,
+      formId: source.formId,
+      formResponseId: source.formResponseId
+    });
   }
 
   const form = await Form.findOne({
@@ -132,7 +130,7 @@ export async function reprintFromSourceJob(
     formId: source.formId,
     formResponseId: source.formResponseId,
     conteudo: refreshedConteudo,
-    tipo: source.tipo || "print",
+    tipo: "print",
     externalRef: source.externalRef || null,
     status: "pending",
     tentativas: 0,
@@ -176,8 +174,7 @@ export async function ReprintLastPrintJobForFormResponse({
     throw new AppError("Resposta não encontrada.", 404);
   }
 
-  // Preferir job de impressão física (não uniplus) para "reimprimir último"
-  let source = await PrintPedido.findOne({
+  const source = await PrintPedido.findOne({
     where: {
       companyId,
       formId,
@@ -186,21 +183,51 @@ export async function ReprintLastPrintJobForFormResponse({
     },
     order: [["createdAt", "DESC"]],
   });
-  if (!source) {
-    source = await PrintPedido.findOne({
-      where: { companyId, formId, formResponseId },
-      order: [["createdAt", "DESC"]],
+
+  if (source) {
+    return reprintFromSourceJob(source, companyId);
+  }
+
+  const orderType = String(
+    ((formResponse.metadata || {}) as Record<string, unknown>).orderType || ""
+  );
+  if (orderType === "delivery") {
+    return reprintPhysicalOnlyFromFormResponse({
+      companyId,
+      formId,
+      formResponseId
     });
   }
 
-  if (!source) {
-    throw new AppError(
-      "Nenhuma impressão registrada para este pedido ainda. É necessário que o pedido tenha sido enviado à impressora ao menos uma vez.",
-      404
-    );
-  }
+  throw new AppError(
+    "Nenhuma impressão registrada para este pedido ainda. É necessário que o pedido tenha sido enviado à impressora ao menos uma vez.",
+    404
+  );
+}
 
-  return reprintFromSourceJob(source, companyId);
+async function reprintPhysicalOnlyFromFormResponse({
+  companyId,
+  formId,
+  formResponseId
+}: {
+  companyId: number;
+  formId: number;
+  formResponseId: number;
+}): Promise<ReprintPrintJobResult> {
+  const result = await DispatchFreshDeliveryPrintService({
+    companyId,
+    formId,
+    formResponseId
+  });
+  const first = result.jobs[0];
+  const job = await PrintPedido.findByPk(first.jobId);
+  if (!job) {
+    throw new AppError("Não foi possível criar o job de reimpressão.", 500);
+  }
+  logger.info(
+    `reprintPhysicalOnly: formResponseId=${formResponseId} jobs=${result.jobs.length} dispatched=${result.dispatched} (sem UniPlus)`
+  );
+  return { job, dispatched: result.dispatched > 0 };
 }
 
 const ReprintPrintJobService = async ({
