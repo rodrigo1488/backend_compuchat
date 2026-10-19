@@ -1,11 +1,12 @@
 import { Response } from "express";
-import { v4 as uuidv4 } from "uuid";
 import { PrintDeviceAuthRequest } from "../middleware/isPrintDeviceAuth";
 import BuildPosCatalogService from "../services/UniplusServices/BuildPosCatalogService";
-import OcuparMesaService from "../services/MesaServices/OcuparMesaService";
 import LiberarMesaService from "../services/MesaServices/LiberarMesaService";
-import Mesa from "../models/Mesa";
-import Contact from "../models/Contact";
+import {
+  beginMesaOccupation,
+  confirmMesaOccupation,
+  resolveOccupationContact,
+} from "../services/MesaServices/MesaOccupationFlowService";
 import AppError from "../errors/AppError";
 import { getIO } from "../libs/socket";
 
@@ -18,6 +19,12 @@ export const catalog = async (
   return res.status(200).json(data);
 };
 
+const contactPhoneOf = (mesa: { contact?: { number?: string | null } | null }): string | null => {
+  const number = String(mesa.contact?.number || "");
+  if (!number || number.startsWith("SEMTELEFONE-")) return null;
+  return number;
+};
+
 export const ocupar = async (
   req: PrintDeviceAuthRequest,
   res: Response
@@ -25,36 +32,35 @@ export const ocupar = async (
   const companyId = Number(req.companyId);
   const mesaId = Number(req.params.id);
   const customerName = String(req.body?.customerName || "").trim();
+  const phone = String(req.body?.phone || "").trim();
+  const userId = Number(req.body?.userId);
   if (!customerName) {
     throw new AppError("ERR_CONTACT_REQUIRED", 400);
   }
 
-  const mesaEntity = await Mesa.findOne({
-    where: { id: mesaId, companyId },
-    attributes: ["id", "status"],
-  });
-  if (!mesaEntity) {
-    throw new AppError("ERR_MESA_NOT_FOUND", 404);
-  }
-
-  const created = await Contact.create({
-    name: customerName,
-    number: `SEMTELEFONE-${companyId}-${uuidv4()}`,
-    email: "",
+  const contact = await resolveOccupationContact({
     companyId,
-    userId: null,
-    profilePicUrl: "",
-    isGroup: false,
-    disableBot: true,
-  } as any);
+    name: customerName,
+    phone: phone || null,
+  });
 
-  const mesa = await OcuparMesaService({
+  const result = await beginMesaOccupation({
     mesaId,
     companyId,
-    contactId: created.id,
-    transferir: true,
+    contactId: contact.id,
+    transferir: req.body?.transferir !== false,
+    userId: Number.isFinite(userId) ? userId : undefined,
   });
 
+  if (result.status === "pending_confirmation") {
+    return res.status(202).json({
+      ...result,
+      contactName: customerName,
+      contactPhone: contact.number?.startsWith("SEMTELEFONE-") ? null : contact.number,
+    });
+  }
+
+  const { mesa } = result;
   const io = getIO();
   io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-mesa`, {
     action: "ocupar",
@@ -65,6 +71,34 @@ export const ocupar = async (
     id: mesa.id,
     status: mesa.status,
     contactName: customerName,
+    contactPhone: contactPhoneOf(mesa),
+  });
+};
+
+export const confirmarOcupacao = async (
+  req: PrintDeviceAuthRequest,
+  res: Response
+): Promise<Response> => {
+  const companyId = Number(req.companyId);
+  const mesaId = Number(req.params.id);
+  const mesa = await confirmMesaOccupation({
+    mesaId,
+    companyId,
+    keyword: req.body?.keyword,
+  });
+
+  const io = getIO();
+  io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-mesa`, {
+    action: "ocupar",
+    mesa,
+  });
+
+  return res.status(200).json({
+    status: "confirmed",
+    id: mesa.id,
+    mesaStatus: mesa.status,
+    contactName: mesa.contact?.name || null,
+    contactPhone: contactPhoneOf(mesa),
   });
 };
 

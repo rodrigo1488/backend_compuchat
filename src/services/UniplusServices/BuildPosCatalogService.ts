@@ -42,7 +42,7 @@ const BuildPosCatalogService = async ({ companyId }: Request) => {
           "displayOrder",
           "section",
         ],
-        include: [{ association: "contact", attributes: ["id", "name"] }],
+        include: [{ association: "contact", attributes: ["id", "name", "number"] }],
         order: [
           ["displayOrder", "ASC"],
           ["number", "ASC"],
@@ -206,6 +206,10 @@ const BuildPosCatalogService = async ({ companyId }: Request) => {
 
   const catalogVersion = Date.now();
   const updatedAt = new Date().toISOString();
+  const formById = new Map(forms.map((form) => [form.id, form]));
+  const defaultCardapio = forms.find(
+    (form) => (form.settings as { formType?: string } | null)?.formType === "cardapio"
+  );
 
   return {
     catalogVersion,
@@ -218,17 +222,27 @@ const BuildPosCatalogService = async ({ companyId }: Request) => {
       defaultRoute: u.defaultRoute || null,
       pin: pinFromUser(u),
     })),
-    mesas: mesas.map((m) => ({
-      id: m.id,
-      number: m.number,
-      name: m.name,
-      type: m.type || "mesa",
-      status: m.status || "livre",
-      formId: m.formId || null,
-      displayOrder: m.displayOrder || 0,
-      section: m.section || null,
-      contactName: (m as any).contact?.name || null,
-    })),
+    mesas: mesas.map((m) => {
+      const form = (m.formId && formById.get(m.formId)) || defaultCardapio;
+      const settings = (form?.settings || {}) as Record<string, unknown>;
+      const contactNumber = String((m as any).contact?.number || "");
+      const contactPhone =
+        contactNumber && !contactNumber.startsWith("SEMTELEFONE-") ? contactNumber : null;
+      return {
+        id: m.id,
+        number: m.number,
+        name: m.name,
+        type: m.type || "mesa",
+        status: m.status || "livre",
+        formId: m.formId || null,
+        displayOrder: m.displayOrder || 0,
+        section: m.section || null,
+        contactName: (m as any).contact?.name || null,
+        contactPhone,
+        askPhone: settings.mesaOccupationAskPhone === true,
+        keywordValidation: settings.mesaOccupationKeywordValidation === true,
+      };
+    }),
     products: productPayload,
     groups,
     productGroups,

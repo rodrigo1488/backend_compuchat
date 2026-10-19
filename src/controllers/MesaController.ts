@@ -6,7 +6,6 @@ import CreateMesaService from "../services/MesaServices/CreateMesaService";
 import CreateBulkMesasService from "../services/MesaServices/CreateBulkMesasService";
 import UpdateMesaService from "../services/MesaServices/UpdateMesaService";
 import ShowMesaService from "../services/MesaServices/ShowMesaService";
-import OcuparMesaService from "../services/MesaServices/OcuparMesaService";
 import LiberarMesaService from "../services/MesaServices/LiberarMesaService";
 import AtualizarNomeContatoMesaService from "../services/MesaServices/AtualizarNomeContatoMesaService";
 import ResumoContaMesaService from "../services/MesaServices/ResumoContaMesaService";
@@ -16,10 +15,13 @@ import RestoreMesaFromQrService from "../services/MesaServices/RestoreMesaFromQr
 import RegisterGourmetVendaService from "../services/GourmetFinanceiroServices/RegisterGourmetVendaService";
 import { applyDiscount, validatePayments } from "../helpers/gourmetOrderTotals";
 import GetOrCreateDefaultCardapioFormService from "../services/FormServices/GetOrCreateDefaultCardapioFormService";
+import {
+  beginMesaOccupation,
+  confirmMesaOccupation,
+} from "../services/MesaServices/MesaOccupationFlowService";
 import { Op } from "sequelize";
 import Form from "../models/Form";
 import Mesa from "../models/Mesa";
-import Ticket from "../models/Ticket";
 import Product from "../models/Product";
 import AddOnGroup from "../models/AddOnGroup";
 import AddOnSubgroup from "../models/AddOnSubgroup";
@@ -31,49 +33,11 @@ import { assertCompanyPublicAccess } from "../helpers/companyPublicAccess";
 import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
 import Contact from "../models/Contact";
-import CreateTicketService from "../services/TicketServices/CreateTicketService";
-import SendWhatsAppMessage from "../services/WbotServices/SendWhatsAppMessage";
-import MesaOccupationConfirmation from "../models/MesaOccupationConfirmation";
 import { v4 as uuidv4 } from "uuid";
 
 const getFrontendBaseUrl = (): string => {
   const baseUrl = process.env.FRONTEND_URL || process.env.BACKEND_URL || "http://localhost:3000";
   return baseUrl.replace(/\/$/, "");
-};
-
-const MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES = 10;
-const KEYWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-const generateOccupationKeyword = (length = 6): string => {
-  let keyword = "";
-  for (let i = 0; i < length; i += 1) {
-    keyword += KEYWORD_ALPHABET[Math.floor(Math.random() * KEYWORD_ALPHABET.length)];
-  }
-  return keyword;
-};
-
-const isPlaceholderPhone = (number?: string | null): boolean =>
-  !number || number.startsWith("SEMTELEFONE-");
-
-const isKeywordValidationEnabled = async (
-  mesa: Mesa,
-  createdBy?: number
-): Promise<boolean> => {
-  let form: Form | null = null;
-  if (mesa.formId) {
-    form = await Form.findOne({
-      where: { id: mesa.formId, companyId: mesa.companyId, isActive: true },
-      attributes: ["id", "settings"],
-    });
-  }
-  if (!form) {
-    form = await GetOrCreateDefaultCardapioFormService({
-      companyId: mesa.companyId,
-      createdBy,
-    });
-  }
-  const settings = (form.settings || {}) as Record<string, unknown>;
-  return settings.mesaOccupationKeywordValidation === true;
 };
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
@@ -377,96 +341,20 @@ export const ocupar = async (req: Request, res: Response): Promise<Response> => 
     resolvedContactId = created.id;
   }
 
-  const mesaEntity = await Mesa.findOne({
-    where: { id: Number(id), companyId },
-    attributes: ["id", "companyId", "formId", "status"],
-  });
-  if (!mesaEntity) {
-    throw new AppError("ERR_MESA_NOT_FOUND", 404);
-  }
-
-  const resolvedContact = await Contact.findOne({
-    where: { id: resolvedContactId, companyId },
-    attributes: ["id", "name", "number"],
-  });
-  if (!resolvedContact) {
-    throw new AppError("ERR_CONTACT_NOT_FOUND", 404);
-  }
-
-  const keywordValidationEnabled = await isKeywordValidationEnabled(mesaEntity, userId);
-  const shouldSendKeyword = keywordValidationEnabled && !isPlaceholderPhone(resolvedContact.number);
-
-  if (shouldSendKeyword) {
-    if (mesaEntity.status === "ocupada") {
-      throw new AppError("ERR_MESA_ALREADY_OCCUPIED", 400);
-    }
-
-    let messageTicket: Ticket | null = null;
-    if (ticketId && Number.isFinite(Number(ticketId))) {
-      messageTicket = await Ticket.findOne({
-        where: { id: Number(ticketId), companyId },
-        include: [{ association: "contact" }],
-      });
-    }
-
-    if (!messageTicket) {
-      messageTicket = await CreateTicketService({
-        contactId: resolvedContact.id,
-        status: "open",
-        userId,
-        companyId,
-        reuseOpenTicket: true,
-      });
-      await messageTicket.reload({ include: [{ association: "contact" }] });
-    }
-
-    const keyword = generateOccupationKeyword(6);
-    const expiresAt = new Date(Date.now() + MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES * 60 * 1000);
-
-    await MesaOccupationConfirmation.update(
-      { status: "cancelled" },
-      {
-        where: {
-          mesaId: mesaEntity.id,
-          companyId,
-          status: "pending",
-        },
-      }
-    );
-
-    const confirmation = await MesaOccupationConfirmation.create({
-      mesaId: mesaEntity.id,
-      companyId,
-      contactId: resolvedContact.id,
-      ticketId: messageTicket.id,
-      transferir: !!transferir,
-      keyword,
-      status: "pending",
-      expiresAt,
-    });
-
-    await SendWhatsAppMessage({
-      ticket: messageTicket,
-      body: `Confirmação de ocupação de mesa\n\nSua palavra-chave é: *${keyword}*\n\nInforme esta palavra ao atendente para liberar a ocupação.\nValidade: ${MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES} minutos.`,
-    });
-
-    return res.status(202).json({
-      status: "pending_confirmation",
-      mesaId: mesaEntity.id,
-      confirmationId: confirmation.id,
-      expiresAt: confirmation.expiresAt,
-      message: "Palavra-chave enviada para o WhatsApp do cliente.",
-    });
-  }
-
-  const mesa = await OcuparMesaService({
-    mesaId: mesaEntity.id,
+  const result = await beginMesaOccupation({
+    mesaId: Number(id),
     companyId,
     contactId: resolvedContactId,
     ticketId,
     transferir: !!transferir,
+    userId,
   });
 
+  if (result.status === "pending_confirmation") {
+    return res.status(202).json(result);
+  }
+
+  const { mesa } = result;
   const io = getIO();
   io.to(`company-${companyId}-mainchannel`).emit(`company-${companyId}-mesa`, {
     action: "ocupar",
@@ -481,46 +369,10 @@ export const confirmarOcupacao = async (req: Request, res: Response): Promise<Re
   const { companyId } = req.user;
   const { keyword } = req.body;
 
-  const normalizedKeyword = String(keyword || "").trim().toUpperCase();
-  if (!normalizedKeyword) {
-    throw new AppError("ERR_MESA_KEYWORD_REQUIRED", 400);
-  }
-
-  const mesaId = Number(id);
-  const confirmation = await MesaOccupationConfirmation.findOne({
-    where: {
-      mesaId,
-      companyId,
-      status: "pending",
-    },
-    order: [["createdAt", "DESC"]],
-  });
-
-  if (!confirmation) {
-    throw new AppError("ERR_MESA_OCCUPATION_CONFIRMATION_NOT_FOUND", 404);
-  }
-
-  if (confirmation.expiresAt && new Date(confirmation.expiresAt).getTime() < Date.now()) {
-    await confirmation.update({ status: "expired" });
-    throw new AppError("ERR_MESA_OCCUPATION_CONFIRMATION_EXPIRED", 400);
-  }
-
-  if (confirmation.keyword !== normalizedKeyword) {
-    await confirmation.update({ attempts: (confirmation.attempts || 0) + 1 });
-    throw new AppError("ERR_MESA_OCCUPATION_KEYWORD_INVALID", 400);
-  }
-
-  const mesa = await OcuparMesaService({
-    mesaId,
+  const mesa = await confirmMesaOccupation({
+    mesaId: Number(id),
     companyId,
-    contactId: confirmation.contactId,
-    ticketId: confirmation.ticketId || undefined,
-    transferir: !!confirmation.transferir,
-  });
-
-  await confirmation.update({
-    status: "confirmed",
-    confirmedAt: new Date(),
+    keyword,
   });
 
   const io = getIO();
