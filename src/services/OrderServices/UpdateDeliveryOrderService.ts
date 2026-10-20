@@ -7,6 +7,11 @@ import { normalizeMenuItems } from "../FormServices/ProcessFormResponseService";
 import { findOrderTypeField, inferFulfillmentMode } from "../../helpers/fulfillmentMode";
 import ResolveDeliveryFee from "../FormServices/ResolveDeliveryFee";
 import DispatchFreshDeliveryPrintService from "./DispatchFreshDeliveryPrintService";
+import BuildUniplusDeliveryPayloadService, {
+  resolveUniplusDeviceId,
+} from "../UniplusServices/BuildUniplusDeliveryPayloadService";
+import CreateOrReuseUniplusJobService from "../UniplusServices/CreateOrReuseUniplusJobService";
+import { logger } from "../../utils/logger";
 
 const BLOCKED_STATUSES = new Set(["entregue", "cancelado"]);
 
@@ -242,6 +247,13 @@ const UpdateDeliveryOrderService = async ({
     include: [{ association: "answers", include: [{ association: "field" }] }],
   });
 
+  await syncUniplusFulfillment({
+    companyId,
+    form,
+    response,
+    menuItems: normalizedItems,
+  });
+
   const print = await DispatchFreshDeliveryPrintService({
     companyId,
     formId,
@@ -249,6 +261,55 @@ const UpdateDeliveryOrderService = async ({
   });
 
   return { response, print };
+};
+
+/** Atualiza a conta já aberta no Uniplus (retirada, taxa e total). Não bloqueia a edição. */
+const syncUniplusFulfillment = async ({
+  companyId,
+  form,
+  response,
+  menuItems,
+}: {
+  companyId: number;
+  form: Form;
+  response: FormResponse;
+  menuItems: Record<string, unknown>[];
+}): Promise<void> => {
+  try {
+    const deviceId = await resolveUniplusDeviceId(companyId, form);
+    if (!deviceId) return;
+
+    const fields = (form.fields || []) as FormField[];
+    const answers = (response.answers || []).map((a) => ({
+      fieldId: a.fieldId,
+      answer: a.answer,
+    }));
+    const payload = await BuildUniplusDeliveryPayloadService({
+      companyId,
+      form,
+      response,
+      menuItems: menuItems as any,
+      contactName: response.responderName,
+      contactPhone: response.responderPhone,
+      fields,
+      answers,
+    });
+    const protocol = String(payload.protocol || response.protocol || response.id).slice(0, 24);
+    const externalRef = `${protocol}:u${Date.now()}`.slice(0, 40);
+
+    await CreateOrReuseUniplusJobService({
+      companyId,
+      deviceId,
+      formId: form.id,
+      formResponseId: response.id,
+      conteudo: { ...payload, updateExisting: true },
+      externalRef,
+    });
+  } catch (err: any) {
+    logger.warn(
+      `Uniplus: falha ao atualizar modalidade formResponseId=${response.id}: ${err?.message || err}`
+    );
+  }
 };
 
 export default UpdateDeliveryOrderService;
