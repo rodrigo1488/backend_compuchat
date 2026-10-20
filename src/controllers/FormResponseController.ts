@@ -802,7 +802,7 @@ export const updateDeliveryOrder = async (
   const { companyId } = req.user;
   const formId = Number(req.params.formId);
   const responseId = Number(req.params.id);
-  const { responderName, menuItems, address, fulfillmentMode } = req.body || {};
+  const { responderName, menuItems, address, fulfillmentMode, waiveDeliveryFee } = req.body || {};
 
   const { response, print } = await UpdateDeliveryOrderService({
     companyId,
@@ -812,6 +812,7 @@ export const updateDeliveryOrder = async (
     menuItems,
     address,
     fulfillmentMode,
+    waiveDeliveryFee: typeof waiveDeliveryFee === "boolean" ? waiveDeliveryFee : undefined,
   });
 
   const io = getIO();

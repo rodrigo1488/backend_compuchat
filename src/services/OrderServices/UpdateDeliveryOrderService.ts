@@ -33,6 +33,7 @@ export type UpdateDeliveryOrderInput = {
   menuItems?: Record<string, unknown>[];
   address?: DeliveryOrderAddressInput;
   fulfillmentMode?: FulfillmentModeInput;
+  waiveDeliveryFee?: boolean;
 };
 
 const applyAddressToAnswers = async (
@@ -116,6 +117,7 @@ const UpdateDeliveryOrderService = async ({
   menuItems,
   address,
   fulfillmentMode,
+  waiveDeliveryFee,
 }: UpdateDeliveryOrderInput): Promise<{
   response: FormResponse;
   print: { dispatched: number; jobs: Array<{ deviceId: string; jobId: number; dispatched: boolean }> };
@@ -177,16 +179,29 @@ const UpdateDeliveryOrderService = async ({
 
   const settings = (form.settings || {}) as Record<string, unknown>;
   const configuredFee = Number(settings.deliveryFee) || 0;
-  let deliveryFee = Number(meta.deliveryFee) || 0;
-  if (nextMode === "pickup") {
-    deliveryFee = 0;
-  } else if (previousMode === "pickup") {
+  const resolveConfiguredFee = () => {
     const resolved = ResolveDeliveryFee(
       form as any,
       (response.answers || []).map((a) => ({ fieldId: a.fieldId, answer: a.answer })),
       { orderType: "delivery" }
     );
-    deliveryFee = resolved.deliveryFee > 0 ? resolved.deliveryFee : configuredFee;
+    return resolved.deliveryFee > 0 ? resolved.deliveryFee : configuredFee;
+  };
+  let deliveryFee = Number(meta.deliveryFee) || 0;
+  let deliveryFeeWaived = meta.deliveryFeeWaived === true;
+  if (nextMode === "pickup") {
+    deliveryFee = 0;
+    deliveryFeeWaived = false;
+  } else if (waiveDeliveryFee === true) {
+    deliveryFee = 0;
+    deliveryFeeWaived = true;
+  } else if (previousMode === "pickup" || (waiveDeliveryFee === false && deliveryFeeWaived)) {
+    deliveryFee = resolveConfiguredFee();
+    deliveryFeeWaived = false;
+  } else if (deliveryFeeWaived) {
+    deliveryFee = 0;
+  } else {
+    deliveryFeeWaived = false;
   }
   deliveryFee = Math.round(deliveryFee * 100) / 100;
 
@@ -207,6 +222,7 @@ const UpdateDeliveryOrderService = async ({
     menuItems: normalizedItems,
     subtotal,
     deliveryFee,
+    deliveryFeeWaived,
     total,
     fulfillmentMode: nextMode,
     pickup: nextMode === "pickup",
