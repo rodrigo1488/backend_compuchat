@@ -71,6 +71,25 @@ export const buildPrintConteudoFromResponse = ({
     printStoredFieldIds
   );
 
+  if (orderType === "delivery" && fulfillmentMode !== "pickup") {
+    const addressLines: Array<[string, unknown]> = [
+      ["Endereço", meta.endereco],
+      ["Número", meta.endereconumero],
+      ["Bairro", meta.enderecobairro],
+      ["Complemento", meta.enderecocomplemento],
+      ["Referência", meta.enderecoreferencia],
+    ];
+    addressLines.forEach(([label, value], index) => {
+      const text = String(value || "").trim();
+      if (!text) return;
+      answersForPrint.push({
+        fieldId: -(200 + index),
+        label,
+        answer: text,
+      });
+    });
+  }
+
   const menuItemsForPayload = (menuItems || []).map((it: any) => ({
     ...it,
     quantity: it.quantity ?? 1,

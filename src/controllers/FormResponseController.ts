@@ -802,7 +802,7 @@ export const updateDeliveryOrder = async (
   const { companyId } = req.user;
   const formId = Number(req.params.formId);
   const responseId = Number(req.params.id);
-  const { responderName, menuItems, address } = req.body || {};
+  const { responderName, menuItems, address, fulfillmentMode } = req.body || {};
 
   const { response, print } = await UpdateDeliveryOrderService({
     companyId,
@@ -811,6 +811,7 @@ export const updateDeliveryOrder = async (
     responderName,
     menuItems,
     address,
+    fulfillmentMode,
   });
 
   const io = getIO();

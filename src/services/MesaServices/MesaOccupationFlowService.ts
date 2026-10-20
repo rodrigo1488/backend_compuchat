@@ -1,4 +1,4 @@
-import { UniqueConstraintError } from "sequelize";
+import { Op, UniqueConstraintError } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
 import AppError from "../../errors/AppError";
 import Contact from "../../models/Contact";
@@ -51,6 +51,39 @@ export const normalizeOccupationPhone = (raw?: string | null): string => {
   }
   return number;
 };
+
+const phoneLookupCandidates = (number: string): string[] => {
+  const values = new Set<string>();
+  const add = (value: string) => {
+    if (value) values.add(value);
+  };
+  add(number);
+  if (!number.startsWith("55") || number.length < 12) return [...values];
+  add(number.slice(2));
+  if (number.length === 13 && number[4] === "9") {
+    const withoutNine = `${number.slice(0, 4)}${number.slice(5)}`;
+    add(withoutNine);
+    add(withoutNine.slice(2));
+  }
+  if (number.length === 12) {
+    const withNine = `${number.slice(0, 4)}9${number.slice(4)}`;
+    add(withNine);
+    add(withNine.slice(2));
+  }
+  return [...values];
+};
+
+const findCompanyContactByPhone = async (
+  companyId: number,
+  number: string
+): Promise<Contact | null> =>
+  Contact.findOne({
+    where: {
+      companyId,
+      number: { [Op.in]: phoneLookupCandidates(number) },
+    },
+    attributes: ["id", "name", "number", "companyId"],
+  });
 
 const isKeywordValidationEnabled = async (
   mesa: Mesa,
@@ -118,10 +151,7 @@ export const resolveOccupationContact = async ({
     } as any);
   }
 
-  const existing = await Contact.findOne({
-    where: { number, companyId },
-    attributes: ["id", "name", "number"],
-  });
+  const existing = await findCompanyContactByPhone(companyId, number);
   if (existing) {
     if (name && existing.name !== name) {
       await existing.update({ name });
@@ -142,10 +172,7 @@ export const resolveOccupationContact = async ({
     } as any);
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
-      const again = await Contact.findOne({
-        where: { number, companyId },
-        attributes: ["id", "name", "number"],
-      });
+      const again = await findCompanyContactByPhone(companyId, number);
       if (again) return again;
       throw new AppError("ERR_CONTACT_NUMBER_IN_USE", 409);
     }
@@ -160,6 +187,7 @@ export const beginMesaOccupation = async ({
   ticketId,
   transferir = false,
   userId,
+  forceKeyword = false,
 }: {
   mesaId: number;
   companyId: number;
@@ -167,6 +195,7 @@ export const beginMesaOccupation = async ({
   ticketId?: number | null;
   transferir?: boolean;
   userId?: number | null;
+  forceKeyword?: boolean;
 }): Promise<PendingOccupation | OccupiedOccupation> => {
   const mesaEntity = await Mesa.findOne({
     where: { id: mesaId, companyId },
@@ -184,77 +213,83 @@ export const beginMesaOccupation = async ({
     throw new AppError("ERR_CONTACT_NOT_FOUND", 404);
   }
 
-  const keywordValidationEnabled = await isKeywordValidationEnabled(
-    mesaEntity,
-    userId && userId > 0 ? userId : undefined
-  );
+  let keywordValidationEnabled = false;
+  try {
+    keywordValidationEnabled = await isKeywordValidationEnabled(
+      mesaEntity,
+      userId && userId > 0 ? userId : undefined
+    );
+  } catch (err) {
+    if (!(err instanceof AppError) || err.statusCode !== 404) throw err;
+  }
   const shouldSendKeyword =
-    keywordValidationEnabled && !isPlaceholderPhone(resolvedContact.number);
+    (forceKeyword || keywordValidationEnabled) &&
+    !isPlaceholderPhone(resolvedContact.number);
 
-  if (shouldSendKeyword) {
-    if (mesaEntity.status === "ocupada") {
-      throw new AppError("ERR_MESA_ALREADY_OCCUPIED", 400);
-    }
-
-    const ticketUserId = await resolveTicketUserId(companyId, userId);
-    let messageTicket: Ticket | null = null;
-    if (ticketId && Number.isFinite(Number(ticketId))) {
-      messageTicket = await Ticket.findOne({
-        where: { id: Number(ticketId), companyId },
-        include: [{ association: "contact" }],
-      });
-    }
-
-    if (!messageTicket) {
-      messageTicket = await CreateTicketService({
-        contactId: resolvedContact.id,
-        status: "open",
-        userId: ticketUserId,
-        companyId,
-        reuseOpenTicket: true,
-      });
-      await messageTicket.reload({ include: [{ association: "contact" }] });
-    }
-
-    const keyword = generateOccupationKeyword(6);
-    const expiresAt = new Date(
-      Date.now() + MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES * 60 * 1000
-    );
-
-    await MesaOccupationConfirmation.update(
-      { status: "cancelled" },
-      {
-        where: {
-          mesaId: mesaEntity.id,
-          companyId,
-          status: "pending",
-        },
+  if (shouldSendKeyword && mesaEntity.status !== "ocupada") {
+    try {
+      const ticketUserId = await resolveTicketUserId(companyId, userId);
+      let messageTicket: Ticket | null = null;
+      if (ticketId && Number.isFinite(Number(ticketId))) {
+        messageTicket = await Ticket.findOne({
+          where: { id: Number(ticketId), companyId },
+          include: [{ association: "contact" }],
+        });
       }
-    );
 
-    const confirmation = await MesaOccupationConfirmation.create({
-      mesaId: mesaEntity.id,
-      companyId,
-      contactId: resolvedContact.id,
-      ticketId: messageTicket.id,
-      transferir: !!transferir,
-      keyword,
-      status: "pending",
-      expiresAt,
-    });
+      if (!messageTicket) {
+        messageTicket = await CreateTicketService({
+          contactId: resolvedContact.id,
+          status: "open",
+          userId: ticketUserId,
+          companyId,
+          reuseOpenTicket: true,
+        });
+        await messageTicket.reload({ include: [{ association: "contact" }] });
+      }
 
-    await SendWhatsAppMessage({
-      ticket: messageTicket,
-      body: `Confirmação de ocupação de mesa\n\nSua palavra-chave é: *${keyword}*\n\nInforme esta palavra ao atendente para liberar a ocupação.\nValidade: ${MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES} minutos.`,
-    });
+      const keyword = generateOccupationKeyword(6);
+      const expiresAt = new Date(
+        Date.now() + MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES * 60 * 1000
+      );
 
-    return {
-      status: "pending_confirmation",
-      mesaId: mesaEntity.id,
-      confirmationId: confirmation.id,
-      expiresAt: confirmation.expiresAt,
-      message: "Palavra-chave enviada para o WhatsApp do cliente.",
-    };
+      await MesaOccupationConfirmation.update(
+        { status: "cancelled" },
+        {
+          where: {
+            mesaId: mesaEntity.id,
+            companyId,
+            status: "pending",
+          },
+        }
+      );
+
+      const confirmation = await MesaOccupationConfirmation.create({
+        mesaId: mesaEntity.id,
+        companyId,
+        contactId: resolvedContact.id,
+        ticketId: messageTicket.id,
+        transferir: !!transferir,
+        keyword,
+        status: "pending",
+        expiresAt,
+      });
+
+      await SendWhatsAppMessage({
+        ticket: messageTicket,
+        body: `Confirmação de ocupação de mesa\n\nSua palavra-chave é: *${keyword}*\n\nInforme esta palavra ao atendente para liberar a ocupação.\nValidade: ${MESA_OCCUPATION_KEYWORD_EXPIRES_MINUTES} minutos.`,
+      });
+
+      return {
+        status: "pending_confirmation",
+        mesaId: mesaEntity.id,
+        confirmationId: confirmation.id,
+        expiresAt: confirmation.expiresAt,
+        message: "Palavra-chave enviada para o WhatsApp do cliente.",
+      };
+    } catch (err) {
+      if (!(err instanceof AppError) || err.statusCode !== 404) throw err;
+    }
   }
 
   const mesa = await OcuparMesaService({

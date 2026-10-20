@@ -50,6 +50,7 @@ export const ocupar = async (
     contactId: contact.id,
     transferir: req.body?.transferir !== false,
     userId: Number.isFinite(userId) ? userId : undefined,
+    forceKeyword: req.body?.forceKeyword === true,
   });
 
   if (result.status === "pending_confirmation") {

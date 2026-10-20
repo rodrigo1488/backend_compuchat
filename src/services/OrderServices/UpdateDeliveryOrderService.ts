@@ -4,9 +4,8 @@ import FormResponse from "../../models/FormResponse";
 import ResponseAnswer from "../../models/ResponseAnswer";
 import AppError from "../../errors/AppError";
 import { normalizeMenuItems } from "../FormServices/ProcessFormResponseService";
-import { inferFulfillmentMode } from "../../helpers/fulfillmentMode";
-import { deliveryAddressRequired } from "../../helpers/buildCustomerSnapshot";
-import { mapResponseAnswers } from "../../helpers/buildPrintConteudo";
+import { findOrderTypeField, inferFulfillmentMode } from "../../helpers/fulfillmentMode";
+import ResolveDeliveryFee from "../FormServices/ResolveDeliveryFee";
 import DispatchFreshDeliveryPrintService from "./DispatchFreshDeliveryPrintService";
 
 const BLOCKED_STATUSES = new Set(["entregue", "cancelado"]);
@@ -19,6 +18,8 @@ export type DeliveryOrderAddressInput = {
   enderecoreferencia?: string;
 };
 
+export type FulfillmentModeInput = "delivery" | "pickup";
+
 export type UpdateDeliveryOrderInput = {
   companyId: number;
   formId: number;
@@ -26,6 +27,7 @@ export type UpdateDeliveryOrderInput = {
   responderName?: string;
   menuItems?: Record<string, unknown>[];
   address?: DeliveryOrderAddressInput;
+  fulfillmentMode?: FulfillmentModeInput;
 };
 
 const applyAddressToAnswers = async (
@@ -65,6 +67,42 @@ const applyAddressToAnswers = async (
   }
 };
 
+const labelForMode = (field: FormField, mode: FulfillmentModeInput): string => {
+  const options = Array.isArray(field.options) ? field.options.map((opt) => String(opt)) : [];
+  for (const opt of options) {
+    const inferred = inferFulfillmentMode(
+      "delivery",
+      [{ id: field.id, label: field.label || "tipo de pedido" }],
+      [{ fieldId: field.id, answer: opt }]
+    );
+    if (inferred === mode) return opt;
+  }
+  return mode === "pickup" ? "Retirada no balcão" : "Entrega";
+};
+
+const applyFulfillmentAnswer = async (
+  fields: FormField[],
+  responseId: number,
+  mode: FulfillmentModeInput
+): Promise<void> => {
+  const field = findOrderTypeField(fields) as FormField | undefined;
+  if (!field?.id) return;
+  const text = labelForMode(field, mode);
+  const existing = await ResponseAnswer.findOne({
+    where: { responseId, fieldId: field.id },
+  });
+  if (existing) {
+    await existing.update({ answer: text, answerData: { value: text } });
+  } else {
+    await ResponseAnswer.create({
+      responseId,
+      fieldId: field.id,
+      answer: text,
+      answerData: { value: text },
+    });
+  }
+};
+
 const UpdateDeliveryOrderService = async ({
   companyId,
   formId,
@@ -72,6 +110,7 @@ const UpdateDeliveryOrderService = async ({
   responderName,
   menuItems,
   address,
+  fulfillmentMode,
 }: UpdateDeliveryOrderInput): Promise<{
   response: FormResponse;
   print: { dispatched: number; jobs: Array<{ deviceId: string; jobId: number; dispatched: boolean }> };
@@ -122,13 +161,36 @@ const UpdateDeliveryOrderService = async ({
   }
   subtotal = Math.round(subtotal * 100) / 100;
 
-  const deliveryFee = Number(meta.deliveryFee) || 0;
+  const previousMode: FulfillmentModeInput =
+    meta.fulfillmentMode === "pickup" || meta.pickup === true || meta.retirada === true
+      ? "pickup"
+      : "delivery";
+  const nextMode: FulfillmentModeInput =
+    fulfillmentMode === "pickup" || fulfillmentMode === "delivery"
+      ? fulfillmentMode
+      : previousMode;
+
+  const settings = (form.settings || {}) as Record<string, unknown>;
+  const configuredFee = Number(settings.deliveryFee) || 0;
+  let deliveryFee = Number(meta.deliveryFee) || 0;
+  if (nextMode === "pickup") {
+    deliveryFee = 0;
+  } else if (previousMode === "pickup") {
+    const resolved = ResolveDeliveryFee(
+      form as any,
+      (response.answers || []).map((a) => ({ fieldId: a.fieldId, answer: a.answer })),
+      { orderType: "delivery" }
+    );
+    deliveryFee = resolved.deliveryFee > 0 ? resolved.deliveryFee : configuredFee;
+  }
+  deliveryFee = Math.round(deliveryFee * 100) / 100;
+
   const couponDiscount = Number(meta.couponDiscount) || 0;
   const total =
     Math.round((subtotal + deliveryFee - couponDiscount) * 100) / 100;
 
-  const minOrderValue = Number((form.settings as any)?.minOrderValue) || 0;
-  if (minOrderValue > 0 && subtotal < minOrderValue) {
+  const minOrderValue = Number(settings.minOrderValue) || 0;
+  if (nextMode === "delivery" && minOrderValue > 0 && subtotal < minOrderValue) {
     throw new AppError(
       `Pedido mínimo de R$ ${minOrderValue.toFixed(2).replace(".", ",")} para delivery.`,
       400
@@ -139,7 +201,11 @@ const UpdateDeliveryOrderService = async ({
     ...meta,
     menuItems: normalizedItems,
     subtotal,
+    deliveryFee,
     total,
+    fulfillmentMode: nextMode,
+    pickup: nextMode === "pickup",
+    retirada: nextMode === "pickup",
   };
 
   if (responderName != null) {
@@ -148,7 +214,7 @@ const UpdateDeliveryOrderService = async ({
     await response.update({ responderName: name });
   }
 
-  if (address) {
+  if (nextMode === "delivery" && address) {
     if (address.endereco !== undefined) nextMeta.endereco = String(address.endereco || "").trim();
     if (address.endereconumero !== undefined) {
       nextMeta.endereconumero = String(address.endereconumero || "").trim();
@@ -165,22 +231,9 @@ const UpdateDeliveryOrderService = async ({
     await applyAddressToAnswers(fields, response.id, address);
   }
 
-  const fulfillmentMode =
-    (nextMeta.fulfillmentMode as string) ||
-    inferFulfillmentMode("delivery", fields, mapResponseAnswers(response.answers || [], fields) as any);
-  nextMeta.fulfillmentMode = fulfillmentMode;
-  nextMeta.pickup = fulfillmentMode === "pickup";
-  nextMeta.retirada = fulfillmentMode === "pickup";
+  await applyFulfillmentAnswer(fields, response.id, nextMode);
 
-  if (
-    deliveryAddressRequired(
-      fields,
-      "delivery",
-      mapResponseAnswers(response.answers || [], fields) as any,
-      fulfillmentMode
-    ) &&
-    !String(nextMeta.endereco || "").trim()
-  ) {
+  if (nextMode === "delivery" && !String(nextMeta.endereco || "").trim()) {
     throw new AppError("ERR_DELIVERY_ADDRESS_REQUIRED", 400);
   }
 
