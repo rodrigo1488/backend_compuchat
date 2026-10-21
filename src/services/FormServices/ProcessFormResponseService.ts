@@ -38,6 +38,7 @@ import ProductComboItem from "../../models/ProductComboItem";
 import AddOnItem from "../../models/AddOnItem";
 import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
+import { assertProductsInCustomMenu } from "../../helpers/menuCatalogProducts";
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
 import EvaluateCardapioOrderHours from "./EvaluateCardapioOrderHours";
 import ResolveDeliveryFee from "./ResolveDeliveryFee";
@@ -680,6 +681,7 @@ const ProcessFormResponseService = async ({
   let normalizedMenuItems: any[] | null = null;
   let appliedCouponDiscount = 0;
   if (isMenuForm && menuItems && menuItems.length > 0) {
+    await assertProductsInCustomMenu(menuItems, form.companyId, formSettings);
     normalizedMenuItems = await normalizeMenuItems(menuItems, form.companyId);
     responseMetadata.menuItems = normalizedMenuItems;
     let subtotal = 0;

@@ -21,6 +21,7 @@ import AddOnItem from "../models/AddOnItem";
 import AppError from "../errors/AppError";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
+import { filterProductsByMenuCatalog } from "../helpers/menuCatalogProducts";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -294,7 +295,7 @@ export const getPublicMenuProducts = async (
   const { publicId } = req.params as any;
 
   const form = await findPublicFormBySlug(publicId, {
-    attributes: ["id", "companyId"],
+    attributes: ["id", "companyId", "settings"],
   });
 
   // Buscar todos os produtos de cardápio da empresa (com variações, combos e addOnGroupId).
@@ -359,6 +360,8 @@ export const getPublicMenuProducts = async (
     });
   }
 
+  const visibleProducts = filterProductsByMenuCatalog(products, form.settings);
+
   // Mapeamento grupo -> addOnGroupId (atribuição por categoria)
   const grupoAssignments = await GrupoAddOn.findAll({
     where: { companyId: form.companyId },
@@ -367,12 +370,14 @@ export const getPublicMenuProducts = async (
   const grupoToAddOnId = new Map(grupoAssignments.map((a) => [a.grupo, a.addOnGroupId]));
 
   const addOnGroupIds = new Set<number>();
-  products.forEach((p) => {
+  visibleProducts.forEach((p) => {
     const resolved = p.addOnGroupId ?? (p.grupo ? grupoToAddOnId.get(p.grupo) : undefined);
     if (resolved) addOnGroupIds.add(resolved);
   });
 
-  const addOnGroupsRaw = await AddOnGroup.findAll({
+  const addOnGroupsRaw = addOnGroupIds.size === 0
+    ? []
+    : await AddOnGroup.findAll({
     where: { id: Array.from(addOnGroupIds), companyId: form.companyId },
     include: [
       { model: AddOnSubgroup, as: "subgroups", include: [{ model: AddOnItem, as: "items" }] },
@@ -408,7 +413,7 @@ export const getPublicMenuProducts = async (
     })
   );
 
-  const productsWithAddOn = products.map((p) => {
+  const productsWithAddOn = visibleProducts.map((p) => {
     const po = p.toJSON() as Record<string, unknown> & {
       addOnGroupId?: number | null;
       grupo?: string;

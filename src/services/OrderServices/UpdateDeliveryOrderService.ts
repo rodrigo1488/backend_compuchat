@@ -4,6 +4,7 @@ import FormResponse from "../../models/FormResponse";
 import ResponseAnswer from "../../models/ResponseAnswer";
 import AppError from "../../errors/AppError";
 import { normalizeMenuItems } from "../FormServices/ProcessFormResponseService";
+import { assertProductsInCustomMenu } from "../../helpers/menuCatalogProducts";
 import { findOrderTypeField, inferFulfillmentMode } from "../../helpers/fulfillmentMode";
 import ResolveDeliveryFee from "../FormServices/ResolveDeliveryFee";
 import DispatchFreshDeliveryPrintService from "./DispatchFreshDeliveryPrintService";
@@ -155,6 +156,7 @@ const UpdateDeliveryOrderService = async ({
     if (!menuItems.length) {
       throw new AppError("O pedido precisa ter ao menos um item.", 400);
     }
+    await assertProductsInCustomMenu(menuItems as any, companyId, form.settings);
     normalizedItems = await normalizeMenuItems(menuItems as any, companyId);
   }
 

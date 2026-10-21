@@ -31,6 +31,7 @@ import AppError from "../errors/AppError";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 import { assertCompanyPublicAccess } from "../helpers/companyPublicAccess";
 import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
+import { filterProductsByMenuCatalog } from "../helpers/menuCatalogProducts";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
 import Contact from "../models/Contact";
 import { v4 as uuidv4 } from "uuid";
@@ -624,7 +625,7 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
 
   const mesa = await Mesa.findOne({
     where: { id: mesaIdNum },
-    attributes: ["id", "companyId"],
+    attributes: ["id", "companyId", "formId"],
   });
   if (!mesa) throw new AppError("ERR_MESA_NOT_FOUND", 404);
   const companyId = mesa.companyId;
@@ -646,6 +647,25 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
     ],
   });
 
+  let catalogSettings: unknown = null;
+  if (mesa.formId) {
+    const linked = await Form.findOne({
+      where: { id: mesa.formId, companyId, isActive: true },
+      attributes: ["settings"],
+    });
+    catalogSettings = linked?.settings ?? null;
+  } else {
+    const cardapios = await Form.findAll({
+      where: { companyId, isActive: true },
+      attributes: ["settings"],
+    });
+    const first = cardapios.find(
+      (f) => (f.settings as { formType?: string } | null)?.formType === "cardapio"
+    );
+    catalogSettings = first?.settings ?? null;
+  }
+  const visibleProducts = filterProductsByMenuCatalog(products, catalogSettings);
+
   const grupoAssignments = await GrupoAddOn.findAll({
     where: { companyId },
     attributes: ["grupo", "addOnGroupId"],
@@ -653,12 +673,14 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
   const grupoToAddOnId = new Map(grupoAssignments.map((a) => [a.grupo, a.addOnGroupId]));
 
   const addOnGroupIds = new Set<number>();
-  products.forEach((p) => {
+  visibleProducts.forEach((p) => {
     const resolved = p.addOnGroupId ?? (p.grupo ? grupoToAddOnId.get(p.grupo) : undefined);
     if (resolved) addOnGroupIds.add(resolved);
   });
 
-  const addOnGroupsRaw = await AddOnGroup.findAll({
+  const addOnGroupsRaw = addOnGroupIds.size === 0
+    ? []
+    : await AddOnGroup.findAll({
     where: { id: Array.from(addOnGroupIds), companyId },
     include: [
       { model: AddOnSubgroup, as: "subgroups", include: [{ model: AddOnItem, as: "items" }] },
@@ -683,7 +705,7 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
     })
   );
 
-  const productsWithAddOn = products.map((p) => {
+  const productsWithAddOn = visibleProducts.map((p) => {
     const po = p.toJSON() as Record<string, unknown> & { addOnGroupId?: number | null; grupo?: string };
     const resolvedAddOnId = po.addOnGroupId ?? (po.grupo ? grupoToAddOnId.get(po.grupo) : undefined);
     po.addOnGroup = resolvedAddOnId ? addOnGroupMap.get(resolvedAddOnId) ?? null : null;
