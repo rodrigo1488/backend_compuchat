@@ -651,15 +651,19 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
       attributes: ["id", "settings"],
     });
     const first = cardapios.find((f) => {
-      let settings = f.settings as { formType?: string } | string | null;
-      if (typeof settings === "string") {
+      let parsed: { formType?: string } | null = null;
+      const raw = f.settings as { formType?: string } | string | null;
+      if (raw && typeof raw === "object") {
+        parsed = raw;
+      } else if (typeof raw === "string") {
         try {
-          settings = JSON.parse(settings);
+          const json = JSON.parse(raw) as { formType?: string } | null;
+          parsed = json && typeof json === "object" ? json : null;
         } catch {
-          settings = null;
+          parsed = null;
         }
       }
-      return settings?.formType === "cardapio";
+      return parsed?.formType === "cardapio";
     });
     catalogSettings = first?.settings ?? null;
   }
