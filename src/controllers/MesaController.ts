@@ -31,7 +31,7 @@ import AppError from "../errors/AppError";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 import { assertCompanyPublicAccess } from "../helpers/companyPublicAccess";
 import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
-import { filterProductsByMenuCatalog } from "../helpers/menuCatalogProducts";
+import { applyMenuCatalogIdWhere, filterProductsByMenuCatalog } from "../helpers/menuCatalogProducts";
 import { signMesaLink, verifyMesaLink, signMesaLinkOnly, verifyMesaLinkOnly, createOrderToken } from "../helpers/MesaLinkSign";
 import Contact from "../models/Contact";
 import { v4 as uuidv4 } from "uuid";
@@ -638,8 +638,37 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
     }
   }
 
+  let catalogSettings: unknown = null;
+  if (mesa.formId) {
+    const linked = await Form.findOne({
+      where: { id: mesa.formId, companyId, isActive: true },
+      attributes: ["id", "settings"],
+    });
+    catalogSettings = linked?.settings ?? null;
+  } else {
+    const cardapios = await Form.findAll({
+      where: { companyId, isActive: true },
+      attributes: ["id", "settings"],
+    });
+    const first = cardapios.find((f) => {
+      let settings = f.settings as { formType?: string } | string | null;
+      if (typeof settings === "string") {
+        try {
+          settings = JSON.parse(settings);
+        } catch {
+          settings = null;
+        }
+      }
+      return settings?.formType === "cardapio";
+    });
+    catalogSettings = first?.settings ?? null;
+  }
+
+  const productWhere: any = { companyId, isMenuProduct: true };
+  applyMenuCatalogIdWhere(productWhere, catalogSettings);
+
   const products = await Product.findAll({
-    where: { companyId, isMenuProduct: true },
+    where: productWhere,
     order: [["grupo", "ASC"], ["name", "ASC"]],
     attributes: ["id", "name", "description", "value", "grupo", "isMenuProduct", "variablePrice", "imageUrl", "allowsHalfAndHalf", "halfAndHalfPriceRule", "halfAndHalfGrupo", "addOnGroupId"],
     include: [
@@ -647,23 +676,6 @@ export const getPublicMesaProducts = async (req: Request, res: Response): Promis
     ],
   });
 
-  let catalogSettings: unknown = null;
-  if (mesa.formId) {
-    const linked = await Form.findOne({
-      where: { id: mesa.formId, companyId, isActive: true },
-      attributes: ["settings"],
-    });
-    catalogSettings = linked?.settings ?? null;
-  } else {
-    const cardapios = await Form.findAll({
-      where: { companyId, isActive: true },
-      attributes: ["settings"],
-    });
-    const first = cardapios.find(
-      (f) => (f.settings as { formType?: string } | null)?.formType === "cardapio"
-    );
-    catalogSettings = first?.settings ?? null;
-  }
   const visibleProducts = filterProductsByMenuCatalog(products, catalogSettings);
 
   const grupoAssignments = await GrupoAddOn.findAll({

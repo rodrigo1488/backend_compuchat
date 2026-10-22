@@ -115,6 +115,24 @@ const UpdateFormService = async ({
     if (newSettingsData.hasOwnProperty('requireMesaOccupation')) {
       newSettings.requireMesaOccupation = newSettingsData.requireMesaOccupation;
     }
+
+    // Catálogo do cardápio: substituir explicitamente (array vazio = nenhum produto).
+    if (newSettingsData.hasOwnProperty("menuCatalogMode")) {
+      newSettings.menuCatalogMode =
+        newSettingsData.menuCatalogMode === "custom" ? "custom" : "all";
+    }
+    if (newSettingsData.hasOwnProperty("menuProductIds")) {
+      const ids = Array.isArray(newSettingsData.menuProductIds)
+        ? newSettingsData.menuProductIds
+        : [];
+      newSettings.menuProductIds = Array.from(
+        new Set(
+          ids
+            .map((id: unknown) => Number(id))
+            .filter((id: number) => Number.isInteger(id) && id > 0)
+        )
+      );
+    }
     
     formData.settings = newSettings;
     console.log("UpdateFormService: Merged settings:", JSON.stringify(newSettings, null, 2));
@@ -122,11 +140,17 @@ const UpdateFormService = async ({
     console.log("UpdateFormService: requireMesaOccupation in merged settings:", newSettings.requireMesaOccupation);
   }
 
-  // Se settings foi fornecido, garantir que seja salvo (via Sequelize para serialização correta do JSONB)
+  // Se settings foi fornecido, garantir que seja salvo (via Sequelize para serialização correta do JSONB).
+  // JSON/JSONB no mesmo update de outras colunas pode não ser marcado como alterado.
   if (formData.settings) {
     const { settings, ...otherFields } = formData;
-    const updatePayload: any = { ...otherFields, settings: formData.settings };
-    await form.update(updatePayload);
+    if (Object.keys(otherFields).length > 0) {
+      await form.update(otherFields);
+    }
+    const settingsToSave = JSON.parse(JSON.stringify(settings));
+    form.set("settings", settingsToSave);
+    form.changed("settings", true);
+    await form.save();
     await form.reload();
   } else {
     await form.update(formData);
@@ -342,7 +366,16 @@ const UpdateFormService = async ({
         if (printIdsChanged) {
           nextSettings.printStoredFieldIds = remappedPrintIds;
         }
-        await form.update({ settings: nextSettings });
+        const requestedSettings = (formData.settings as any) || {};
+        if (requestedSettings.menuCatalogMode != null) {
+          nextSettings.menuCatalogMode = requestedSettings.menuCatalogMode;
+        }
+        if (Array.isArray(requestedSettings.menuProductIds)) {
+          nextSettings.menuProductIds = requestedSettings.menuProductIds;
+        }
+        form.set("settings", nextSettings);
+        form.changed("settings", true);
+        await form.save();
         await form.reload();
       }
     }

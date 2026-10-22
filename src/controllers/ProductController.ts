@@ -21,7 +21,7 @@ import AddOnItem from "../models/AddOnItem";
 import AppError from "../errors/AppError";
 import { setPublicApiNoCacheHeaders } from "../helpers/setPublicApiNoCacheHeaders";
 import { findPublicFormBySlug } from "../services/FormServices/FindPublicFormService";
-import { filterProductsByMenuCatalog } from "../helpers/menuCatalogProducts";
+import { applyMenuCatalogIdWhere, filterProductsByMenuCatalog } from "../helpers/menuCatalogProducts";
 
 export const index = async (req: Request, res: Response): Promise<Response> => {
   const { companyId } = req.user;
@@ -297,6 +297,17 @@ export const getPublicMenuProducts = async (
   const form = await findPublicFormBySlug(publicId, {
     attributes: ["id", "companyId", "settings"],
   });
+  let catalogSettings: unknown = form.settings;
+  if (catalogSettings == null || typeof catalogSettings === "string") {
+    const fresh = await Form.findByPk(form.id, { attributes: ["id", "settings"] });
+    catalogSettings = fresh?.settings ?? catalogSettings;
+  }
+
+  const productWhere: any = {
+    companyId: form.companyId,
+    isMenuProduct: true,
+  };
+  applyMenuCatalogIdWhere(productWhere, catalogSettings);
 
   // Buscar todos os produtos de cardápio da empresa (com variações, combos e addOnGroupId).
   // Fallback sem isCombo/comboItems se a migration ainda não rodou em produção.
@@ -331,10 +342,7 @@ export const getPublicMenuProducts = async (
   let products: Product[];
   try {
     products = await Product.findAll({
-      where: {
-        companyId: form.companyId,
-        isMenuProduct: true,
-      },
+      where: productWhere,
       order: [["grupo", "ASC"], ["name", "ASC"]],
       attributes: [...baseAttributes, "isCombo"],
       include: [
@@ -348,10 +356,7 @@ export const getPublicMenuProducts = async (
       (err as Error)?.message || err
     );
     products = await Product.findAll({
-      where: {
-        companyId: form.companyId,
-        isMenuProduct: true,
-      },
+      where: productWhere,
       order: [["grupo", "ASC"], ["name", "ASC"]],
       attributes: baseAttributes,
       include: [
@@ -360,7 +365,7 @@ export const getPublicMenuProducts = async (
     });
   }
 
-  const visibleProducts = filterProductsByMenuCatalog(products, form.settings);
+  const visibleProducts = filterProductsByMenuCatalog(products, catalogSettings);
 
   // Mapeamento grupo -> addOnGroupId (atribuição por categoria)
   const grupoAssignments = await GrupoAddOn.findAll({

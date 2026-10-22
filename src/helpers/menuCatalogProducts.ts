@@ -2,20 +2,56 @@ import { Op } from "sequelize";
 import Product from "../models/Product";
 import AppError from "../errors/AppError";
 
+const asSettingsObject = (settings: unknown): Record<string, unknown> | null => {
+  let value = settings;
+  if (Buffer.isBuffer(value)) {
+    value = value.toString("utf8");
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
 /**
  * Catálogo de um cardápio.
  * mode ausente ou "all": todos os produtos com isMenuProduct.
  * mode "custom": somente os ids em menuProductIds (interseção com isMenuProduct na consulta).
+ * null = sem restrição. [] = cardápio personalizado vazio.
  */
 export const menuProductIdsForSettings = (settings: unknown): number[] | null => {
-  if (!settings || typeof settings !== "object") return null;
-  const raw = settings as { menuCatalogMode?: string; menuProductIds?: unknown };
-  if (raw.menuCatalogMode !== "custom") return null;
+  const raw = asSettingsObject(settings);
+  if (!raw) return null;
+  if (String(raw.menuCatalogMode || "").trim().toLowerCase() !== "custom") return null;
   if (!Array.isArray(raw.menuProductIds)) return [];
   const ids = raw.menuProductIds
     .map((id) => Number(id))
     .filter((id) => Number.isInteger(id) && id > 0);
   return Array.from(new Set(ids));
+};
+
+/** Restringe o where de Product quando o cardápio é personalizado. */
+export const applyMenuCatalogIdWhere = (
+  where: Record<string, unknown>,
+  settings: unknown
+): void => {
+  const ids = menuProductIdsForSettings(settings);
+  if (ids == null) return;
+  where.id = { [Op.in]: ids.length > 0 ? ids : [-1] };
 };
 
 export const filterProductsByMenuCatalog = <T extends { id: number }>(
