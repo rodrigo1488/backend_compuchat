@@ -7,6 +7,7 @@ import {
   confirmMesaOccupation,
   resolveOccupationContact,
 } from "../services/MesaServices/MesaOccupationFlowService";
+import syncPosClientes from "../services/MesaServices/SyncPosClientesService";
 import AppError from "../errors/AppError";
 import { getIO } from "../libs/socket";
 
@@ -121,4 +122,14 @@ export const liberar = async (
     id: mesa.id,
     status: mesa.status,
   });
+};
+
+export const syncClientes = async (
+  req: PrintDeviceAuthRequest,
+  res: Response
+): Promise<Response> => {
+  const companyId = Number(req.companyId);
+  const clientes = Array.isArray(req.body?.clientes) ? req.body.clientes : [];
+  const result = await syncPosClientes({ companyId, clientes });
+  return res.status(200).json(result);
 };

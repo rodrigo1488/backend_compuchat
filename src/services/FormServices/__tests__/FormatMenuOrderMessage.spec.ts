@@ -39,6 +39,43 @@ describe("FormatMenuOrderMessage helpers", () => {
     expect(name).toBe("Pizza Calabresa - G");
   });
 
+  it("meio a meio mantém os dois sabores e o tamanho", () => {
+    const resolved = resolveMenuItemForMessage(
+      {
+        productId: 10,
+        quantity: 1,
+        type: "halfAndHalf",
+        productName: "Meio a meio: Pizza Calabresa / Mussarela",
+        half1Name: "Pizza Calabresa",
+        half2Name: "Mussarela",
+        baseOptionId: 101,
+      },
+      productMap as any,
+      optionMap as any
+    );
+    expect(resolved.productName).toBe("Meio a meio: Pizza Calabresa / Mussarela (G)");
+  });
+
+  it("meio a meio sem nome salvo usa os dois sabores do cadastro", () => {
+    const map = new Map<number, { name: string; value: number; grupo: string }>([
+      [10, { name: "Pizza Calabresa", value: 30, grupo: "Pizzas" }],
+      [11, { name: "Mussarela", value: 28, grupo: "Pizzas" }],
+    ]);
+    const resolved = resolveMenuItemForMessage(
+      {
+        productId: 10,
+        quantity: 1,
+        type: "halfAndHalf",
+        half1ProductId: 10,
+        half2ProductId: 11,
+        baseOptionId: 101,
+      },
+      map as any,
+      optionMap as any
+    );
+    expect(resolved.productName).toBe("Meio a meio: Pizza Calabresa / Mussarela (G)");
+  });
+
   it("coleta optionIds de meio a meio e combo", () => {
     const ids = collectVariationOptionIds([
       {

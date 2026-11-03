@@ -9,6 +9,7 @@ import {
   buildPrintConteudoFromResponse,
   mapResponseAnswers,
 } from "../../helpers/buildPrintConteudo";
+import { resolveDeliveryPrintDeviceIds } from "../../helpers/deliveryPrintTargets";
 
 export interface DispatchFreshDeliveryPrintResult {
   dispatched: number;
@@ -73,15 +74,7 @@ const DispatchFreshDeliveryPrintService = async ({
   });
 
   const formSettings = (form.settings || {}) as Record<string, unknown>;
-  const printDeviceId = Number(formSettings.printDeviceId) || 0;
-  const deliveryPrintDeviceIds = Array.isArray(formSettings.deliveryPrintDeviceIds)
-    ? (formSettings.deliveryPrintDeviceIds as number[]).filter((id) => id > 0)
-    : [];
-  const deviceIds: number[] = deliveryPrintDeviceIds.length
-    ? deliveryPrintDeviceIds
-    : printDeviceId > 0
-      ? [printDeviceId]
-      : [];
+  const deviceIds = resolveDeliveryPrintDeviceIds(formSettings, menuItems);
 
   if (!deviceIds.length) {
     throw new AppError(

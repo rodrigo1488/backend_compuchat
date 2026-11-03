@@ -106,6 +106,10 @@ const UpdateFormService = async ({
       newSettings.deliveryPrintDeviceIds = newSettingsData.deliveryPrintDeviceIds;
     }
 
+    if (newSettingsData.hasOwnProperty("deliveryGroupPrintConfig")) {
+      newSettings.deliveryGroupPrintConfig = newSettingsData.deliveryGroupPrintConfig;
+    }
+
     // Garantir que formType seja sempre preservado quando enviado (agendamento, cardapio, quotation, normal)
     if (newSettingsData.hasOwnProperty('formType') && newSettingsData.formType != null) {
       newSettings.formType = newSettingsData.formType;

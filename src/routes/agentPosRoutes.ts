@@ -12,5 +12,10 @@ routes.post(
   AgentPosCatalogController.confirmarOcupacao
 );
 routes.put("/agent/pos/mesas/:id/liberar", isPrintDeviceAuth, AgentPosCatalogController.liberar);
+routes.post(
+  "/agent/pos/clientes/sync",
+  isPrintDeviceAuth,
+  AgentPosCatalogController.syncClientes
+);
 
 export default routes;

@@ -38,6 +38,7 @@ import ProductComboItem from "../../models/ProductComboItem";
 import AddOnItem from "../../models/AddOnItem";
 import GrupoAddOn from "../../models/GrupoAddOn";
 import { normalizeBrazilPhoneForWhatsapp } from "../../helpers/NormalizeBrazilPhone";
+import { resolveDeliveryPrintDeviceIds } from "../../helpers/deliveryPrintTargets";
 import { assertProductsInCustomMenu } from "../../helpers/menuCatalogProducts";
 import { getBrazilDayBounds, getBrazilDateString } from "../../helpers/BrazilTimezone";
 import EvaluateCardapioOrderHours from "./EvaluateCardapioOrderHours";
@@ -1250,12 +1251,9 @@ const ProcessFormResponseService = async ({
       };
 
       if (orderType === "delivery") {
-        // Configuração de impressão para pedidos de delivery
-        const deviceIds: number[] = deliveryPrintDeviceIds?.length
-          ? deliveryPrintDeviceIds
-          : printDeviceId
-            ? [printDeviceId]
-            : [];
+        // Impressoras marcadas recebem todo delivery. As de grupo recebem o
+        // pedido completo só quando há item daquele grupo.
+        const deviceIds = resolveDeliveryPrintDeviceIds(formSettings, allMenuItems);
         
         console.log(`ProcessFormResponseService: Delivery order - printing to ${deviceIds.length} device(s): ${deviceIds.join(", ")}`);
         

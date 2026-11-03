@@ -14,6 +14,10 @@ interface MenuItem {
   baseOptionId?: number | null;
   half1OptionId?: number | null;
   half2OptionId?: number | null;
+  half1ProductId?: number | null;
+  half2ProductId?: number | null;
+  half1Name?: string;
+  half2Name?: string;
   addons?: Array<{ label: string; value: number }>;
   addonsTotal?: number;
   comboItems?: Array<{
@@ -81,6 +85,47 @@ export const collectVariationOptionIds = (menuItems: MenuItem[]): number[] => {
   return Array.from(ids);
 };
 
+const flavorName = (
+  explicit: string | undefined,
+  productId: number | null | undefined,
+  productMap: Map<number, ProductInfo>
+): string => {
+  const named = String(explicit || "").trim();
+  if (named) return named;
+  const id = Number(productId);
+  if (!Number.isFinite(id) || id <= 0) return "";
+  return String(productMap.get(id)?.name || "").trim();
+};
+
+const sizeAlreadyShown = (name: string, label: string): boolean => {
+  const text = name.toLowerCase();
+  const size = label.toLowerCase();
+  if (!size) return true;
+  return text.includes(` - ${size}`) || text.includes(`(${size})`);
+};
+
+export const halfAndHalfMessageName = (
+  item: MenuItem,
+  productMap: Map<number, ProductInfo>,
+  sizeLabel?: string | null
+): string => {
+  const existing = String(item.productName || "").trim();
+  const half1 = flavorName(item.half1Name, item.half1ProductId, productMap);
+  const half2 = flavorName(item.half2Name, item.half2ProductId, productMap);
+  const composed = half1 && half2 ? `Meio a meio: ${half1} / ${half2}` : "";
+  let name = existing;
+  if (existing.includes(" / ")) {
+    name = /^meio a meio\b/i.test(existing) ? existing : `Meio a meio: ${existing}`;
+  } else {
+    name = composed || existing || "Meio a meio";
+  }
+  const size = String(sizeLabel || "").trim();
+  if (size && !sizeAlreadyShown(name, size)) {
+    name = `${name} (${size})`;
+  }
+  return name;
+};
+
 export const buildProductDisplayName = (
   baseName: string,
   productName: string | undefined,
@@ -108,7 +153,9 @@ export const resolveMenuItemForMessage = (
   let productValue =
     item.productValue != null ? Number(item.productValue) : Number(product?.value) || 0;
 
-  if (option) {
+  if (item.type === "halfAndHalf") {
+    productName = halfAndHalfMessageName(item, productMap, option?.label);
+  } else if (option) {
     productName = buildProductDisplayName(
       product?.name || productName,
       item.productName,
@@ -116,13 +163,6 @@ export const resolveMenuItemForMessage = (
     );
     if (item.productValue == null) {
       productValue = Number(option.value) || productValue;
-    }
-  }
-
-  if (item.type === "halfAndHalf") {
-    const sizeLabel = option?.label;
-    if (sizeLabel && !String(productName).toLowerCase().includes(sizeLabel.toLowerCase())) {
-      productName = `${productName} (${sizeLabel})`;
     }
   }
 
@@ -161,7 +201,14 @@ const FormatMenuOrderMessage = async ({
   couponCode,
   couponDiscount = 0,
 }: Request): Promise<string> => {
-  const productIds = [...new Set(menuItems.map((item) => item.productId).filter(Boolean))];
+  const productIds = [
+    ...new Set(
+      menuItems
+        .flatMap((item) => [item.productId, item.half1ProductId, item.half2ProductId])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ];
   const products = productIds.length
     ? await Product.findAll({ where: { id: productIds } })
     : [];

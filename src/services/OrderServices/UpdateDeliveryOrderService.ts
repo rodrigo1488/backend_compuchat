@@ -281,7 +281,7 @@ const UpdateDeliveryOrderService = async ({
   return { response, print };
 };
 
-/** Atualiza a conta já aberta no Uniplus (retirada, taxa e total). Não bloqueia a edição. */
+/** Atualiza a conta já aberta no Uniplus (itens, endereço, retirada, taxa e total). Não bloqueia a edição. */
 const syncUniplusFulfillment = async ({
   companyId,
   form,

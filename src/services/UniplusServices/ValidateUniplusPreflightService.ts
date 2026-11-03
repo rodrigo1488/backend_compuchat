@@ -96,6 +96,14 @@ export function extractFormPrintDevicePks(form: Form): number[] {
     }
   }
 
+  const deliveryGroupPrintConfig = settings.deliveryGroupPrintConfig;
+  if (Array.isArray(deliveryGroupPrintConfig)) {
+    for (const row of deliveryGroupPrintConfig) {
+      const n = Number(row?.printDeviceId);
+      if (Number.isFinite(n) && n > 0) ids.add(n);
+    }
+  }
+
   return [...ids];
 }
 
