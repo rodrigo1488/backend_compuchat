@@ -1,6 +1,7 @@
 import {
   buildProductDisplayName,
   collectVariationOptionIds,
+  halfFlavorLabels,
   resolveMenuItemForMessage,
   resolveVariationOptionId,
 } from "../FormatMenuOrderMessage";
@@ -54,6 +55,27 @@ describe("FormatMenuOrderMessage helpers", () => {
       optionMap as any
     );
     expect(resolved.productName).toBe("Meio a meio: Pizza Calabresa / Mussarela (G)");
+  });
+
+  it("meio a meio não deixa o tamanho substituir o segundo sabor", () => {
+    const resolved = resolveMenuItemForMessage(
+      {
+        productId: 10,
+        quantity: 1,
+        type: "halfAndHalf",
+        productName: "Pizza Calabresa - G",
+        half1Name: "Pizza Calabresa",
+        half2Name: "Mussarela",
+        baseOptionId: 101,
+      },
+      productMap as any,
+      optionMap as any
+    );
+    expect(resolved.productName).toBe("Meio a meio: Pizza Calabresa / Mussarela (G)");
+    expect(halfFlavorLabels(resolved, productMap as any)).toEqual([
+      "Pizza Calabresa",
+      "Mussarela",
+    ]);
   });
 
   it("meio a meio sem nome salvo usa os dois sabores do cadastro", () => {

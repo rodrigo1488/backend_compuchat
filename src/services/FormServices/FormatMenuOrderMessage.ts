@@ -104,20 +104,52 @@ const sizeAlreadyShown = (name: string, label: string): boolean => {
   return text.includes(` - ${size}`) || text.includes(`(${size})`);
 };
 
+/** Extrai os dois sabores de um nome já salvo ("Meio a meio: A / B" ou "A / B"). */
+const parseHalvesFromProductName = (productName?: string): [string, string] => {
+  let flavors = String(productName || "").trim();
+  if (!flavors) return ["", ""];
+  const colon = flavors.indexOf(":");
+  if (/^meio a meio\b/i.test(flavors) && colon >= 0) {
+    flavors = flavors.slice(colon + 1).trim();
+  } else {
+    flavors = flavors.replace(/^meio a meio:?\s*/i, "").trim();
+  }
+  flavors = flavors.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  if (!flavors.includes(" / ")) return ["", ""];
+  const [first, second] = flavors.split(" / ", 2);
+  return [String(first || "").trim(), String(second || "").trim()];
+};
+
+/** Os dois sabores do meio a meio, na ordem da impressão (1/2 e 1/2). */
+export const halfFlavorLabels = (
+  item: MenuItem,
+  productMap: Map<number, ProductInfo>
+): string[] => {
+  let half1 = flavorName(item.half1Name, item.half1ProductId, productMap);
+  let half2 = flavorName(item.half2Name, item.half2ProductId, productMap);
+  if (!half1 || !half2) {
+    const [parsed1, parsed2] = parseHalvesFromProductName(item.productName);
+    half1 = half1 || parsed1;
+    half2 = half2 || parsed2;
+  }
+  return [half1, half2].map((name) => name.replace(/^1\/2\s+/i, "").trim()).filter(Boolean);
+};
+
 export const halfAndHalfMessageName = (
   item: MenuItem,
   productMap: Map<number, ProductInfo>,
   sizeLabel?: string | null
 ): string => {
   const existing = String(item.productName || "").trim();
-  const half1 = flavorName(item.half1Name, item.half1ProductId, productMap);
-  const half2 = flavorName(item.half2Name, item.half2ProductId, productMap);
+  const [half1, half2] = halfFlavorLabels(item, productMap);
   const composed = half1 && half2 ? `Meio a meio: ${half1} / ${half2}` : "";
-  let name = existing;
-  if (existing.includes(" / ")) {
-    name = /^meio a meio\b/i.test(existing) ? existing : `Meio a meio: ${existing}`;
-  } else {
-    name = composed || existing || "Meio a meio";
+  let name = composed;
+  if (!name) {
+    if (existing.includes(" / ")) {
+      name = /^meio a meio\b/i.test(existing) ? existing : `Meio a meio: ${existing}`;
+    } else {
+      name = existing || "Meio a meio";
+    }
   }
   const size = String(sizeLabel || "").trim();
   if (size && !sizeAlreadyShown(name, size)) {
@@ -280,7 +312,17 @@ const FormatMenuOrderMessage = async ({
     itemsByGroup[grupo].forEach((item) => {
       const itemTotal = lineTotal(item);
       const comboLabel = item.type === "combo" ? " (Combo)" : "";
-      message += `• ${item.productName}${comboLabel} - Qtd: ${item.quantity} - R$ ${itemTotal.toFixed(2).replace(".", ",")}\n`;
+      const halfLines =
+        item.type === "halfAndHalf" ? halfFlavorLabels(item, productMap) : [];
+      const sizeMatch = String(item.productName || "").match(/\(([^)]+)\)\s*$/);
+      const itemTitle =
+        halfLines.length >= 2
+          ? `Meio a meio${sizeMatch ? ` (${sizeMatch[1]})` : ""}`
+          : item.productName;
+      message += `• ${itemTitle}${comboLabel} - Qtd: ${item.quantity} - R$ ${itemTotal.toFixed(2).replace(".", ",")}\n`;
+      halfLines.forEach((flavor) => {
+        message += `  └ 1/2 ${flavor}\n`;
+      });
       if (item.type === "combo" && Array.isArray(item.comboItems) && item.comboItems.length > 0) {
         item.comboItems.forEach((ci) => {
           const q = Number(ci.quantity) || 1;
